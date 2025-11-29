@@ -117,15 +117,15 @@ func (c *AppConfig) GetAllResponses() []MethodResponse {
 
 // RequestLog represents a detailed log of an incoming HTTP request
 type RequestLog struct {
-	ID            string              // Unique request identifier
-	Timestamp     time.Time           // Time request was received
-	Method        string              // HTTP method (GET, POST, etc.)
-	Path          string              // Request path
-	StatusCode    int                 // Response status code sent
-	SourceIP      string              // Client IP address
-	Headers       map[string][]string // Request headers
-	Body          string              // Request body
-	QueryParams   map[string][]string // Query parameters
-	Protocol      string              // HTTP protocol version
-	UserAgent     string              // Client user agent
+	ID            string              `json:"id"`                     // Unique request identifier
+	Timestamp     time.Time           `json:"timestamp"`              // Time request was received
+	Method        string              `json:"method"`                 // HTTP method (GET, POST, etc.)
+	Path          string              `json:"path"`                   // Request path
+	StatusCode    int                 `json:"status_code"`            // Response status code sent
+	SourceIP      string              `json:"source_ip"`              // Client IP address
+	Headers       map[string][]string `json:"headers,omitempty"`      // Request headers
+	Body          string              `json:"body,omitempty"`         // Request body
+	QueryParams   map[string][]string `json:"query_params,omitempty"` // Query parameters
+	Protocol      string              `json:"protocol,omitempty"`     // HTTP protocol version
+	UserAgent     string              `json:"user_agent,omitempty"`   // Client user agent
 }

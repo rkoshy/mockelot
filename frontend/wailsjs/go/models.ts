@@ -202,18 +202,18 @@ export namespace models {
 	}
 	
 	export class RequestLog {
-	    ID: string;
+	    id: string;
 	    // Go type: time
-	    Timestamp: any;
-	    Method: string;
-	    Path: string;
-	    StatusCode: number;
-	    SourceIP: string;
-	    Headers: Record<string, Array<string>>;
-	    Body: string;
-	    QueryParams: Record<string, Array<string>>;
-	    Protocol: string;
-	    UserAgent: string;
+	    timestamp: any;
+	    method: string;
+	    path: string;
+	    status_code: number;
+	    source_ip: string;
+	    headers?: Record<string, Array<string>>;
+	    body?: string;
+	    query_params?: Record<string, Array<string>>;
+	    protocol?: string;
+	    user_agent?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new RequestLog(source);
@@ -221,17 +221,17 @@ export namespace models {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.ID = source["ID"];
-	        this.Timestamp = this.convertValues(source["Timestamp"], null);
-	        this.Method = source["Method"];
-	        this.Path = source["Path"];
-	        this.StatusCode = source["StatusCode"];
-	        this.SourceIP = source["SourceIP"];
-	        this.Headers = source["Headers"];
-	        this.Body = source["Body"];
-	        this.QueryParams = source["QueryParams"];
-	        this.Protocol = source["Protocol"];
-	        this.UserAgent = source["UserAgent"];
+	        this.id = source["id"];
+	        this.timestamp = this.convertValues(source["timestamp"], null);
+	        this.method = source["method"];
+	        this.path = source["path"];
+	        this.status_code = source["status_code"];
+	        this.source_ip = source["source_ip"];
+	        this.headers = source["headers"];
+	        this.body = source["body"];
+	        this.query_params = source["query_params"];
+	        this.protocol = source["protocol"];
+	        this.user_agent = source["user_agent"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

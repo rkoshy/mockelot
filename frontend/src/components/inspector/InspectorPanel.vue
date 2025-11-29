@@ -20,7 +20,7 @@ const selectedLog = computed(() => serverStore.selectedLog)
 // Get content type from request headers
 const requestContentType = computed(() => {
   if (!selectedLog.value) return ''
-  const headers = selectedLog.value.Headers
+  const headers = selectedLog.value.headers || {}
   for (const [key, values] of Object.entries(headers)) {
     if (key.toLowerCase() === 'content-type' && values.length > 0) {
       return values[0]
@@ -31,8 +31,8 @@ const requestContentType = computed(() => {
 
 // Detected content type (from header or auto-detected)
 const detectedContentType = computed(() => {
-  if (!selectedLog.value?.Body) return ''
-  return requestContentType.value || detectContentType(selectedLog.value.Body)
+  if (!selectedLog.value?.body) return ''
+  return requestContentType.value || detectContentType(selectedLog.value.body)
 })
 
 // Effective content type (override or detected)
@@ -44,35 +44,35 @@ const canFormat = computed(() => supportsFormatting(effectiveContentType.value))
 
 // Check if current content is Prometheus (supports table view)
 const isPrometheus = computed(() => {
-  if (!selectedLog.value?.Body) return false
+  if (!selectedLog.value?.body) return false
   const type = effectiveContentType.value.toLowerCase()
   return type.includes('version=0.0.4') ||
          type === 'application/openmetrics-text' ||
-         isPrometheusMetrics(selectedLog.value.Body)
+         isPrometheusMetrics(selectedLog.value.body)
 })
 
 // Format body when switching to formatted view
 async function formatBody() {
-  if (!selectedLog.value?.Body || !canFormat.value) return
+  if (!selectedLog.value?.body || !canFormat.value) return
   try {
-    formattedBody.value = await formatContent(selectedLog.value.Body, effectiveContentType.value)
+    formattedBody.value = await formatContent(selectedLog.value.body, effectiveContentType.value)
   } catch {
-    formattedBody.value = selectedLog.value.Body
+    formattedBody.value = selectedLog.value.body
   }
 }
 
 // Display body
 const displayBody = computed(() => {
-  if (!selectedLog.value?.Body) return ''
+  if (!selectedLog.value?.body) return ''
   if (isRaw.value || !canFormat.value) {
-    return selectedLog.value.Body
+    return selectedLog.value.body
   }
-  return formattedBody.value || selectedLog.value.Body
+  return formattedBody.value || selectedLog.value.body
 })
 
 // Watch for body changes and format
 import { watch } from 'vue'
-watch(() => selectedLog.value?.Body, async () => {
+watch(() => selectedLog.value?.body, async () => {
   isRaw.value = false
   formatterOverride.value = '' // Reset override when log changes
   viewMode.value = 'text' // Reset view mode when log changes
@@ -141,17 +141,17 @@ function formatTimestamp(timestamp: string): string {
       <div class="p-3 bg-gray-800/50 border-b border-gray-700 flex-shrink-0">
         <div class="flex items-center gap-2 mb-2">
           <span class="px-2 py-0.5 bg-blue-600 rounded text-xs font-bold text-white">
-            {{ selectedLog.Method }}
+            {{ selectedLog.method }}
           </span>
           <span class="px-2 py-0.5 bg-gray-700 rounded text-xs font-mono text-gray-300">
-            {{ selectedLog.StatusCode }}
+            {{ selectedLog.status_code }}
           </span>
         </div>
-        <p class="text-sm text-gray-300 font-mono break-all">{{ selectedLog.Path }}</p>
+        <p class="text-sm text-gray-300 font-mono break-all">{{ selectedLog.path }}</p>
         <div class="mt-2 flex items-center gap-4 text-xs text-gray-500">
-          <span>{{ formatTimestamp(selectedLog.Timestamp) }}</span>
-          <span>{{ selectedLog.SourceIP }}</span>
-          <span>{{ selectedLog.Protocol }}</span>
+          <span>{{ formatTimestamp(selectedLog.timestamp) }}</span>
+          <span>{{ selectedLog.source_ip }}</span>
+          <span>{{ selectedLog.protocol }}</span>
         </div>
       </div>
 
@@ -168,7 +168,7 @@ function formatTimestamp(timestamp: string): string {
         >
           Headers
           <span class="ml-1 px-1.5 py-0.5 bg-gray-700 rounded text-xs">
-            {{ Object.keys(selectedLog.Headers).length }}
+            {{ Object.keys(selectedLog.headers || {}).length }}
           </span>
         </button>
         <button
@@ -181,8 +181,8 @@ function formatTimestamp(timestamp: string): string {
           ]"
         >
           Body
-          <span v-if="selectedLog.Body" class="ml-1 px-1.5 py-0.5 bg-gray-700 rounded text-xs">
-            {{ selectedLog.Body.length }}
+          <span v-if="selectedLog.body" class="ml-1 px-1.5 py-0.5 bg-gray-700 rounded text-xs">
+            {{ selectedLog.body.length }}
           </span>
         </button>
         <button
@@ -196,7 +196,7 @@ function formatTimestamp(timestamp: string): string {
         >
           Query
           <span class="ml-1 px-1.5 py-0.5 bg-gray-700 rounded text-xs">
-            {{ Object.keys(selectedLog.QueryParams).length }}
+            {{ Object.keys(selectedLog.query_params || {}).length }}
           </span>
         </button>
       </div>
@@ -206,21 +206,21 @@ function formatTimestamp(timestamp: string): string {
         <!-- Headers Tab -->
         <div v-if="activeTab === 'headers'" class="space-y-1">
           <div
-            v-for="(header, index) in formatHeaders(selectedLog.Headers)"
+            v-for="(header, index) in formatHeaders(selectedLog.headers || {})"
             :key="index"
             class="flex gap-2 py-1 border-b border-gray-800 last:border-0"
           >
             <span class="text-blue-400 text-sm font-medium flex-shrink-0">{{ header.key }}:</span>
             <span class="text-gray-300 text-sm break-all">{{ header.value }}</span>
           </div>
-          <div v-if="Object.keys(selectedLog.Headers).length === 0" class="text-gray-500 text-sm">
+          <div v-if="Object.keys(selectedLog.headers || {}).length === 0" class="text-gray-500 text-sm">
             No headers
           </div>
         </div>
 
         <!-- Body Tab -->
         <div v-if="activeTab === 'body'" class="flex flex-col h-full">
-          <div v-if="selectedLog.Body" class="flex flex-col flex-1 min-h-0">
+          <div v-if="selectedLog.body" class="flex flex-col flex-1 min-h-0">
             <!-- Body toolbar -->
             <div class="flex items-center justify-between mb-2 flex-shrink-0">
               <div class="flex items-center gap-2 flex-wrap">
@@ -284,7 +284,7 @@ function formatTimestamp(timestamp: string): string {
               v-if="isPrometheus && viewMode === 'table'"
               class="bg-gray-800 rounded p-3 flex-1 overflow-auto"
             >
-              <PrometheusViewer :content="selectedLog.Body" />
+              <PrometheusViewer :content="selectedLog.body" />
             </div>
 
             <!-- Text View -->
@@ -300,14 +300,14 @@ function formatTimestamp(timestamp: string): string {
         <!-- Query Tab -->
         <div v-if="activeTab === 'query'" class="space-y-1">
           <div
-            v-for="(param, index) in formatQueryParams(selectedLog.QueryParams)"
+            v-for="(param, index) in formatQueryParams(selectedLog.query_params || {})"
             :key="index"
             class="flex gap-2 py-1 border-b border-gray-800 last:border-0"
           >
             <span class="text-purple-400 text-sm font-medium flex-shrink-0">{{ param.key }}:</span>
             <span class="text-gray-300 text-sm break-all">{{ param.value }}</span>
           </div>
-          <div v-if="Object.keys(selectedLog.QueryParams).length === 0" class="text-gray-500 text-sm">
+          <div v-if="Object.keys(selectedLog.query_params || {}).length === 0" class="text-gray-500 text-sm">
             No query parameters
           </div>
         </div>
@@ -315,8 +315,8 @@ function formatTimestamp(timestamp: string): string {
 
       <!-- Body Modal (read-only) -->
       <BodyEditorModal
-        v-if="selectedLog.Body"
-        :model-value="selectedLog.Body"
+        v-if="selectedLog.body"
+        :model-value="selectedLog.body"
         v-model:visible="showBodyModal"
         :content-type="effectiveContentType"
         :read-only="true"

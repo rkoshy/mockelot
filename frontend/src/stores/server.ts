@@ -26,7 +26,7 @@ export const useServerStore = defineStore('server', () => {
   const isRunning = computed(() => status.value.running)
   const port = computed(() => status.value.port)
   const selectedLog = computed(() =>
-    requestLogs.value.find(log => log.ID === selectedLogId.value) || null
+    requestLogs.value.find(log => log.id === selectedLogId.value) || null
   )
 
   // Actions

@@ -104,11 +104,11 @@ async function handleExportCSV() {
       <div v-else class="divide-y divide-gray-800">
         <div
           v-for="log in reversedLogs"
-          :key="log.ID"
-          @click="serverStore.selectLog(log.ID)"
+          :key="log.id"
+          @click="serverStore.selectLog(log.id)"
           :class="[
             'px-3 py-2 cursor-pointer transition-colors',
-            serverStore.selectedLogId === log.ID
+            serverStore.selectedLogId === log.id
               ? 'bg-blue-900/30 border-l-2 border-blue-500'
               : 'hover:bg-gray-800/50'
           ]"
@@ -116,27 +116,27 @@ async function handleExportCSV() {
           <div class="flex items-center gap-3">
             <!-- Time -->
             <span class="text-xs text-gray-500 font-mono w-16 flex-shrink-0">
-              {{ formatTimestamp(log.Timestamp) }}
+              {{ formatTimestamp(log.timestamp) }}
             </span>
 
             <!-- Method Badge -->
-            <span :class="['text-xs font-bold w-14 flex-shrink-0', getMethodColor(log.Method)]">
-              {{ log.Method }}
+            <span :class="['text-xs font-bold w-14 flex-shrink-0', getMethodColor(log.method)]">
+              {{ log.method }}
             </span>
 
             <!-- Status Badge -->
-            <span :class="['text-xs font-mono w-8 flex-shrink-0', getStatusColor(log.StatusCode)]">
-              {{ log.StatusCode }}
+            <span :class="['text-xs font-mono w-8 flex-shrink-0', getStatusColor(log.status_code)]">
+              {{ log.status_code }}
             </span>
 
             <!-- Path -->
             <span class="text-sm text-gray-300 truncate flex-1 font-mono">
-              {{ log.Path }}
+              {{ log.path }}
             </span>
 
             <!-- Source IP -->
             <span class="text-xs text-gray-500 flex-shrink-0">
-              {{ log.SourceIP }}
+              {{ log.source_ip }}
             </span>
           </div>
         </div>
