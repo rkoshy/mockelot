@@ -1,0 +1,105 @@
+# Binaries
+build/
+mockelot
+mockagaintool
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+node_modules/
+vendor/
+
+# Frontend build output
+frontend/dist/
+frontend/node_modules/
+
+# Wails build artifacts
+build/bin/
+
+# AI Assistant Files & Documentation
+.claude/
+CLAUDE.md
+.cursor/
+.aider*
+.continue/
+.codeium/
+.gemini/
+
+# AI conversation/history files
+*.ai-chat
+*.gemini-cache
+*.anthropic-cache
+.claude-code/
+.gemini-cli/
+
+# AI-generated documentation (project-specific)
+AI-NOTES.md
+DEVELOPMENT-NOTES.md
+
+# IDE & Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Environment & Config
+.env
+.env.local
+.env.*.local
+*.local
+config.local.yaml
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.cache
+
+# Go specific
+go.work
+go.work.sum
+
+# macOS
+.AppleDouble
+.LSOverride
+
+# Linux
+.directory
+.fuse_hidden*
+.nfs*
+
+# Windows
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.lnk

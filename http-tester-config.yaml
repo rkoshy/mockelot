@@ -1,0 +1,39 @@
+port: 9090
+responses:
+  - id: 33fb874d-5336-40bb-81de-0e9b924bb33f
+    path_pattern: /*
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+      - PATCH
+    status_code: 200
+    status_text: OK
+  - id: 6b139446-5ee9-4fd1-9ce8-a38648a58232
+    path_pattern: /new-path1
+    methods:
+      - GET
+      - POST
+    status_code: 200
+    status_text: OK
+  - id: aeaaba76-829c-49fb-a1bb-268917058913
+    path_pattern: /new-path2
+    methods:
+      - GET
+      - POST
+    status_code: 200
+    status_text: OK
+  - id: 937fdd9e-685f-4aac-93b3-f86b3df9cda1
+    path_pattern: /new-path3
+    methods:
+      - PUT
+    status_code: 200
+    status_text: OK
+  - id: 20c2639c-bcaf-4fd6-b3cf-9b1e326a06d9
+    path_pattern: /*
+    methods:
+      - POST
+    status_code: 200
+    status_text: OK
