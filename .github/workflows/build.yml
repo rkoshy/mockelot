@@ -13,6 +13,7 @@ jobs:
         include:
           # Linux AMD64
           - os: ubuntu-latest
+            container: debian:bookworm
             platform: linux/amd64
             name: linux-amd64
             output: mockelot
@@ -21,27 +22,28 @@ jobs:
           - os: macos-latest
             platform: darwin/universal
             name: darwin-universal
-            output: Mockelot.app
+            output: mockelot.app
 
           # macOS ARM64 only (Apple Silicon)
           - os: macos-latest
             platform: darwin/arm64
             name: darwin-arm64
-            output: Mockelot.app
+            output: mockelot.app
 
           # macOS AMD64 only (Intel)
           - os: macos-latest
             platform: darwin/amd64
             name: darwin-amd64
-            output: Mockelot.app
+            output: mockelot.app
 
           # Windows AMD64
           - os: windows-latest
             platform: windows/amd64
             name: windows-amd64
-            output: Mockelot.exe
+            output: mockelot.exe
 
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
 
     steps:
       - name: Checkout code
@@ -64,33 +66,33 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
       - name: Install Linux dependencies
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.container == 'debian:bookworm'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev
+          apt-get update
+          apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev build-essential curl git
 
       - name: Build application
         run: wails build -platform ${{ matrix.platform }}
 
       - name: Create Linux archive
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.container == 'debian:bookworm'
         run: |
           cd build/bin
-          tar -czf mockelot-${{ matrix.name }}.tar.gz mockelot
+          tar -czf mockelot-${{ matrix.name }}.tar.gz ${{ matrix.output }}
           mv mockelot-${{ matrix.name }}.tar.gz ../../
 
       - name: Create macOS archive
         if: matrix.os == 'macos-latest'
         run: |
           cd build/bin
-          ditto -c -k --sequesterRsrc --keepParent Mockelot.app ../../mockelot-${{ matrix.name }}.zip
+          ditto -c -k --sequesterRsrc --keepParent ${{ matrix.output }} ../../mockelot-${{ matrix.name }}.zip
 
       - name: Create Windows archive
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           cd build/bin
-          Compress-Archive -Path Mockelot.exe -DestinationPath ../../mockelot-${{ matrix.name }}.zip
+          Compress-Archive -Path ${{ matrix.output }} -DestinationPath ../../mockelot-${{ matrix.name }}.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
