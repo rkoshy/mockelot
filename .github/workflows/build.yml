@@ -91,7 +91,7 @@ jobs:
 
       - name: Build application
         run: |
-          export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
+          export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin:$PWD/frontend/node_modules/.bin
           wails build -platform ${{ matrix.platform }}
 
       - name: Create Linux archive
