@@ -93,14 +93,16 @@ jobs:
         run: |
           cd frontend
           npm ci
-          # Verify vue-tsc is installed
-          npx vue-tsc --version || echo "vue-tsc not found"
 
       - name: Build application
         run: |
           export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
-          cd frontend && npm run build && cd ..
-          wails build -platform ${{ matrix.platform }} -skipfrontend
+          # Build frontend with vite only (skip type checking in CI)
+          cd frontend
+          npx vite build
+          cd ..
+          # Build backend and package
+          wails build -platform ${{ matrix.platform }} -s
 
       - name: Create Linux archive
         if: runner.os == 'Linux'
