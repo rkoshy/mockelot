@@ -19,29 +19,29 @@ jobs:
             platform: linux/amd64
             output: mockelot
 
-          # macOS Universal (ARM + Intel)
-          - name: darwin-universal
-            os: macos-latest
-            platform: darwin/universal
-            output: mockelot.app
+          # # macOS Universal (ARM + Intel)
+          # - name: darwin-universal
+          #   os: macos-latest
+          #   platform: darwin/universal
+          #   output: mockelot.app
 
-          # macOS ARM64 only (Apple Silicon)
-          - name: darwin-arm64
-            os: macos-latest
-            platform: darwin/arm64
-            output: mockelot.app
+          # # macOS ARM64 only (Apple Silicon)
+          # - name: darwin-arm64
+          #   os: macos-latest
+          #   platform: darwin/arm64
+          #   output: mockelot.app
 
-          # macOS AMD64 only (Intel)
-          - name: darwin-amd64
-            os: macos-latest
-            platform: darwin/amd64
-            output: mockelot.app
+          # # macOS AMD64 only (Intel)
+          # - name: darwin-amd64
+          #   os: macos-latest
+          #   platform: darwin/amd64
+          #   output: mockelot.app
 
-          # Windows AMD64
-          - name: windows-amd64
-            os: windows-latest
-            platform: windows/amd64
-            output: mockelot.exe
+          # # Windows AMD64
+          # - name: windows-amd64
+          #   os: windows-latest
+          #   platform: windows/amd64
+          #   output: mockelot.exe
 
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
@@ -93,11 +93,14 @@ jobs:
         run: |
           cd frontend
           npm ci
+          # Verify vue-tsc is installed
+          npx vue-tsc --version || echo "vue-tsc not found"
 
       - name: Build application
         run: |
           export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
-          wails build -platform ${{ matrix.platform }}
+          cd frontend && npm run build && cd ..
+          wails build -platform ${{ matrix.platform }} -skipfrontend
 
       - name: Create Linux archive
         if: runner.os == 'Linux'
