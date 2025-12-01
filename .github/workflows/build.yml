@@ -15,6 +15,7 @@ jobs:
           # Linux AMD64
           - name: linux-amd64
             os: ubuntu-latest
+            container: debian:bookworm
             platform: linux/amd64
             output: mockelot
 
@@ -43,18 +44,40 @@ jobs:
             output: mockelot.exe
 
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Go
+      - name: Install Linux dependencies and build tools
+        if: matrix.container == 'debian:bookworm'
+        run: |
+          apt-get update
+          apt-get install -y ca-certificates curl wget git libgtk-3-dev libwebkit2gtk-4.0-dev build-essential
+
+      - name: Install Go manually (for Debian container)
+        if: matrix.container == 'debian:bookworm'
+        run: |
+          wget https://go.dev/dl/go1.23.4.linux-amd64.tar.gz
+          tar -C /usr/local -xzf go1.23.4.linux-amd64.tar.gz
+          echo "/usr/local/go/bin" >> $GITHUB_PATH
+
+      - name: Install Node manually (for Debian container)
+        if: matrix.container == 'debian:bookworm'
+        run: |
+          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+          apt-get install -y nodejs
+
+      - name: Setup Go (for non-Linux)
+        if: matrix.container != 'debian:bookworm'
         uses: actions/setup-go@v5
         with:
           go-version: '1.23'
           cache: true
 
-      - name: Setup Node
+      - name: Setup Node (for non-Linux)
+        if: matrix.container != 'debian:bookworm'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -62,13 +85,9 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+          export PATH=$PATH:/usr/local/go/bin
+          go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
       - name: Install frontend dependencies
         run: |
@@ -76,7 +95,9 @@ jobs:
           npm ci
 
       - name: Build application
-        run: wails build -platform ${{ matrix.platform }}
+        run: |
+          export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
+          wails build -platform ${{ matrix.platform }}
 
       - name: Create Linux archive
         if: runner.os == 'Linux'
