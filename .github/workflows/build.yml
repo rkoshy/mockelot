@@ -5,9 +5,6 @@ on:
       - 'v*'
   workflow_dispatch:
 
-env:
-  NODE_OPTIONS: "--max-old-space-size=4096"
-
 jobs:
   build:
     strategy:
@@ -15,7 +12,7 @@ jobs:
       matrix:
         include:
           - name: linux-amd64
-            os: ubuntu-latest
+            os: ubuntu-22.04
             platform: linux/amd64
           - name: darwin-universal
             os: macos-latest
@@ -29,42 +26,52 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
-      - name: Build Wails App
-        uses: dAppServer/wails-build-action@v3
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
-          build-name: mockelot
-          build-platform: ${{ matrix.platform }}
           go-version: '1.23'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
           node-version: '20'
-          package: false
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev build-essential pkg-config
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Build
+        run: wails build -platform ${{ matrix.platform }}
 
       - name: Create archive (Linux)
         if: runner.os == 'Linux'
-        run: |
-          cd build/bin
-          tar -czf ../../mockelot-${{ matrix.name }}.tar.gz mockelot
+        run: tar -czf mockelot-${{ matrix.name }}.tar.gz -C build/bin mockelot
 
       - name: Create archive (macOS)
         if: runner.os == 'macOS'
-        run: |
-          cd build/bin
-          ditto -c -k --keepParent mockelot.app ../../mockelot-${{ matrix.name }}.zip
+        run: ditto -c -k --keepParent build/bin/mockelot.app mockelot-${{ matrix.name }}.zip
 
       - name: Create archive (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          Compress-Archive -Path build/bin/mockelot.exe -DestinationPath mockelot-${{ matrix.name }}.zip
+        run: Compress-Archive -Path build/bin/mockelot.exe -DestinationPath mockelot-${{ matrix.name }}.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: mockelot-${{ matrix.name }}
           path: mockelot-*.*
-          retention-days: 5
 
   release:
     needs: build
@@ -73,18 +80,18 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download all artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Prepare release files
+      - name: Prepare release
         run: |
-          mkdir -p release
+          mkdir release
           find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release/ \;
           cd release && sha256sum * > checksums.txt
 
-      - name: Create GitHub Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: release/*
