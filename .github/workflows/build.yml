@@ -52,9 +52,7 @@ jobs:
           npm ci
 
       - name: Build
-        run: |
-          export PATH=$PATH:$PWD/frontend/node_modules/.bin
-          wails build -platform ${{ matrix.platform }}
+        run: wails build -platform ${{ matrix.platform }}
 
       - name: Create archive (Linux)
         if: runner.os == 'Linux'
