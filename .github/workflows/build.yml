@@ -89,20 +89,10 @@ jobs:
           export PATH=$PATH:/usr/local/go/bin
           go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
-      - name: Install frontend dependencies
-        run: |
-          cd frontend
-          npm ci
-
       - name: Build application
         run: |
           export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
-          # Build frontend with vite only (skip type checking in CI)
-          cd frontend
-          npx vite build
-          cd ..
-          # Build backend and package
-          wails build -platform ${{ matrix.platform }} -s
+          wails build -platform ${{ matrix.platform }}
 
       - name: Create Linux archive
         if: runner.os == 'Linux'
