@@ -48,6 +48,4 @@ jobs:
         with:
           build-name: ${{ matrix.name }}
           build-platform: ${{ matrix.platform }}
-          go-version: '1.23'
-          node-version: '20'
           package: true
