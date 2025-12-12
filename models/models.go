@@ -185,6 +185,9 @@ type AppConfig struct {
 	Items        []ResponseItem   `json:"items,omitempty" yaml:"items,omitempty"`                 // New: mixed list of responses and groups
 	LastModified time.Time        `json:"last_modified,omitempty" yaml:"last_modified,omitempty"` // Last time configuration was modified
 
+	// HTTP/2 Support
+	HTTP2Enabled bool `json:"http2_enabled,omitempty" yaml:"http2_enabled,omitempty"` // Whether HTTP/2 is enabled for both HTTP and HTTPS servers
+
 	// HTTPS Configuration
 	HTTPSEnabled        bool      `json:"https_enabled,omitempty" yaml:"https_enabled,omitempty"`                       // Whether HTTPS is enabled
 	HTTPSPort           int       `json:"https_port,omitempty" yaml:"https_port,omitempty"`                             // HTTPS server port

@@ -2,10 +2,11 @@
 import { ref, watch } from 'vue'
 import HTTPTab from './HTTPTab.vue'
 import HTTPSTab from './HTTPSTab.vue'
+import CORSTab from './CORSTab.vue'
 
 const props = defineProps<{
   show: boolean
-  initialTab?: 'http' | 'https'
+  initialTab?: 'http' | 'https' | 'cors'
 }>()
 
 const emit = defineEmits<{
@@ -13,7 +14,7 @@ const emit = defineEmits<{
   apply: []
 }>()
 
-type TabType = 'http' | 'https'
+type TabType = 'http' | 'https' | 'cors'
 
 const currentTab = ref<TabType>(props.initialTab || 'http')
 const isValid = ref(true)
@@ -21,11 +22,13 @@ const isValid = ref(true)
 // Tab component refs
 const httpTab = ref<InstanceType<typeof HTTPTab> | null>(null)
 const httpsTab = ref<InstanceType<typeof HTTPSTab> | null>(null)
+const corsTab = ref<InstanceType<typeof CORSTab> | null>(null)
 
 // Expose refs for parent access
 defineExpose({
   httpTab,
-  httpsTab
+  httpsTab,
+  corsTab
 })
 
 // Switch tab when initialTab prop changes
@@ -111,6 +114,17 @@ watch(() => props.show, (newVal) => {
             >
               HTTPS
             </button>
+            <button
+              @click="setTab('cors')"
+              :class="[
+                'px-4 py-3 text-sm font-medium border-b-2 transition-colors',
+                currentTab === 'cors'
+                  ? 'border-blue-500 text-blue-500'
+                  : 'border-transparent text-gray-400 hover:text-gray-300'
+              ]"
+            >
+              CORS
+            </button>
           </div>
 
           <!-- Tab Content -->
@@ -123,6 +137,11 @@ watch(() => props.show, (newVal) => {
             <HTTPSTab
               ref="httpsTab"
               v-show="currentTab === 'https'"
+              @validation-change="handleValidationChange"
+            />
+            <CORSTab
+              ref="corsTab"
+              v-show="currentTab === 'cors'"
               @validation-change="handleValidationChange"
             />
           </div>

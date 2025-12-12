@@ -932,6 +932,30 @@ func (a *App) ValidateCORSScript(script string) error {
 	return server.ValidateCORSScript(script)
 }
 
+// SetHTTP2Enabled enables or disables HTTP/2 support for both HTTP and HTTPS servers
+func (a *App) SetHTTP2Enabled(enabled bool) error {
+	// Update config
+	a.config.HTTP2Enabled = enabled
+
+	// If server is running, restart both servers to apply HTTP/2 changes
+	if a.server != nil {
+		// Stop both servers
+		if err := a.server.Stop(); err != nil {
+			return fmt.Errorf("failed to stop servers: %w", err)
+		}
+
+		// Start both servers with new HTTP/2 setting
+		if err := a.server.Start(); err != nil {
+			return fmt.Errorf("failed to restart servers: %w", err)
+		}
+	}
+
+	// Emit event to frontend
+	runtime.EventsEmit(a.ctx, "http2:config-updated", nil)
+
+	return nil
+}
+
 // ValidateCORSHeaderExpression validates a CORS header expression for syntax errors
 func (a *App) ValidateCORSHeaderExpression(expression string) error {
 	return server.ValidateHeaderExpression(expression)

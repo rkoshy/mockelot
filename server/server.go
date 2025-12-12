@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 	"mockelot/models"
 )
 
@@ -59,6 +61,16 @@ func (s *HTTPServer) StartHTTP() error {
 		// Use normal response handler
 		responseHandler := NewResponseHandler(s.config, s.requestLogger)
 		handler = http.HandlerFunc(responseHandler.HandleRequest)
+	}
+
+	// Wrap with h2c if HTTP/2 is enabled (for cleartext HTTP/2)
+	s.configMutex.RLock()
+	http2Enabled := s.config.HTTP2Enabled
+	s.configMutex.RUnlock()
+
+	if http2Enabled {
+		h2s := &http2.Server{}
+		handler = h2c.NewHandler(handler, h2s)
 	}
 
 	// Create HTTP server
@@ -195,6 +207,19 @@ func (s *HTTPServer) StartHTTPS() error {
 		TLSConfig:    tlsConfig,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
+	}
+
+	// Configure HTTP/2 support
+	s.configMutex.RLock()
+	http2Enabled := s.config.HTTP2Enabled
+	s.configMutex.RUnlock()
+
+	if http2Enabled {
+		// Enable HTTP/2 (default behavior, but explicit for clarity)
+		http2.ConfigureServer(s.httpsServer, &http2.Server{})
+	} else {
+		// Disable HTTP/2 by setting TLSNextProto to empty map
+		s.httpsServer.TLSNextProto = make(map[string]func(*http.Server, *tls.Conn, http.Handler))
 	}
 
 	// Start server in a goroutine
