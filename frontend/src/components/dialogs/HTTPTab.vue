@@ -100,7 +100,7 @@ defineExpose({
     <!-- Info -->
     <div class="p-4 bg-gray-700/50 rounded border border-gray-600">
       <p class="text-sm text-gray-300">
-        The HTTP server will listen on this port. HTTP/2 provides better performance with multiplexing and header compression.
+        HTTP/2 provides better performance with multiplexing and header compression.
       </p>
     </div>
   </div>
