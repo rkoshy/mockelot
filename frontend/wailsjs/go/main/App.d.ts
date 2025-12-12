@@ -35,6 +35,8 @@ export function GetServerStatus():Promise<main.ServerStatus>;
 
 export function ImportOpenAPISpecWithDialog(arg1:boolean):Promise<models.AppConfig>;
 
+export function InstallCACertSystem():Promise<void>;
+
 export function LoadConfig():Promise<models.AppConfig>;
 
 export function LogRequest(arg1:models.RequestLog):Promise<void>;
@@ -50,6 +52,8 @@ export function SelectCertFile(arg1:string):Promise<string>;
 export function SetCORSConfig(arg1:models.CORSConfig):Promise<void>;
 
 export function SetCertMode(arg1:string,arg2:models.CertPaths,arg3:Array<string>):Promise<void>;
+
+export function SetHTTP2Enabled(arg1:boolean):Promise<void>;
 
 export function SetHTTPSConfig(arg1:boolean,arg2:number,arg3:boolean):Promise<void>;
 

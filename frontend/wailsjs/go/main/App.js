@@ -66,6 +66,10 @@ export function ImportOpenAPISpecWithDialog(arg1) {
   return window['go']['main']['App']['ImportOpenAPISpecWithDialog'](arg1);
 }
 
+export function InstallCACertSystem() {
+  return window['go']['main']['App']['InstallCACertSystem']();
+}
+
 export function LoadConfig() {
   return window['go']['main']['App']['LoadConfig']();
 }
@@ -96,6 +100,10 @@ export function SetCORSConfig(arg1) {
 
 export function SetCertMode(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetCertMode'](arg1, arg2, arg3);
+}
+
+export function SetHTTP2Enabled(arg1) {
+  return window['go']['main']['App']['SetHTTP2Enabled'](arg1);
 }
 
 export function SetHTTPSConfig(arg1, arg2, arg3) {

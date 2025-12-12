@@ -245,6 +245,7 @@ export namespace models {
 	    items?: ResponseItem[];
 	    // Go type: time
 	    last_modified?: any;
+	    http2_enabled?: boolean;
 	    https_enabled?: boolean;
 	    https_port?: number;
 	    http_to_https_redirect?: boolean;
@@ -263,6 +264,7 @@ export namespace models {
 	        this.responses = this.convertValues(source["responses"], MethodResponse);
 	        this.items = this.convertValues(source["items"], ResponseItem);
 	        this.last_modified = this.convertValues(source["last_modified"], null);
+	        this.http2_enabled = source["http2_enabled"];
 	        this.https_enabled = source["https_enabled"];
 	        this.https_port = source["https_port"];
 	        this.http_to_https_redirect = source["http_to_https_redirect"];

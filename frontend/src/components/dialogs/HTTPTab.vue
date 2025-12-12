@@ -9,6 +9,7 @@ const emit = defineEmits<{
 const serverStore = useServerStore()
 const httpPort = ref(serverStore.port || 8080)
 const httpRedirect = ref(false)
+const http2Enabled = ref(false)
 
 // Load configuration
 function loadHTTPConfig() {
@@ -16,6 +17,7 @@ function loadHTTPConfig() {
   if (config) {
     httpPort.value = config.port || 8080
     httpRedirect.value = config.http_to_https_redirect || false
+    http2Enabled.value = config.http2_enabled || false
   }
 }
 
@@ -32,7 +34,9 @@ watch(httpPort, (newPort) => {
 // Expose values for parent to read
 defineExpose({
   getPort: () => httpPort.value,
-  getRedirect: () => httpRedirect.value
+  getRedirect: () => httpRedirect.value,
+  getHTTP2Enabled: () => http2Enabled.value,
+  loadHTTPConfig
 })
 </script>
 
@@ -78,10 +82,25 @@ defineExpose({
       </div>
     </div>
 
+    <!-- HTTP/2 Support -->
+    <div class="border-t border-gray-700 pt-4">
+      <label class="flex items-center gap-2 cursor-pointer">
+        <input
+          v-model="http2Enabled"
+          type="checkbox"
+          class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500"
+        />
+        <span class="text-sm font-medium text-white">Enable HTTP/2</span>
+      </label>
+      <p class="mt-1 text-xs text-gray-400">
+        Enable HTTP/2 support for both HTTP and HTTPS servers (requires server restart)
+      </p>
+    </div>
+
     <!-- Info -->
     <div class="p-4 bg-gray-700/50 rounded border border-gray-600">
       <p class="text-sm text-gray-300">
-        The HTTP server will listen on this port.
+        The HTTP server will listen on this port. HTTP/2 provides better performance with multiplexing and header compression.
       </p>
     </div>
   </div>

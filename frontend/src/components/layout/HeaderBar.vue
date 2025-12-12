@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed } from 'vue'
 import { useServerStore } from '../../stores/server'
-import { SaveConfig, LoadConfig, SetHTTPSConfig, SetCertMode, SetCORSConfig } from '../../../wailsjs/go/main/App'
+import { SaveConfig, LoadConfig, SetHTTPSConfig, SetCertMode, SetCORSConfig, SetHTTP2Enabled } from '../../../wailsjs/go/main/App'
 import { models } from '../../types/models'
 import ConfirmDialog from '../dialogs/ConfirmDialog.vue'
 import ServerConfigDialog from '../dialogs/ServerConfigDialog.vue'
@@ -107,6 +107,7 @@ async function handleServerConfigApply() {
     // Get configuration from dialog components
     const httpTabRef = serverConfigDialogRef.value?.httpTab
     const httpsTabRef = serverConfigDialogRef.value?.httpsTab
+    const corsTabRef = serverConfigDialogRef.value?.corsTab
 
     // Update HTTP port
     if (httpTabRef?.getPort) {
@@ -118,6 +119,9 @@ async function handleServerConfigApply() {
 
     // Get HTTP redirect setting from HTTP tab
     const httpRedirect = httpTabRef?.getRedirect ? httpTabRef.getRedirect() : false
+
+    // Get HTTP/2 setting from HTTP tab
+    const http2Enabled = httpTabRef?.getHTTP2Enabled ? httpTabRef.getHTTP2Enabled() : false
 
     // Update HTTPS configuration
     if (httpsTabRef?.getConfig) {
@@ -133,6 +137,16 @@ async function handleServerConfigApply() {
         httpsConfig.certNames || []
       )
     }
+
+    // Update CORS configuration
+    if (corsTabRef?.getConfig) {
+      const corsConfig = corsTabRef.getConfig()
+      const corsConfigModel = new models.CORSConfig(corsConfig)
+      await SetCORSConfig(corsConfigModel)
+    }
+
+    // Update HTTP/2 setting
+    await SetHTTP2Enabled(http2Enabled)
 
     // Refresh config from backend to get updated values
     await serverStore.refreshConfig()
