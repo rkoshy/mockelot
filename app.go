@@ -76,12 +76,14 @@ func (a *App) startup(ctx context.Context) {
 	} else {
 		// Apply server config to app config
 		a.config.Port = serverCfg.Port
+		a.config.HTTP2Enabled = serverCfg.HTTP2Enabled
 		a.config.HTTPSEnabled = serverCfg.HTTPSEnabled
 		a.config.HTTPSPort = serverCfg.HTTPSPort
 		a.config.HTTPToHTTPSRedirect = serverCfg.HTTPToHTTPSRedirect
 		a.config.CertMode = serverCfg.CertMode
 		a.config.CertPaths = serverCfg.CertPaths
 		a.config.CertNames = serverCfg.CertNames
+		a.config.CORS = serverCfg.CORS
 		a.status.Port = serverCfg.Port
 	}
 }
@@ -802,12 +804,14 @@ func (a *App) SetHTTPSConfig(enabled bool, port int, redirect bool) error {
 	// Auto-save server config
 	serverCfg := &models.ServerConfig{
 		Port:                a.config.Port,
+		HTTP2Enabled:        a.config.HTTP2Enabled,
 		HTTPSEnabled:        a.config.HTTPSEnabled,
 		HTTPSPort:           a.config.HTTPSPort,
 		HTTPToHTTPSRedirect: a.config.HTTPToHTTPSRedirect,
 		CertMode:            a.config.CertMode,
 		CertPaths:           a.config.CertPaths,
 		CertNames:           a.config.CertNames,
+		CORS:                a.config.CORS,
 	}
 	if err := a.serverConfigMgr.Save(serverCfg); err != nil {
 		fmt.Printf("Warning: failed to save server config: %v\n", err)
@@ -864,12 +868,14 @@ func (a *App) SetCertMode(mode string, certPaths models.CertPaths, certNames []s
 	// Auto-save server config
 	serverCfg := &models.ServerConfig{
 		Port:                a.config.Port,
+		HTTP2Enabled:        a.config.HTTP2Enabled,
 		HTTPSEnabled:        a.config.HTTPSEnabled,
 		HTTPSPort:           a.config.HTTPSPort,
 		HTTPToHTTPSRedirect: a.config.HTTPToHTTPSRedirect,
 		CertMode:            a.config.CertMode,
 		CertPaths:           a.config.CertPaths,
 		CertNames:           a.config.CertNames,
+		CORS:                a.config.CORS,
 	}
 	if err := a.serverConfigMgr.Save(serverCfg); err != nil {
 		fmt.Printf("Warning: failed to save server config: %v\n", err)
@@ -915,6 +921,22 @@ func (a *App) SetCORSConfig(corsConfig models.CORSConfig) error {
 	// Update config
 	a.config.CORS = corsConfig
 
+	// Auto-save server config
+	serverCfg := &models.ServerConfig{
+		Port:                a.config.Port,
+		HTTP2Enabled:        a.config.HTTP2Enabled,
+		HTTPSEnabled:        a.config.HTTPSEnabled,
+		HTTPSPort:           a.config.HTTPSPort,
+		HTTPToHTTPSRedirect: a.config.HTTPToHTTPSRedirect,
+		CertMode:            a.config.CertMode,
+		CertPaths:           a.config.CertPaths,
+		CertNames:           a.config.CertNames,
+		CORS:                a.config.CORS,
+	}
+	if err := a.serverConfigMgr.Save(serverCfg); err != nil {
+		fmt.Printf("Warning: failed to save server config: %v\n", err)
+	}
+
 	// If server is running, update CORS processor
 	if a.server != nil {
 		// The server's response handler will use the updated config
@@ -936,6 +958,22 @@ func (a *App) ValidateCORSScript(script string) error {
 func (a *App) SetHTTP2Enabled(enabled bool) error {
 	// Update config
 	a.config.HTTP2Enabled = enabled
+
+	// Auto-save server config
+	serverCfg := &models.ServerConfig{
+		Port:                a.config.Port,
+		HTTP2Enabled:        a.config.HTTP2Enabled,
+		HTTPSEnabled:        a.config.HTTPSEnabled,
+		HTTPSPort:           a.config.HTTPSPort,
+		HTTPToHTTPSRedirect: a.config.HTTPToHTTPSRedirect,
+		CertMode:            a.config.CertMode,
+		CertPaths:           a.config.CertPaths,
+		CertNames:           a.config.CertNames,
+		CORS:                a.config.CORS,
+	}
+	if err := a.serverConfigMgr.Save(serverCfg); err != nil {
+		fmt.Printf("Warning: failed to save server config: %v\n", err)
+	}
 
 	// If server is running, restart both servers to apply HTTP/2 changes
 	if a.server != nil {
