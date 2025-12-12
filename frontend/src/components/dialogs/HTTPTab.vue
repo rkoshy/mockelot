@@ -93,14 +93,7 @@ defineExpose({
         <span class="text-sm font-medium text-white">Enable HTTP/2</span>
       </label>
       <p class="mt-1 text-xs text-gray-400">
-        Enable HTTP/2 support for both HTTP and HTTPS servers (requires server restart)
-      </p>
-    </div>
-
-    <!-- Info -->
-    <div class="p-4 bg-gray-700/50 rounded border border-gray-600">
-      <p class="text-sm text-gray-300">
-        HTTP/2 provides better performance with multiplexing and header compression.
+        Enable HTTP/2 support for both HTTP and HTTPS servers. Provides better performance with multiplexing and header compression (requires server restart)
       </p>
     </div>
   </div>
