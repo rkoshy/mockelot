@@ -25,6 +25,19 @@ const (
 	ValidationMatchContains = "contains" // Body must contain pattern
 )
 
+// CertMode constants for HTTPS certificate modes
+const (
+	CertModeAuto         = "auto"          // Auto-generate CA and server certs
+	CertModeCAProvided   = "ca-provided"   // User provides CA cert + key
+	CertModeCertProvided = "cert-provided" // User provides server cert + key + bundle
+)
+
+// CORSMode constants for CORS configuration modes
+const (
+	CORSModeHeaders = "headers" // Use header list with JavaScript expressions
+	CORSModeScript  = "script"  // Use custom JavaScript script
+)
+
 // RequestValidation defines how to validate and extract data from request body
 type RequestValidation struct {
 	Mode      string `json:"mode,omitempty" yaml:"mode,omitempty"`             // "none", "static", "regex", "script"
@@ -47,6 +60,7 @@ type MethodResponse struct {
 	ResponseMode       string             `json:"response_mode,omitempty" yaml:"response_mode,omitempty"`       // Response mode: "static", "template", or "script"
 	ScriptBody         string             `json:"script_body,omitempty" yaml:"script_body,omitempty"`           // JavaScript code for script mode
 	RequestValidation  *RequestValidation `json:"request_validation,omitempty" yaml:"request_validation,omitempty"` // Request body validation config
+	UseGlobalCORS      *bool              `json:"use_global_cors,omitempty" yaml:"use_global_cors,omitempty"`   // Whether to use global CORS (nil=use group setting, true=use, false=disable)
 }
 
 // IsEnabled returns whether this response rule is enabled (defaults to true if not set)
@@ -56,11 +70,12 @@ func (r *MethodResponse) IsEnabled() bool {
 
 // ResponseGroup represents a named group of response rules
 type ResponseGroup struct {
-	ID        string           `json:"id,omitempty" yaml:"id,omitempty"`               // Unique identifier for this group
-	Name      string           `json:"name" yaml:"name"`                               // Display name for the group
-	Expanded  *bool            `json:"expanded,omitempty" yaml:"expanded,omitempty"`   // Whether group is expanded in UI (default: true)
-	Enabled   *bool            `json:"enabled,omitempty" yaml:"enabled,omitempty"`     // Whether all responses in group are enabled (default: true)
-	Responses []MethodResponse `json:"responses,omitempty" yaml:"responses,omitempty"` // Responses within this group
+	ID            string           `json:"id,omitempty" yaml:"id,omitempty"`                               // Unique identifier for this group
+	Name          string           `json:"name" yaml:"name"`                                               // Display name for the group
+	Expanded      *bool            `json:"expanded,omitempty" yaml:"expanded,omitempty"`                   // Whether group is expanded in UI (default: true)
+	Enabled       *bool            `json:"enabled,omitempty" yaml:"enabled,omitempty"`                     // Whether all responses in group are enabled (default: true)
+	UseGlobalCORS *bool            `json:"use_global_cors,omitempty" yaml:"use_global_cors,omitempty"`     // Whether to use global CORS (nil=enabled, true=use, false=disable)
+	Responses     []MethodResponse `json:"responses,omitempty" yaml:"responses,omitempty"`                 // Responses within this group
 }
 
 // IsExpanded returns whether this group is expanded (defaults to true if not set)
@@ -81,12 +96,105 @@ type ResponseItem struct {
 	Group    *ResponseGroup  `json:"group,omitempty" yaml:"group,omitempty"`       // Set if Type is "group"
 }
 
-// AppConfig stores the application's configuration
+// CORSHeader represents a single CORS header with JavaScript expression
+type CORSHeader struct {
+	Name       string `json:"name" yaml:"name"`               // Header name (e.g., "Access-Control-Allow-Origin")
+	Expression string `json:"expression" yaml:"expression"`   // JavaScript expression to evaluate
+}
+
+// CORSConfig stores global CORS configuration
+type CORSConfig struct {
+	Enabled              bool         `json:"enabled" yaml:"enabled"`                                             // Whether global CORS is enabled
+	Mode                 string       `json:"mode,omitempty" yaml:"mode,omitempty"`                               // "headers" or "script"
+	HeaderExpressions    []CORSHeader `json:"header_expressions,omitempty" yaml:"header_expressions,omitempty"`   // Header list mode: headers with JS expressions
+	Script               string       `json:"script,omitempty" yaml:"script,omitempty"`                           // Script mode: custom JavaScript
+	OptionsDefaultStatus int          `json:"options_default_status,omitempty" yaml:"options_default_status,omitempty"` // Default status for OPTIONS (200 or 204)
+}
+
+// CACertInfo contains information about the CA certificate
+type CACertInfo struct {
+	Exists    bool      `json:"exists"`              // Whether CA cert exists
+	Generated time.Time `json:"generated,omitempty"` // When CA was generated
+}
+
+// CertPaths contains file paths for user-provided certificates
+type CertPaths struct {
+	CACertPath       string `json:"ca_cert_path,omitempty"`
+	CAKeyPath        string `json:"ca_key_path,omitempty"`
+	ServerCertPath   string `json:"server_cert_path,omitempty"`
+	ServerKeyPath    string `json:"server_key_path,omitempty"`
+	ServerBundlePath string `json:"server_bundle_path,omitempty"`
+}
+
+// ServerConfig stores server-level settings (auto-saved to ~/.mockelot/server-config.yaml)
+type ServerConfig struct {
+	// HTTP Server
+	Port int `json:"port" yaml:"port"` // HTTP server port
+
+	// HTTPS Configuration
+	HTTPSEnabled        bool      `json:"https_enabled,omitempty" yaml:"https_enabled,omitempty"`                       // Whether HTTPS is enabled
+	HTTPSPort           int       `json:"https_port,omitempty" yaml:"https_port,omitempty"`                             // HTTPS server port
+	HTTPToHTTPSRedirect bool      `json:"http_to_https_redirect,omitempty" yaml:"http_to_https_redirect,omitempty"`     // Whether to redirect HTTP to HTTPS
+	CertMode            string    `json:"cert_mode,omitempty" yaml:"cert_mode,omitempty"`                               // Certificate mode: "auto", "ca-provided", "cert-provided"
+	CertPaths           CertPaths `json:"cert_paths,omitempty" yaml:"cert_paths,omitempty"`                             // Paths to user-provided certificates
+	CertNames           []string  `json:"cert_names,omitempty" yaml:"cert_names,omitempty"`                             // Custom DNS names and IP addresses for certificate (CN/SAN)
+
+	LastModified time.Time `json:"last_modified,omitempty" yaml:"last_modified,omitempty"` // Last time configuration was modified
+}
+
+// UserConfig stores user-defined request processing rules (manual save/load)
+type UserConfig struct {
+	Responses    []MethodResponse `json:"responses,omitempty" yaml:"responses,omitempty"` // Legacy: flat response list (for backward compatibility)
+	Items        []ResponseItem   `json:"items,omitempty" yaml:"items,omitempty"`         // New: mixed list of responses and groups
+	CORS         CORSConfig       `json:"cors,omitempty" yaml:"cors,omitempty"`           // Global CORS configuration
+	LastModified time.Time        `json:"last_modified,omitempty" yaml:"last_modified,omitempty"` // Last time configuration was modified
+}
+
+// GetAllResponses returns all enabled responses in priority order (flattened from items and legacy responses)
+func (c *UserConfig) GetAllResponses() []MethodResponse {
+	var result []MethodResponse
+
+	// First, process items (new format)
+	for _, item := range c.Items {
+		switch item.Type {
+		case "response":
+			if item.Response != nil {
+				result = append(result, *item.Response)
+			}
+		case "group":
+			if item.Group != nil && item.Group.IsEnabled() {
+				result = append(result, item.Group.Responses...)
+			}
+		}
+	}
+
+	// Then, process legacy responses (if no items exist)
+	if len(c.Items) == 0 {
+		result = append(result, c.Responses...)
+	}
+
+	return result
+}
+
+// AppConfig stores the application's configuration (DEPRECATED - split into ServerConfig and UserConfig)
+// Kept for backward compatibility with existing code
 type AppConfig struct {
-	Port         int              `json:"port" yaml:"port"`                                       // Server port
+	// HTTP Server
+	Port         int              `json:"port" yaml:"port"`                                       // HTTP server port
 	Responses    []MethodResponse `json:"responses,omitempty" yaml:"responses,omitempty"`         // Legacy: flat response list (for backward compatibility)
 	Items        []ResponseItem   `json:"items,omitempty" yaml:"items,omitempty"`                 // New: mixed list of responses and groups
 	LastModified time.Time        `json:"last_modified,omitempty" yaml:"last_modified,omitempty"` // Last time configuration was modified
+
+	// HTTPS Configuration
+	HTTPSEnabled        bool      `json:"https_enabled,omitempty" yaml:"https_enabled,omitempty"`                       // Whether HTTPS is enabled
+	HTTPSPort           int       `json:"https_port,omitempty" yaml:"https_port,omitempty"`                             // HTTPS server port
+	HTTPToHTTPSRedirect bool      `json:"http_to_https_redirect,omitempty" yaml:"http_to_https_redirect,omitempty"`     // Whether to redirect HTTP to HTTPS
+	CertMode            string    `json:"cert_mode,omitempty" yaml:"cert_mode,omitempty"`                               // Certificate mode: "auto", "ca-provided", "cert-provided"
+	CertPaths           CertPaths `json:"cert_paths,omitempty" yaml:"cert_paths,omitempty"`                             // Paths to user-provided certificates
+	CertNames           []string  `json:"cert_names,omitempty" yaml:"cert_names,omitempty"`                             // Custom DNS names and IP addresses for certificate (CN/SAN)
+
+	// CORS Configuration
+	CORS CORSConfig `json:"cors,omitempty" yaml:"cors,omitempty"` // Global CORS configuration
 }
 
 // GetAllResponses returns all enabled responses in priority order (flattened from items and legacy responses)

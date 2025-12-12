@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"gopkg.in/yaml.v3"
+	"mockelot/config"
 	"mockelot/models"
 	"mockelot/openapi"
 	"mockelot/server"
@@ -24,12 +25,13 @@ type ServerStatus struct {
 
 // App struct
 type App struct {
-	ctx         context.Context
-	server      *server.HTTPServer
-	config      *models.AppConfig
-	requestLogs []models.RequestLog
-	logMutex    sync.RWMutex
-	status      ServerStatus
+	ctx               context.Context
+	server            *server.HTTPServer
+	config            *models.AppConfig
+	serverConfigMgr   *config.ServerConfigManager
+	requestLogs       []models.RequestLog
+	logMutex          sync.RWMutex
+	status            ServerStatus
 }
 
 // NewApp creates a new App application struct
@@ -49,7 +51,8 @@ func NewApp() *App {
 				},
 			},
 		},
-		requestLogs: make([]models.RequestLog, 0),
+		serverConfigMgr: config.NewServerConfigManager(""),
+		requestLogs:     make([]models.RequestLog, 0),
 		status: ServerStatus{
 			Running: false,
 			Port:    8080,
@@ -60,6 +63,23 @@ func NewApp() *App {
 // startup is called when the app starts
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+
+	// Load server configuration
+	serverCfg, err := a.serverConfigMgr.Load()
+	if err != nil {
+		// Log error but continue with defaults
+		fmt.Printf("Failed to load server config, using defaults: %v\n", err)
+	} else {
+		// Apply server config to app config
+		a.config.Port = serverCfg.Port
+		a.config.HTTPSEnabled = serverCfg.HTTPSEnabled
+		a.config.HTTPSPort = serverCfg.HTTPSPort
+		a.config.HTTPToHTTPSRedirect = serverCfg.HTTPToHTTPSRedirect
+		a.config.CertMode = serverCfg.CertMode
+		a.config.CertPaths = serverCfg.CertPaths
+		a.config.CertNames = serverCfg.CertNames
+		a.status.Port = serverCfg.Port
+	}
 }
 
 // shutdown is called when the app is closing
@@ -306,7 +326,7 @@ func (a *App) ReorderResponses(ids []string) error {
 	return nil
 }
 
-// SaveConfig saves the configuration to a YAML file
+// SaveConfig saves the user configuration (request processing rules + CORS) to a YAML file
 func (a *App) SaveConfig() error {
 	// Open save dialog
 	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
@@ -323,6 +343,13 @@ func (a *App) SaveConfig() error {
 		return nil // User cancelled
 	}
 
+	// Create UserConfig with only request processing rules and CORS
+	userConfig := &models.UserConfig{
+		Responses: a.config.Responses,
+		Items:     a.config.Items,
+		CORS:      a.config.CORS,
+	}
+
 	// Save to YAML file
 	file, err := os.Create(path)
 	if err != nil {
@@ -333,10 +360,10 @@ func (a *App) SaveConfig() error {
 	encoder := yaml.NewEncoder(file)
 	encoder.SetIndent(2)
 	defer encoder.Close()
-	return encoder.Encode(a.config)
+	return encoder.Encode(userConfig)
 }
 
-// LoadConfig loads configuration from a YAML file
+// LoadConfig loads user configuration (request processing rules + CORS) from a YAML file
 func (a *App) LoadConfig() (*models.AppConfig, error) {
 	// Open file dialog
 	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
@@ -359,20 +386,39 @@ func (a *App) LoadConfig() (*models.AppConfig, error) {
 	}
 	defer file.Close()
 
-	var cfg models.AppConfig
+	var userCfg models.UserConfig
 	decoder := yaml.NewDecoder(file)
-	if err := decoder.Decode(&cfg); err != nil {
+	if err := decoder.Decode(&userCfg); err != nil {
 		return nil, fmt.Errorf("could not decode config: %v", err)
 	}
 
 	// Ensure all responses have IDs
-	for i := range cfg.Responses {
-		if cfg.Responses[i].ID == "" {
-			cfg.Responses[i].ID = uuid.New().String()
+	for i := range userCfg.Responses {
+		if userCfg.Responses[i].ID == "" {
+			userCfg.Responses[i].ID = uuid.New().String()
+		}
+	}
+	for i := range userCfg.Items {
+		if userCfg.Items[i].Type == "response" && userCfg.Items[i].Response != nil {
+			if userCfg.Items[i].Response.ID == "" {
+				userCfg.Items[i].Response.ID = uuid.New().String()
+			}
+		} else if userCfg.Items[i].Type == "group" && userCfg.Items[i].Group != nil {
+			if userCfg.Items[i].Group.ID == "" {
+				userCfg.Items[i].Group.ID = uuid.New().String()
+			}
+			for j := range userCfg.Items[i].Group.Responses {
+				if userCfg.Items[i].Group.Responses[j].ID == "" {
+					userCfg.Items[i].Group.Responses[j].ID = uuid.New().String()
+				}
+			}
 		}
 	}
 
-	a.config = &cfg
+	// Update only the request processing rules and CORS (preserve server settings)
+	a.config.Responses = userCfg.Responses
+	a.config.Items = userCfg.Items
+	a.config.CORS = userCfg.CORS
 
 	// Update server if running
 	if a.server != nil {
@@ -380,9 +426,10 @@ func (a *App) LoadConfig() (*models.AppConfig, error) {
 	}
 
 	// Emit event to frontend
-	runtime.EventsEmit(a.ctx, "responses:updated", cfg.Responses)
+	runtime.EventsEmit(a.ctx, "responses:updated", userCfg.Responses)
+	runtime.EventsEmit(a.ctx, "items:updated", userCfg.Items)
 
-	return &cfg, nil
+	return a.config, nil
 }
 
 // ImportOpenAPISpecWithDialog imports an OpenAPI/Swagger specification file
@@ -507,6 +554,256 @@ func (a *App) ExportLogs(format string) error {
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(logs)
+}
+
+// HTTPS Certificate Management Methods
+
+// GetCACertInfo returns information about the CA certificate
+func (a *App) GetCACertInfo() (models.CACertInfo, error) {
+	certManager, err := server.NewCertificateManager()
+	if err != nil {
+		return models.CACertInfo{}, fmt.Errorf("failed to initialize certificate manager: %w", err)
+	}
+
+	info := models.CACertInfo{
+		Exists: certManager.CAExists(),
+	}
+
+	if info.Exists {
+		timestamp, err := certManager.GetCATimestamp()
+		if err == nil {
+			info.Generated = timestamp
+		}
+	}
+
+	return info, nil
+}
+
+// GetDefaultCertNames returns the default DNS names and IP addresses that will be used for certificates
+// Returns a list of strings containing: localhost, machine hostname, and interface IP for default gateway
+func (a *App) GetDefaultCertNames() ([]string, error) {
+	dnsNames, ipAddresses := server.GetDefaultCertNames()
+
+	// Combine into a single list of strings
+	var result []string
+	result = append(result, dnsNames...)
+	for _, ip := range ipAddresses {
+		result = append(result, ip.String())
+	}
+
+	return result, nil
+}
+
+// RegenerateCA regenerates the CA certificate and restarts the HTTPS server
+func (a *App) RegenerateCA() error {
+	certManager, err := server.NewCertificateManager()
+	if err != nil {
+		return fmt.Errorf("failed to initialize certificate manager: %w", err)
+	}
+
+	// Generate new CA certificate
+	_, _, err = certManager.GenerateCA()
+	if err != nil {
+		return fmt.Errorf("failed to generate CA certificate: %w", err)
+	}
+
+	// Restart HTTPS server if it's running
+	if a.server != nil && a.status.Running && a.config.HTTPSEnabled {
+		err = a.server.RestartHTTPS()
+		if err != nil {
+			return fmt.Errorf("failed to restart HTTPS server: %w", err)
+		}
+	}
+
+	// Emit event to frontend
+	runtime.EventsEmit(a.ctx, "ca:regenerated", nil)
+
+	return nil
+}
+
+// DownloadCACert returns the CA certificate PEM for download
+func (a *App) DownloadCACert() (string, error) {
+	certManager, err := server.NewCertificateManager()
+	if err != nil {
+		return "", fmt.Errorf("failed to initialize certificate manager: %w", err)
+	}
+
+	if !certManager.CAExists() {
+		return "", fmt.Errorf("CA certificate does not exist")
+	}
+
+	certPEM, err := certManager.GetCACertPEM()
+	if err != nil {
+		return "", fmt.Errorf("failed to read CA certificate: %w", err)
+	}
+
+	// Show save dialog
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Download CA Certificate",
+		DefaultFilename: "mockelot-ca.crt",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Certificate Files", Pattern: "*.crt;*.pem"},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return "", nil // User cancelled
+	}
+
+	// Write certificate to file
+	err = os.WriteFile(path, certPEM, 0644)
+	if err != nil {
+		return "", fmt.Errorf("failed to save CA certificate: %w", err)
+	}
+
+	return path, nil
+}
+
+// SetHTTPSConfig updates HTTPS configuration
+func (a *App) SetHTTPSConfig(enabled bool, port int, redirect bool) error {
+	// Update config
+	a.config.HTTPSEnabled = enabled
+	a.config.HTTPSPort = port
+	a.config.HTTPToHTTPSRedirect = redirect
+
+	// Auto-save server config
+	serverCfg := &models.ServerConfig{
+		Port:                a.config.Port,
+		HTTPSEnabled:        a.config.HTTPSEnabled,
+		HTTPSPort:           a.config.HTTPSPort,
+		HTTPToHTTPSRedirect: a.config.HTTPToHTTPSRedirect,
+		CertMode:            a.config.CertMode,
+		CertPaths:           a.config.CertPaths,
+		CertNames:           a.config.CertNames,
+	}
+	if err := a.serverConfigMgr.Save(serverCfg); err != nil {
+		fmt.Printf("Warning: failed to save server config: %v\n", err)
+	}
+
+	// If server is running, apply changes
+	if a.server != nil && a.status.Running {
+		// Update server config
+		a.server.UpdateConfig(a.config)
+
+		// If HTTPS is now enabled and wasn't before, start HTTPS server
+		if enabled {
+			err := a.server.StartHTTPS()
+			if err != nil {
+				return fmt.Errorf("failed to start HTTPS server: %w", err)
+			}
+		} else {
+			// If HTTPS is now disabled, stop HTTPS server
+			err := a.server.StopHTTPS()
+			if err != nil {
+				return fmt.Errorf("failed to stop HTTPS server: %w", err)
+			}
+		}
+
+		// Restart HTTP server to apply redirect changes
+		err := a.server.StopHTTP()
+		if err != nil {
+			return fmt.Errorf("failed to stop HTTP server: %w", err)
+		}
+		err = a.server.StartHTTP()
+		if err != nil {
+			return fmt.Errorf("failed to restart HTTP server: %w", err)
+		}
+	}
+
+	// Emit event to frontend
+	runtime.EventsEmit(a.ctx, "https:config-updated", nil)
+
+	return nil
+}
+
+// SetCertMode updates the certificate mode, paths, and custom cert names
+func (a *App) SetCertMode(mode string, certPaths models.CertPaths, certNames []string) error {
+	// Validate certificate mode
+	if mode != models.CertModeAuto && mode != models.CertModeCAProvided && mode != models.CertModeCertProvided {
+		return fmt.Errorf("invalid certificate mode: %s", mode)
+	}
+
+	// Update config
+	a.config.CertMode = mode
+	a.config.CertPaths = certPaths
+	a.config.CertNames = certNames
+
+	// Auto-save server config
+	serverCfg := &models.ServerConfig{
+		Port:                a.config.Port,
+		HTTPSEnabled:        a.config.HTTPSEnabled,
+		HTTPSPort:           a.config.HTTPSPort,
+		HTTPToHTTPSRedirect: a.config.HTTPToHTTPSRedirect,
+		CertMode:            a.config.CertMode,
+		CertPaths:           a.config.CertPaths,
+		CertNames:           a.config.CertNames,
+	}
+	if err := a.serverConfigMgr.Save(serverCfg); err != nil {
+		fmt.Printf("Warning: failed to save server config: %v\n", err)
+	}
+
+	// If server is running and HTTPS is enabled, restart HTTPS server
+	if a.server != nil && a.status.Running && a.config.HTTPSEnabled {
+		err := a.server.RestartHTTPS()
+		if err != nil {
+			return fmt.Errorf("failed to restart HTTPS server: %w", err)
+		}
+	}
+
+	// Emit event to frontend
+	runtime.EventsEmit(a.ctx, "cert:mode-updated", nil)
+
+	return nil
+}
+
+// SelectCertFile shows a file picker for certificate files
+func (a *App) SelectCertFile(title string) (string, error) {
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: title,
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Certificate Files", Pattern: "*.pem;*.crt;*.key"},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// CORS Configuration Methods
+
+// GetCORSConfig returns the current CORS configuration
+func (a *App) GetCORSConfig() *models.CORSConfig {
+	return &a.config.CORS
+}
+
+// SetCORSConfig updates the CORS configuration
+func (a *App) SetCORSConfig(corsConfig models.CORSConfig) error {
+	// Update config
+	a.config.CORS = corsConfig
+
+	// If server is running, update CORS processor
+	if a.server != nil {
+		// The server's response handler will use the updated config
+		a.server.UpdateConfig(a.config)
+	}
+
+	// Emit event to frontend
+	runtime.EventsEmit(a.ctx, "cors:config-updated", nil)
+
+	return nil
+}
+
+// ValidateCORSScript validates a CORS script for syntax errors
+func (a *App) ValidateCORSScript(script string) error {
+	return server.ValidateCORSScript(script)
+}
+
+// ValidateCORSHeaderExpression validates a CORS header expression for syntax errors
+func (a *App) ValidateCORSHeaderExpression(expression string) error {
+	return server.ValidateHeaderExpression(expression)
 }
 
 // LogRequest implements the server.RequestLogger interface

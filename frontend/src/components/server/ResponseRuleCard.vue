@@ -146,6 +146,19 @@ const bodyPlaceholder = computed(() => {
   return contentType.value ? 'Enter response body...' : 'No body (select content type to add one)'
 })
 
+// CORS configuration
+const handlesOptions = computed(() => localResponse.value.methods.includes('OPTIONS'))
+
+const useGlobalCORS = computed({
+  get: () => {
+    // If undefined, return true (default: use global CORS)
+    return localResponse.value.use_global_cors !== false
+  },
+  set: (value: boolean) => {
+    localResponse.value.use_global_cors = value
+  }
+})
+
 // Clear content type and body
 function clearBody() {
   localResponse.value.body = ''
@@ -369,6 +382,29 @@ function onDrop(e: DragEvent) {
             {{ method }}
           </button>
         </div>
+      </div>
+
+      <!-- Global CORS -->
+      <div class="space-y-1">
+        <label class="flex items-center gap-2 cursor-pointer" :class="{ 'opacity-50 cursor-not-allowed': handlesOptions }">
+          <input
+            v-model="useGlobalCORS"
+            type="checkbox"
+            :disabled="handlesOptions"
+            @change="applyChanges"
+            class="w-3.5 h-3.5 rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+          <span class="text-xs font-medium text-gray-400">Use Global CORS</span>
+        </label>
+        <p v-if="handlesOptions" class="text-[10px] text-yellow-400 ml-5">
+          ℹ️ CORS override disabled - this entry handles OPTIONS requests
+        </p>
+        <p v-else-if="useGlobalCORS" class="text-[10px] text-gray-500 ml-5">
+          Global CORS headers will be applied to this response (if enabled in server config)
+        </p>
+        <p v-else class="text-[10px] text-gray-500 ml-5">
+          Global CORS will NOT be applied to this response, even if enabled globally
+        </p>
       </div>
 
       <!-- Request Validation (Accordion) -->

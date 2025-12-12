@@ -18,12 +18,28 @@ export function DeleteResponse(arg1) {
   return window['go']['main']['App']['DeleteResponse'](arg1);
 }
 
+export function DownloadCACert() {
+  return window['go']['main']['App']['DownloadCACert']();
+}
+
 export function ExportLogs(arg1) {
   return window['go']['main']['App']['ExportLogs'](arg1);
 }
 
+export function GetCACertInfo() {
+  return window['go']['main']['App']['GetCACertInfo']();
+}
+
+export function GetCORSConfig() {
+  return window['go']['main']['App']['GetCORSConfig']();
+}
+
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
+}
+
+export function GetDefaultCertNames() {
+  return window['go']['main']['App']['GetDefaultCertNames']();
 }
 
 export function GetItems() {
@@ -58,12 +74,32 @@ export function LogRequest(arg1) {
   return window['go']['main']['App']['LogRequest'](arg1);
 }
 
+export function RegenerateCA() {
+  return window['go']['main']['App']['RegenerateCA']();
+}
+
 export function ReorderResponses(arg1) {
   return window['go']['main']['App']['ReorderResponses'](arg1);
 }
 
 export function SaveConfig() {
   return window['go']['main']['App']['SaveConfig']();
+}
+
+export function SelectCertFile(arg1) {
+  return window['go']['main']['App']['SelectCertFile'](arg1);
+}
+
+export function SetCORSConfig(arg1) {
+  return window['go']['main']['App']['SetCORSConfig'](arg1);
+}
+
+export function SetCertMode(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetCertMode'](arg1, arg2, arg3);
+}
+
+export function SetHTTPSConfig(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetHTTPSConfig'](arg1, arg2, arg3);
 }
 
 export function SetItems(arg1) {
@@ -88,4 +124,12 @@ export function UpdateResponse(arg1) {
 
 export function UpdateResponseByID(arg1) {
   return window['go']['main']['App']['UpdateResponseByID'](arg1);
+}
+
+export function ValidateCORSHeaderExpression(arg1) {
+  return window['go']['main']['App']['ValidateCORSHeaderExpression'](arg1);
+}
+
+export function ValidateCORSScript(arg1) {
+  return window['go']['main']['App']['ValidateCORSScript'](arg1);
 }

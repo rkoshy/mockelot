@@ -20,12 +20,14 @@ type ResponseHandler struct {
 	config        *models.AppConfig
 	configMutex   sync.RWMutex
 	requestLogger RequestLogger
+	corsProcessor *CORSProcessor
 }
 
 func NewResponseHandler(config *models.AppConfig, logger RequestLogger) *ResponseHandler {
 	return &ResponseHandler{
 		config:        config,
 		requestLogger: logger,
+		corsProcessor: NewCORSProcessor(&config.CORS),
 	}
 }
 
@@ -34,48 +36,162 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 	bodyBytes, _ := io.ReadAll(r.Body)
 	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
+	// Check if this is a CORS preflight that should be handled globally
+	h.configMutex.RLock()
+	if r.Method == "OPTIONS" && h.shouldHandleCORSPreflight(r) {
+		h.configMutex.RUnlock()
+		h.handleCORSPreflight(w, r)
+		return
+	}
+	h.configMutex.RUnlock()
+
 	// Find matching response configuration and extract path parameters
 	h.configMutex.RLock()
 	var matchedResponse *models.MethodResponse
+	var matchedGroup *models.ResponseGroup
 	var pathParams map[string]string
 	var extractedVars map[string]interface{}
-	allResponses := h.config.GetAllResponses()
-	for i := range allResponses {
-		resp := &allResponses[i]
-		// Skip disabled responses
-		if !resp.IsEnabled() {
-			continue
-		}
 
-		// Check if method matches
-		methodMatches := false
-		for _, method := range resp.Methods {
-			if method == r.Method {
-				methodMatches = true
+	// Iterate through items to preserve group information
+	for _, item := range h.config.Items {
+		if item.Type == "response" && item.Response != nil {
+			resp := item.Response
+			// Skip disabled responses
+			if !resp.IsEnabled() {
+				continue
+			}
+
+			// Check if method matches
+			methodMatches := false
+			for _, method := range resp.Methods {
+				if method == r.Method {
+					methodMatches = true
+					break
+				}
+			}
+
+			// Check if path matches and extract path parameters
+			if methodMatches {
+				matchResult := matchPathPatternWithParams(resp.PathPattern, r.URL.Path)
+				if matchResult.Matches {
+					// Build initial context for validation (without vars yet)
+					tempContext := BuildRequestContext(r, bodyBytes, matchResult.PathParams)
+
+					// Run request body validation if configured
+					validationResult := ValidateRequest(resp.RequestValidation, string(bodyBytes), tempContext)
+					if !validationResult.Valid {
+						// Validation failed - skip this response and try next
+						log.Printf("Validation failed for %s %s: %s", r.Method, r.URL.Path, validationResult.Error)
+						continue
+					}
+
+					// Validation passed - use this response
+					matchedResponse = resp
+					matchedGroup = nil // No group for standalone responses
+					pathParams = matchResult.PathParams
+					extractedVars = validationResult.Vars
+					break
+				}
+			}
+		} else if item.Type == "group" && item.Group != nil {
+			group := item.Group
+			// Skip disabled groups
+			if !group.IsEnabled() {
+				continue
+			}
+
+			// Check responses within the group
+			for i := range group.Responses {
+				resp := &group.Responses[i]
+				// Skip disabled responses
+				if !resp.IsEnabled() {
+					continue
+				}
+
+				// Check if method matches
+				methodMatches := false
+				for _, method := range resp.Methods {
+					if method == r.Method {
+						methodMatches = true
+						break
+					}
+				}
+
+				// Check if path matches and extract path parameters
+				if methodMatches {
+					matchResult := matchPathPatternWithParams(resp.PathPattern, r.URL.Path)
+					if matchResult.Matches {
+						// Build initial context for validation (without vars yet)
+						tempContext := BuildRequestContext(r, bodyBytes, matchResult.PathParams)
+
+						// Run request body validation if configured
+						validationResult := ValidateRequest(resp.RequestValidation, string(bodyBytes), tempContext)
+						if !validationResult.Valid {
+							// Validation failed - skip this response and try next
+							log.Printf("Validation failed for %s %s: %s", r.Method, r.URL.Path, validationResult.Error)
+							continue
+						}
+
+						// Validation passed - use this response
+						matchedResponse = resp
+						matchedGroup = group
+						pathParams = matchResult.PathParams
+						extractedVars = validationResult.Vars
+						break
+					}
+				}
+			}
+
+			if matchedResponse != nil {
 				break
 			}
 		}
 
-		// Check if path matches and extract path parameters
-		if methodMatches {
-			matchResult := matchPathPatternWithParams(resp.PathPattern, r.URL.Path)
-			if matchResult.Matches {
-				// Build initial context for validation (without vars yet)
-				tempContext := BuildRequestContext(r, bodyBytes, matchResult.PathParams)
+		if matchedResponse != nil {
+			break
+		}
+	}
 
-				// Run request body validation if configured
-				validationResult := ValidateRequest(resp.RequestValidation, string(bodyBytes), tempContext)
-				if !validationResult.Valid {
-					// Validation failed - skip this response and try next
-					log.Printf("Validation failed for %s %s: %s", r.Method, r.URL.Path, validationResult.Error)
-					continue
+	// Fallback to legacy responses if no items matched
+	if matchedResponse == nil && len(h.config.Items) == 0 {
+		for i := range h.config.Responses {
+			resp := &h.config.Responses[i]
+			// Skip disabled responses
+			if !resp.IsEnabled() {
+				continue
+			}
+
+			// Check if method matches
+			methodMatches := false
+			for _, method := range resp.Methods {
+				if method == r.Method {
+					methodMatches = true
+					break
 				}
+			}
 
-				// Validation passed - use this response
-				matchedResponse = resp
-				pathParams = matchResult.PathParams
-				extractedVars = validationResult.Vars
-				break
+			// Check if path matches and extract path parameters
+			if methodMatches {
+				matchResult := matchPathPatternWithParams(resp.PathPattern, r.URL.Path)
+				if matchResult.Matches {
+					// Build initial context for validation (without vars yet)
+					tempContext := BuildRequestContext(r, bodyBytes, matchResult.PathParams)
+
+					// Run request body validation if configured
+					validationResult := ValidateRequest(resp.RequestValidation, string(bodyBytes), tempContext)
+					if !validationResult.Valid {
+						// Validation failed - skip this response and try next
+						log.Printf("Validation failed for %s %s: %s", r.Method, r.URL.Path, validationResult.Error)
+						continue
+					}
+
+					// Validation passed - use this response
+					matchedResponse = resp
+					matchedGroup = nil
+					pathParams = matchResult.PathParams
+					extractedVars = validationResult.Vars
+					break
+				}
 			}
 		}
 	}
@@ -124,6 +240,14 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 	if matchedResponse == nil {
 		http.Error(w, "No matching response configuration", http.StatusNotFound)
 		return
+	}
+
+	// Apply CORS headers if needed
+	if h.shouldApplyCORS(matchedResponse, matchedGroup, r) {
+		corsHeaders := h.corsProcessor.ProcessCORS(r)
+		for name, value := range corsHeaders {
+			w.Header().Set(name, value)
+		}
 	}
 
 	// Process response based on mode
@@ -218,4 +342,103 @@ func (h *ResponseHandler) processResponse(
 	}
 
 	return
+}
+
+// shouldHandleCORSPreflight checks if global CORS should handle an OPTIONS request
+func (h *ResponseHandler) shouldHandleCORSPreflight(r *http.Request) bool {
+	// Check if global CORS is enabled
+	if !h.config.CORS.Enabled {
+		return false
+	}
+
+	// Check if there's an explicit OPTIONS handler for this path
+	allResponses := h.config.GetAllResponses()
+	for i := range allResponses {
+		resp := &allResponses[i]
+		if !resp.IsEnabled() {
+			continue
+		}
+
+		// Check if this response handles OPTIONS
+		for _, method := range resp.Methods {
+			if method == "OPTIONS" {
+				// Check if path matches
+				matchResult := matchPathPatternWithParams(resp.PathPattern, r.URL.Path)
+				if matchResult.Matches {
+					// There's an explicit OPTIONS handler, don't use global CORS
+					return false
+				}
+			}
+		}
+	}
+
+	// No explicit OPTIONS handler, use global CORS
+	return true
+}
+
+// handleCORSPreflight handles a CORS preflight request
+func (h *ResponseHandler) handleCORSPreflight(w http.ResponseWriter, r *http.Request) {
+	// Process CORS headers
+	corsHeaders := h.corsProcessor.ProcessCORS(r)
+	for name, value := range corsHeaders {
+		w.Header().Set(name, value)
+	}
+
+	// Set status code (default to 204 if not specified)
+	status := h.config.CORS.OptionsDefaultStatus
+	if status == 0 {
+		status = http.StatusNoContent // 204
+	}
+
+	w.WriteHeader(status)
+}
+
+// shouldApplyCORS determines if CORS headers should be applied to a response
+func (h *ResponseHandler) shouldApplyCORS(response *models.MethodResponse, group *models.ResponseGroup, r *http.Request) bool {
+	// If global CORS is not enabled, return false
+	if !h.config.CORS.Enabled {
+		return false
+	}
+
+	// If response explicitly handles OPTIONS, don't apply global CORS
+	if response != nil {
+		for _, method := range response.Methods {
+			if method == "OPTIONS" {
+				return false
+			}
+		}
+	}
+
+	// Check per-entry override
+	if response != nil && response.UseGlobalCORS != nil {
+		return *response.UseGlobalCORS
+	}
+
+	// Check per-group override
+	if group != nil && group.UseGlobalCORS != nil {
+		return *group.UseGlobalCORS
+	}
+
+	// Default: use global CORS
+	return true
+}
+
+// findGroupForResponse finds the group that contains the given response
+func (h *ResponseHandler) findGroupForResponse(response *models.MethodResponse) *models.ResponseGroup {
+	if response == nil {
+		return nil
+	}
+
+	// Search through items to find the group containing this response
+	for _, item := range h.config.Items {
+		if item.Type == "group" && item.Group != nil {
+			for _, groupResp := range item.Group.Responses {
+				if groupResp.ID == response.ID {
+					return item.Group
+				}
+			}
+		}
+	}
+
+	return nil
 }

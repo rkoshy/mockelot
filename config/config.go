@@ -28,6 +28,38 @@ func NewConfigManager(customPath string) *ConfigManager {
 	}
 }
 
+// migrateConfig applies migrations to ensure backward compatibility with older config versions
+func migrateConfig(config *models.AppConfig) {
+	// Set default HTTPS port if not set
+	if config.HTTPSPort == 0 {
+		config.HTTPSPort = 8443
+	}
+
+	// Set default HTTPS cert mode if not set
+	if config.CertMode == "" {
+		config.CertMode = models.CertModeAuto
+	}
+
+	// Set default CORS options status if not set
+	if config.CORS.OptionsDefaultStatus == 0 {
+		config.CORS.OptionsDefaultStatus = 200
+	}
+
+	// Set default CORS mode if enabled but mode not set
+	if config.CORS.Enabled && config.CORS.Mode == "" {
+		config.CORS.Mode = models.CORSModeHeaders
+	}
+
+	// Initialize CORS header expressions if nil and mode is headers
+	if config.CORS.Mode == models.CORSModeHeaders && config.CORS.HeaderExpressions == nil {
+		config.CORS.HeaderExpressions = []models.CORSHeader{}
+	}
+
+	// Migrate existing items to ensure UseGlobalCORS is properly initialized
+	// Note: nil means "use group/global setting", so we only need to ensure the field exists
+	// No action needed as Go zero values (nil for *bool) are correct
+}
+
 func (cm *ConfigManager) Load() (*models.AppConfig, error) {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
@@ -52,6 +84,9 @@ func (cm *ConfigManager) Load() (*models.AppConfig, error) {
 	if err := decoder.Decode(&config); err != nil {
 		return nil, fmt.Errorf("could not decode config: %v", err)
 	}
+
+	// Apply migrations for backward compatibility
+	migrateConfig(&config)
 
 	return &config, nil
 }
