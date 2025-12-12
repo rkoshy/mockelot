@@ -5,7 +5,6 @@ import { SaveConfig, LoadConfig, SetHTTPSConfig, SetCertMode, SetCORSConfig, Set
 import { models } from '../../types/models'
 import ConfirmDialog from '../dialogs/ConfirmDialog.vue'
 import ServerConfigDialog from '../dialogs/ServerConfigDialog.vue'
-import CORSDialog from '../dialogs/CORSDialog.vue'
 
 const serverStore = useServerStore()
 const portInput = ref(8080)
@@ -13,7 +12,6 @@ const isLoading = ref(false)
 const errorMessage = ref('')
 const showImportDialog = ref(false)
 const showServerConfigDialog = ref(false)
-const showCORSDialog = ref(false)
 const serverConfigDialogTab = ref<'http' | 'https'>('http')
 const serverConfigDialogRef = ref<InstanceType<typeof ServerConfigDialog> | null>(null)
 
@@ -96,10 +94,6 @@ function openServerConfig(tab: 'http' | 'https' = 'http') {
   showServerConfigDialog.value = true
 }
 
-function openCORSConfig() {
-  showCORSDialog.value = true
-}
-
 async function handleServerConfigApply() {
   showServerConfigDialog.value = false
 
@@ -158,21 +152,6 @@ async function handleServerConfigApply() {
 function handleServerConfigClose() {
   showServerConfigDialog.value = false
 }
-
-async function handleCORSApply(corsConfigData: any) {
-  showCORSDialog.value = false
-
-  try {
-    const corsConfig = new models.CORSConfig(corsConfigData)
-    await serverStore.saveCORSConfig(corsConfig)
-  } catch (error) {
-    errorMessage.value = String(error)
-  }
-}
-
-function handleCORSClose() {
-  showCORSDialog.value = false
-}
 </script>
 
 <template>
@@ -221,17 +200,6 @@ function handleCORSClose() {
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 0L2.524 6v12L12 24l9.476-6V6L12 0zm0 2.5l7.476 4.75v9.5L12 21.5l-7.476-4.75v-9.5L12 2.5z"/>
           <path d="M12 6L7 9v6l5 3 5-3V9l-5-3zm0 2.5L15 10v4l-3 1.8L9 14v-4l3-1.5z"/>
-        </svg>
-      </button>
-
-      <!-- CORS Configuration Icon -->
-      <button
-        @click="openCORSConfig"
-        class="p-2 bg-gray-700 hover:bg-gray-600 rounded text-gray-300 hover:text-white transition-colors"
-        title="CORS Configuration"
-      >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
         </svg>
       </button>
     </div>
@@ -311,13 +279,6 @@ function handleCORSClose() {
       :initial-tab="serverConfigDialogTab"
       @close="handleServerConfigClose"
       @apply="handleServerConfigApply"
-    />
-
-    <!-- CORS Configuration Dialog -->
-    <CORSDialog
-      :show="showCORSDialog"
-      @close="handleCORSClose"
-      @apply="handleCORSApply"
     />
   </header>
 </template>
