@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
+	goruntime "runtime"
 	"sync"
 
 	"github.com/google/uuid"
@@ -659,6 +663,133 @@ func (a *App) DownloadCACert() (string, error) {
 	}
 
 	return path, nil
+}
+
+// InstallCACertSystem installs the CA certificate at the system level
+// Requires administrator/root privileges
+func (a *App) InstallCACertSystem() error {
+	certManager, err := server.NewCertificateManager()
+	if err != nil {
+		return fmt.Errorf("failed to initialize certificate manager: %w", err)
+	}
+
+	if !certManager.CAExists() {
+		return fmt.Errorf("CA certificate does not exist - please start HTTPS server first")
+	}
+
+	certPEM, err := certManager.GetCACertPEM()
+	if err != nil {
+		return fmt.Errorf("failed to read CA certificate: %w", err)
+	}
+
+	// Save to temporary file
+	tmpFile, err := os.CreateTemp("", "mockelot-ca-*.crt")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.Write(certPEM); err != nil {
+		return fmt.Errorf("failed to write temporary certificate: %w", err)
+	}
+	tmpFile.Close()
+
+	// Detect OS and execute appropriate installation command
+	switch goruntime.GOOS {
+	case "linux":
+		return a.installCACertLinux(tmpFile.Name())
+	case "windows":
+		return a.installCACertWindows(tmpFile.Name())
+	case "darwin":
+		return a.installCACertMacOS(tmpFile.Name())
+	default:
+		return fmt.Errorf("unsupported operating system: %s", goruntime.GOOS)
+	}
+}
+
+// installCACertLinux installs CA certificate on Linux systems
+func (a *App) installCACertLinux(certPath string) error {
+	// Copy to system trust store
+	targetDir := "/usr/local/share/ca-certificates"
+	targetPath := filepath.Join(targetDir, "mockelot-ca.crt")
+
+	// Check if we need sudo
+	testFile := filepath.Join(targetDir, ".mockelot-test")
+	needsSudo := true
+	if f, err := os.Create(testFile); err == nil {
+		f.Close()
+		os.Remove(testFile)
+		needsSudo = false
+	}
+
+	if needsSudo {
+		// Use pkexec (polkit) for GUI sudo prompt, fallback to terminal
+		cmd := exec.Command("pkexec", "sh", "-c",
+			fmt.Sprintf("cp '%s' '%s' && update-ca-certificates", certPath, targetPath))
+
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			// Try with terminal-based sudo as fallback
+			cmd = exec.Command("sudo", "sh", "-c",
+				fmt.Sprintf("cp '%s' '%s' && update-ca-certificates", certPath, targetPath))
+			output, err = cmd.CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("failed to install certificate: %w\nOutput: %s", err, string(output))
+			}
+		}
+	} else {
+		// Can write directly
+		if err := copyFile(certPath, targetPath); err != nil {
+			return fmt.Errorf("failed to copy certificate: %w", err)
+		}
+		cmd := exec.Command("update-ca-certificates")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("failed to update certificates: %w\nOutput: %s", err, string(output))
+		}
+	}
+
+	return nil
+}
+
+// installCACertWindows installs CA certificate on Windows systems
+func (a *App) installCACertWindows(certPath string) error {
+	// Use certutil to add to Trusted Root Certification Authorities
+	cmd := exec.Command("certutil", "-addstore", "-f", "ROOT", certPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to install certificate: %w\nOutput: %s", err, string(output))
+	}
+	return nil
+}
+
+// installCACertMacOS installs CA certificate on macOS systems
+func (a *App) installCACertMacOS(certPath string) error {
+	// Use security command to add to system keychain
+	cmd := exec.Command("sudo", "security", "add-trusted-cert", "-d", "-r", "trustRoot",
+		"-k", "/Library/Keychains/System.keychain", certPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to install certificate: %w\nOutput: %s", err, string(output))
+	}
+	return nil
+}
+
+// copyFile copies a file from src to dst
+func copyFile(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, sourceFile)
+	return err
 }
 
 // SetHTTPSConfig updates HTTPS configuration
