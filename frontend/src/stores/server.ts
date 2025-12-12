@@ -5,12 +5,20 @@ import {
   StartServer,
   StopServer,
   GetServerStatus,
+  GetConfig,
   GetItems,
   SetItems,
   AddGroup,
   GetRequestLogs,
   ClearRequestLogs,
-  ImportOpenAPISpecWithDialog
+  ImportOpenAPISpecWithDialog,
+  GetCACertInfo,
+  RegenerateCA,
+  DownloadCACert,
+  GetCORSConfig,
+  SetCORSConfig,
+  ValidateCORSScript,
+  ValidateCORSHeaderExpression
 } from '../../wailsjs/go/main/App'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 
@@ -21,6 +29,11 @@ export const useServerStore = defineStore('server', () => {
   const selectedLogId = ref<string | null>(null)
   const items = ref<models.ResponseItem[]>([])
   const expandedItemId = ref<string | null>(null)
+  const config = ref<models.AppConfig | null>(null)
+
+  // HTTPS & CORS State
+  const caInfo = ref<models.CACertInfo | null>(null)
+  const corsConfig = ref<models.CORSConfig | null>(null)
 
   // Getters
   const isRunning = computed(() => status.value.running)
@@ -56,6 +69,17 @@ export const useServerStore = defineStore('server', () => {
       status.value = newStatus
     } catch (error) {
       console.error('Failed to get server status:', error)
+    }
+  }
+
+  async function refreshConfig() {
+    try {
+      const appConfig = await GetConfig()
+      config.value = appConfig
+      return appConfig
+    } catch (error) {
+      console.error('Failed to get config:', error)
+      throw error
     }
   }
 
@@ -179,6 +203,68 @@ export const useServerStore = defineStore('server', () => {
     }
   }
 
+  // HTTPS Actions
+  async function loadCAInfo() {
+    try {
+      const info = await GetCACertInfo()
+      caInfo.value = info
+      return info
+    } catch (error) {
+      console.error('Failed to load CA info:', error)
+      throw error
+    }
+  }
+
+  async function regenerateCA() {
+    try {
+      await RegenerateCA()
+      await loadCAInfo()
+    } catch (error) {
+      console.error('Failed to regenerate CA:', error)
+      throw error
+    }
+  }
+
+  async function downloadCA() {
+    try {
+      const path = await DownloadCACert()
+      return path
+    } catch (error) {
+      console.error('Failed to download CA certificate:', error)
+      throw error
+    }
+  }
+
+  // CORS Actions
+  async function loadCORSConfig() {
+    try {
+      const config = await GetCORSConfig()
+      corsConfig.value = config
+      return config
+    } catch (error) {
+      console.error('Failed to load CORS config:', error)
+      throw error
+    }
+  }
+
+  async function saveCORSConfig(config: models.CORSConfig) {
+    try {
+      await SetCORSConfig(config)
+      corsConfig.value = config
+    } catch (error) {
+      console.error('Failed to save CORS config:', error)
+      throw error
+    }
+  }
+
+  async function validateCORSScript(script: string): Promise<void> {
+    return ValidateCORSScript(script)
+  }
+
+  async function validateCORSHeaderExpression(expression: string): Promise<void> {
+    return ValidateCORSHeaderExpression(expression)
+  }
+
   // Set up event listeners
   function initEventListeners() {
     EventsOn('server:status', (newStatus: main.ServerStatus) => {
@@ -198,8 +284,9 @@ export const useServerStore = defineStore('server', () => {
       items.value = newItems
     })
 
-    // Load initial items
+    // Load initial data
     refreshItems()
+    refreshConfig()
   }
 
   return {
@@ -209,6 +296,9 @@ export const useServerStore = defineStore('server', () => {
     selectedLogId,
     items,
     expandedItemId,
+    config,
+    caInfo,
+    corsConfig,
     // Getters
     isRunning,
     port,
@@ -217,6 +307,7 @@ export const useServerStore = defineStore('server', () => {
     startServer,
     stopServer,
     refreshStatus,
+    refreshConfig,
     refreshItems,
     saveItems,
     addNewResponse,
@@ -229,6 +320,15 @@ export const useServerStore = defineStore('server', () => {
     clearLogs,
     selectLog,
     importOpenAPISpec,
+    // HTTPS Actions
+    loadCAInfo,
+    regenerateCA,
+    downloadCA,
+    // CORS Actions
+    loadCORSConfig,
+    saveCORSConfig,
+    validateCORSScript,
+    validateCORSHeaderExpression,
     initEventListeners,
   }
 })

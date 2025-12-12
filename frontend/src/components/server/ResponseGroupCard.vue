@@ -40,6 +40,18 @@ const isEnabled = computed({
   }
 })
 
+// CORS configuration for group
+const useGlobalCORS = computed({
+  get: () => {
+    // If undefined, return true (default: use global CORS)
+    return props.group.use_global_cors !== false
+  },
+  set: (value: boolean) => {
+    const updated = new models.ResponseGroup({ ...props.group, use_global_cors: value })
+    emit('update', updated)
+  }
+})
+
 // Expanded response index within group
 const expandedResponseIndex = ref<number | null>(null)
 
@@ -277,6 +289,24 @@ function onGroupDrop(e: DragEvent) {
 
     <!-- Group Content (responses) -->
     <div v-if="isExpanded" class="p-2 space-y-2 bg-gray-900/50">
+      <!-- Group Settings -->
+      <div class="px-3 py-2 bg-gray-800/50 rounded border border-gray-700">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input
+            v-model="useGlobalCORS"
+            type="checkbox"
+            class="w-3.5 h-3.5 rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500"
+          />
+          <span class="text-xs font-medium text-gray-400">Use Global CORS for this group</span>
+        </label>
+        <p v-if="useGlobalCORS" class="text-[10px] text-gray-500 ml-5 mt-1">
+          Global CORS headers will be applied to responses in this group (if enabled in server config)
+        </p>
+        <p v-else class="text-[10px] text-gray-500 ml-5 mt-1">
+          Global CORS will NOT be applied to responses in this group, even if enabled globally
+        </p>
+      </div>
+
       <!-- Responses list -->
       <ResponseRuleCard
         v-for="(response, idx) in group.responses"

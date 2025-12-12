@@ -11,9 +11,17 @@ export function ClearRequestLogs():Promise<void>;
 
 export function DeleteResponse(arg1:string):Promise<void>;
 
+export function DownloadCACert():Promise<string>;
+
 export function ExportLogs(arg1:string):Promise<void>;
 
+export function GetCACertInfo():Promise<models.CACertInfo>;
+
+export function GetCORSConfig():Promise<models.CORSConfig>;
+
 export function GetConfig():Promise<models.AppConfig>;
+
+export function GetDefaultCertNames():Promise<Array<string>>;
 
 export function GetItems():Promise<Array<models.ResponseItem>>;
 
@@ -31,9 +39,19 @@ export function LoadConfig():Promise<models.AppConfig>;
 
 export function LogRequest(arg1:models.RequestLog):Promise<void>;
 
+export function RegenerateCA():Promise<void>;
+
 export function ReorderResponses(arg1:Array<string>):Promise<void>;
 
 export function SaveConfig():Promise<void>;
+
+export function SelectCertFile(arg1:string):Promise<string>;
+
+export function SetCORSConfig(arg1:models.CORSConfig):Promise<void>;
+
+export function SetCertMode(arg1:string,arg2:models.CertPaths,arg3:Array<string>):Promise<void>;
+
+export function SetHTTPSConfig(arg1:boolean,arg2:number,arg3:boolean):Promise<void>;
 
 export function SetItems(arg1:Array<models.ResponseItem>):Promise<void>;
 
@@ -46,3 +64,7 @@ export function StopServer():Promise<void>;
 export function UpdateResponse(arg1:models.MethodResponse):Promise<void>;
 
 export function UpdateResponseByID(arg1:models.MethodResponse):Promise<void>;
+
+export function ValidateCORSHeaderExpression(arg1:string):Promise<void>;
+
+export function ValidateCORSScript(arg1:string):Promise<void>;
