@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { ref, watch, onMounted, computed } from 'vue'
 import { useServerStore } from '../../stores/server'
-import { GetCACertInfo, RegenerateCA, DownloadCACert, SelectCertFile, GetDefaultCertNames } from '../../../wailsjs/go/main/App'
+import { GetCACertInfo, RegenerateCA, DownloadCACert, InstallCACertSystem, SelectCertFile, GetDefaultCertNames } from '../../../wailsjs/go/main/App'
 import { models } from '../../types/models'
 import ConfirmDialog from './ConfirmDialog.vue'
 import StyledSelect from '../shared/StyledSelect.vue'
@@ -35,6 +35,7 @@ const defaultCertNames = ref<string[]>([])
 
 // UI State
 const showRegenerateConfirm = ref(false)
+const showInstallConfirm = ref(false)
 const errorMessage = ref('')
 
 // Load CA info
@@ -123,6 +124,27 @@ async function downloadCA() {
   } catch (error) {
     errorMessage.value = `Failed to download CA: ${error}`
   }
+}
+
+// Install CA System
+function confirmInstallCASystem() {
+  showInstallConfirm.value = true
+}
+
+async function handleInstallCASystem() {
+  showInstallConfirm.value = false
+  try {
+    await InstallCACertSystem()
+    errorMessage.value = ''
+    // Show success message
+    console.log('CA certificate installed successfully')
+  } catch (error) {
+    errorMessage.value = `Failed to install CA certificate: ${error}`
+  }
+}
+
+function cancelInstallCASystem() {
+  showInstallConfirm.value = false
 }
 
 // File selection
@@ -473,7 +495,7 @@ defineExpose({
         </div>
 
         <!-- CA Actions -->
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-2">
           <button
             @click="confirmRegenerateCA"
             class="px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white text-sm rounded transition-colors flex items-center gap-2"
@@ -498,11 +520,26 @@ defineExpose({
             </svg>
             Download CA Certificate
           </button>
+          <button
+            @click="confirmInstallCASystem"
+            :disabled="!caInfo?.exists"
+            :class="[
+              'px-3 py-2 text-white text-sm rounded transition-colors flex items-center gap-2',
+              caInfo?.exists
+                ? 'bg-green-600 hover:bg-green-700'
+                : 'bg-gray-600 cursor-not-allowed'
+            ]"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+            Install CA (System-Wide)
+          </button>
         </div>
 
         <div class="mt-3 p-3 bg-blue-900/20 border border-blue-800 rounded">
           <p class="text-xs text-blue-300">
-            💡 Download and install the CA certificate in your browser/OS to trust the self-signed certificates.
+            💡 Click "Install CA (System-Wide)" to automatically install the CA certificate at the system level. This requires administrator/root privileges and will trust the certificate for all applications.
           </p>
         </div>
       </div>
@@ -522,6 +559,17 @@ defineExpose({
       cancel-text="Cancel"
       @primary="handleRegenerateCA"
       @cancel="cancelRegenerateCA"
+    />
+
+    <!-- Install CA System Confirmation Dialog -->
+    <ConfirmDialog
+      :show="showInstallConfirm"
+      title="Install CA Certificate (System-Wide)?"
+      message="This will install the Mockelot CA certificate at the system level. This requires administrator/root privileges and will prompt for your password. All applications on this system will trust certificates signed by this CA. Continue?"
+      primary-text="Install"
+      cancel-text="Cancel"
+      @primary="handleInstallCASystem"
+      @cancel="cancelInstallCASystem"
     />
   </div>
 </template>
