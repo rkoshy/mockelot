@@ -17,28 +17,38 @@ import (
 )
 
 type HTTPServer struct {
-	httpServer    *http.Server
-	httpsServer   *http.Server
-	config        *models.AppConfig
-	configMutex   sync.RWMutex
-	requestLogger RequestLogger
-	httpStopChan  chan struct{}
-	httpsStopChan chan struct{}
-	certManager   *CertificateManager
+	httpServer       *http.Server
+	httpsServer      *http.Server
+	config           *models.AppConfig
+	configMutex      sync.RWMutex
+	requestLogger    RequestLogger
+	httpStopChan     chan struct{}
+	httpsStopChan    chan struct{}
+	certManager      *CertificateManager
+	proxyHandler     *ProxyHandler
+	containerHandler *ContainerHandler
+	startupCtx       context.Context    // Context for container startup
+	startupCancel    context.CancelFunc // Cancel function for startup
 }
 
-func NewHTTPServer(config *models.AppConfig, requestLogger RequestLogger) *HTTPServer {
+func NewHTTPServer(config *models.AppConfig, requestLogger RequestLogger, eventSender EventSender) *HTTPServer {
 	certManager, err := NewCertificateManager()
 	if err != nil {
 		log.Printf("Warning: Failed to initialize certificate manager: %v", err)
 	}
 
+	// Initialize proxy and container handlers
+	proxyHandler := NewProxyHandler(requestLogger)
+	containerHandler := NewContainerHandler(requestLogger, eventSender)
+
 	return &HTTPServer{
-		config:        config,
-		requestLogger: requestLogger,
-		httpStopChan:  make(chan struct{}),
-		httpsStopChan: make(chan struct{}),
-		certManager:   certManager,
+		config:           config,
+		requestLogger:    requestLogger,
+		httpStopChan:     make(chan struct{}),
+		httpsStopChan:    make(chan struct{}),
+		certManager:      certManager,
+		proxyHandler:     proxyHandler,
+		containerHandler: containerHandler,
 	}
 }
 
@@ -59,7 +69,7 @@ func (s *HTTPServer) StartHTTP() error {
 		handler = HTTPSRedirectHandler(httpsPort)
 	} else {
 		// Use normal response handler
-		responseHandler := NewResponseHandler(s.config, s.requestLogger)
+		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.proxyHandler, s.containerHandler)
 		handler = http.HandlerFunc(responseHandler.HandleRequest)
 	}
 
@@ -198,7 +208,7 @@ func (s *HTTPServer) StartHTTPS() error {
 	}
 
 	// Create response handler
-	responseHandler := NewResponseHandler(s.config, s.requestLogger)
+	responseHandler := NewResponseHandler(s.config, s.requestLogger, s.proxyHandler, s.containerHandler)
 
 	// Create HTTPS server
 	s.httpsServer = &http.Server{
@@ -239,7 +249,27 @@ func (s *HTTPServer) StartHTTPS() error {
 func (s *HTTPServer) Start() error {
 	s.configMutex.RLock()
 	httpsEnabled := s.config.HTTPSEnabled
+	endpoints := s.config.Endpoints
 	s.configMutex.RUnlock()
+
+	// Create cancellable context for container startup (will be used when frontend calls StartContainers)
+	s.startupCtx, s.startupCancel = context.WithCancel(context.Background())
+
+	log.Printf("Server started. Waiting for frontend to signal readiness before starting containers...")
+
+	// Note: Containers will be started by explicit call to StartContainers() from frontend
+	// This prevents race condition where backend emits progress events before frontend is ready
+
+	// Start health checks for proxy endpoints
+	if s.proxyHandler != nil {
+		var proxyEndpoints []*models.Endpoint
+		for i := range endpoints {
+			if endpoints[i].Type == models.EndpointTypeProxy {
+				proxyEndpoints = append(proxyEndpoints, &endpoints[i])
+			}
+		}
+		s.proxyHandler.StartHealthChecks(proxyEndpoints)
+	}
 
 	// Always start HTTP server
 	if err := s.StartHTTP(); err != nil {
@@ -295,9 +325,76 @@ func (s *HTTPServer) StopHTTPS() error {
 	return nil
 }
 
+// StartContainers starts all enabled container endpoints
+// This should be called by the frontend after it's ready to receive progress events
+func (s *HTTPServer) StartContainers() error {
+	log.Printf("[StartContainers] Frontend ready signal received. Starting containers...")
+
+	s.configMutex.RLock()
+	endpoints := s.config.Endpoints
+	s.configMutex.RUnlock()
+
+	log.Printf("[StartContainers] Total endpoints: %d", len(endpoints))
+	for i, ep := range endpoints {
+		log.Printf("[StartContainers]   Endpoint %d: name=%s, type=%s, enabled=%v", i, ep.Name, ep.Type, ep.IsEnabled())
+	}
+
+	if s.containerHandler == nil {
+		log.Printf("[StartContainers] WARNING: Container handler not available")
+		return nil
+	}
+
+	var containerEndpoints []*models.Endpoint
+	for i := range endpoints {
+		endpoint := &endpoints[i]
+		if endpoint.Type == models.EndpointTypeContainer && endpoint.IsEnabled() {
+			log.Printf("[StartContainers] Starting container for endpoint: %s (ID: %s)", endpoint.Name, endpoint.ID)
+			if err := s.containerHandler.StartContainer(s.startupCtx, endpoint); err != nil {
+				log.Printf("Failed to start container for endpoint %s: %v", endpoint.Name, err)
+				// Check if cancelled
+				if s.startupCtx.Err() != nil {
+					log.Printf("Container startup cancelled")
+					return fmt.Errorf("startup cancelled: %w", s.startupCtx.Err())
+				}
+				// Continue with other containers even if one fails
+			}
+			containerEndpoints = append(containerEndpoints, endpoint)
+		}
+	}
+
+	// Start container status and stats polling (status: 10s, stats: 5s)
+	if len(containerEndpoints) > 0 {
+		log.Printf("Starting status and stats polling for %d container endpoint(s)", len(containerEndpoints))
+		s.containerHandler.StartContainerStatusPolling(containerEndpoints)
+		s.containerHandler.StartContainerStatsPolling(containerEndpoints)
+	}
+
+	log.Printf("Container startup complete")
+	return nil
+}
+
 // Stop stops both HTTP and HTTPS servers
 func (s *HTTPServer) Stop() error {
 	var httpErr, httpsErr error
+
+	// Stop containers before stopping servers
+	if s.containerHandler != nil {
+		// Stop polling goroutines first
+		s.containerHandler.StopPolling()
+
+		s.configMutex.RLock()
+		endpoints := s.config.Endpoints
+		s.configMutex.RUnlock()
+
+		for i := range endpoints {
+			endpoint := &endpoints[i]
+			if endpoint.Type == models.EndpointTypeContainer {
+				if err := s.containerHandler.StopContainer(context.Background(), endpoint); err != nil {
+					log.Printf("Error stopping container for endpoint %s: %v", endpoint.Name, err)
+				}
+			}
+		}
+	}
 
 	// Stop HTTP server if running
 	if s.httpServer != nil {
@@ -340,4 +437,53 @@ func (s *HTTPServer) UpdateConfig(newConfig *models.AppConfig) {
 	s.configMutex.Lock()
 	defer s.configMutex.Unlock()
 	s.config = newConfig
+}
+
+// GetProxyHealthStatus returns the health status for a proxy endpoint
+func (s *HTTPServer) GetProxyHealthStatus(endpointID string) *models.HealthStatus {
+	if s.proxyHandler == nil {
+		return nil
+	}
+	return s.proxyHandler.GetHealthStatus(endpointID)
+}
+
+// GetContainerHealthStatus returns the health status for a container endpoint
+func (s *HTTPServer) GetContainerHealthStatus(endpointID string) *models.HealthStatus {
+	if s.containerHandler == nil {
+		return nil
+	}
+	return s.containerHandler.GetHealthStatus(endpointID)
+}
+
+// GetContainerStatus returns the runtime status for a container endpoint
+func (s *HTTPServer) GetContainerStatus(endpointID string) *models.ContainerStatus {
+	if s.containerHandler == nil {
+		return nil
+	}
+	return s.containerHandler.GetContainerStatus(endpointID)
+}
+
+// GetContainerStats returns the resource usage stats for a container endpoint
+func (s *HTTPServer) GetContainerStats(endpointID string) *models.ContainerStats {
+	if s.containerHandler == nil {
+		return nil
+	}
+	return s.containerHandler.GetContainerStats(endpointID)
+}
+
+// RestartContainer restarts a container endpoint
+func (s *HTTPServer) RestartContainer(ctx context.Context, endpoint *models.Endpoint) error {
+	if s.containerHandler == nil {
+		return fmt.Errorf("container handler not available")
+	}
+
+	if err := s.containerHandler.StopContainer(ctx, endpoint); err != nil {
+		return fmt.Errorf("failed to stop container: %w", err)
+	}
+
+	if err := s.containerHandler.StartContainer(ctx, endpoint); err != nil {
+		return fmt.Errorf("failed to start container: %w", err)
+	}
+
+	return nil
 }
