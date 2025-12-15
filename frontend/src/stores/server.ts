@@ -18,29 +18,96 @@ import {
   GetCORSConfig,
   SetCORSConfig,
   ValidateCORSScript,
-  ValidateCORSHeaderExpression
+  ValidateCORSHeaderExpression,
+  GetEndpoints,
+  AddEndpoint,
+  AddEndpointWithConfig,
+  UpdateEndpoint,
+  DeleteEndpoint,
+  GetSelectedEndpointId,
+  SetSelectedEndpointId,
+  GetEndpointHealth,
+  TestProxyConnection,
+  ValidateDockerImage,
+  RestartContainer,
+  GetContainerStatus,
+  GetRequestLogDetails,
+  PollRequestLogs
 } from '../../wailsjs/go/main/App'
-import { EventsOn } from '../../wailsjs/runtime/runtime'
+import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 
 export const useServerStore = defineStore('server', () => {
   // State
   const status = ref<main.ServerStatus>(new main.ServerStatus({ running: false, port: 8080 }))
-  const requestLogs = ref<models.RequestLog[]>([])
+  const requestLogs = ref<models.RequestLogSummary[]>([])
+  const requestLogCache = ref<Map<string, models.RequestLog>>(new Map())
   const selectedLogId = ref<string | null>(null)
   const items = ref<models.ResponseItem[]>([])
   const expandedItemId = ref<string | null>(null)
   const config = ref<models.AppConfig | null>(null)
 
+  // Endpoint State
+  const endpoints = ref<models.Endpoint[]>([])
+  const selectedEndpointId = ref<string>('')
+
   // HTTPS & CORS State
   const caInfo = ref<models.CACertInfo | null>(null)
   const corsConfig = ref<models.CORSConfig | null>(null)
 
+  // Health Status State
+  const endpointHealth = ref<Map<string, models.HealthStatus>>(new Map())
+
+  // Container Status State
+  const containerStatus = ref<Map<string, models.ContainerStatus>>(new Map())
+
+  // Container Stats State
+  const containerStats = ref<Map<string, models.ContainerStats>>(new Map())
+
   // Getters
   const isRunning = computed(() => status.value.running)
   const port = computed(() => status.value.port)
+
+  // selectedLog now returns the summary - full details must be fetched separately
   const selectedLog = computed(() =>
     requestLogs.value.find(log => log.id === selectedLogId.value) || null
   )
+
+  // Get full log details from cache or fetch from backend
+  async function getLogDetails(id: string): Promise<models.RequestLog | null> {
+    // Check cache first
+    if (requestLogCache.value.has(id)) {
+      return requestLogCache.value.get(id)!
+    }
+
+    // Fetch from backend
+    try {
+      const fullLog = await GetRequestLogDetails(id)
+      // Cache it
+      requestLogCache.value.set(id, fullLog)
+      return fullLog
+    } catch (error) {
+      console.error('Failed to fetch log details:', error)
+      return null
+    }
+  }
+  const currentEndpoint = computed(() =>
+    endpoints.value.find(ep => ep.id === selectedEndpointId.value) || null
+  )
+
+  // Get health status for an endpoint
+  function getEndpointHealth(endpointId: string): models.HealthStatus | undefined {
+    return endpointHealth.value.get(endpointId)
+  }
+
+  // Get container status for an endpoint
+  function getContainerStatus(endpointId: string): models.ContainerStatus | undefined {
+    return containerStatus.value.get(endpointId)
+  }
+
+  // Get container stats for an endpoint
+  function getContainerStats(endpointId: string): models.ContainerStats | undefined {
+    return containerStats.value.get(endpointId)
+  }
 
   // Actions
   async function startServer(serverPort: number) {
@@ -203,6 +270,78 @@ export const useServerStore = defineStore('server', () => {
     }
   }
 
+  // Endpoint Actions
+  async function refreshEndpoints() {
+    try {
+      const result = await GetEndpoints()
+      endpoints.value = result || []
+    } catch (error) {
+      console.error('Failed to get endpoints:', error)
+    }
+  }
+
+  async function selectEndpoint(id: string) {
+    try {
+      await SetSelectedEndpointId(id)
+      selectedEndpointId.value = id
+      // Refresh items for the newly selected endpoint
+      await refreshItems()
+    } catch (error) {
+      console.error('Failed to select endpoint:', error)
+      throw error
+    }
+  }
+
+  async function addNewEndpoint(name: string, pathPrefix: string, translationMode: string, endpointType: string = 'mock') {
+    try {
+      const endpoint = await AddEndpoint(name, pathPrefix, translationMode, endpointType)
+      await refreshEndpoints()
+      // Auto-select the newly created endpoint
+      await selectEndpoint(endpoint.id)
+      return endpoint
+    } catch (error) {
+      console.error('Failed to add endpoint:', error)
+      throw error
+    }
+  }
+
+  async function addNewEndpointWithConfig(config: any) {
+    try {
+      const endpoint = await AddEndpointWithConfig(config)
+      await refreshEndpoints()
+      // Auto-select the newly created endpoint
+      await selectEndpoint(endpoint.id)
+      return endpoint
+    } catch (error) {
+      console.error('Failed to add endpoint with config:', error)
+      throw error
+    }
+  }
+
+  async function updateEndpointById(endpoint: models.Endpoint) {
+    try {
+      await UpdateEndpoint(endpoint)
+      await refreshEndpoints()
+    } catch (error) {
+      console.error('Failed to update endpoint:', error)
+      throw error
+    }
+  }
+
+  async function deleteEndpointById(id: string) {
+    try {
+      await DeleteEndpoint(id)
+      await refreshEndpoints()
+      // If we deleted the selected endpoint, select the first remaining one
+      if (selectedEndpointId.value === id && endpoints.value.length > 0) {
+        await selectEndpoint(endpoints.value[0].id)
+      }
+    } catch (error) {
+      console.error('Failed to delete endpoint:', error)
+      throw error
+    }
+  }
+
   // HTTPS Actions
   async function loadCAInfo() {
     try {
@@ -265,18 +404,147 @@ export const useServerStore = defineStore('server', () => {
     return ValidateCORSHeaderExpression(expression)
   }
 
-  // Set up event listeners
+  // Health Check Actions
+  async function refreshEndpointHealth(endpointId: string) {
+    try {
+      const health = await GetEndpointHealth(endpointId)
+      endpointHealth.value.set(endpointId, health)
+      return health
+    } catch (error) {
+      console.error('Failed to get endpoint health:', error)
+      throw error
+    }
+  }
+
+  async function testProxyConnection(backendURL: string): Promise<boolean> {
+    try {
+      await TestProxyConnection(backendURL)
+      return true
+    } catch (error) {
+      return false
+    }
+  }
+
+  async function validateDockerImage(imageName: string): Promise<void> {
+    return ValidateDockerImage(imageName)
+  }
+
+  async function restartContainerEndpoint(endpointId: string): Promise<void> {
+    try {
+      await RestartContainer(endpointId)
+    } catch (error) {
+      console.error('Failed to restart container:', error)
+      throw error
+    }
+  }
+
+  // Start health polling for proxy and container endpoints
+  let healthPollingInterval: number | null = null
+
+  function startHealthPolling() {
+    // Clear existing interval if any
+    if (healthPollingInterval !== null) {
+      clearInterval(healthPollingInterval)
+    }
+
+    // Poll every 10 seconds
+    healthPollingInterval = window.setInterval(() => {
+      // Only poll if server is running
+      if (!isRunning.value) {
+        return
+      }
+
+      endpoints.value.forEach(endpoint => {
+        // Poll health for proxy endpoints with health checks enabled
+        if (endpoint.type === 'proxy' && endpoint.proxy_config?.health_check_enabled) {
+          refreshEndpointHealth(endpoint.id).catch(() => {
+            // Ignore errors during polling
+          })
+        }
+        // Poll health for container endpoints with health checks enabled
+        else if (endpoint.type === 'container' && endpoint.container_config?.proxy_config?.health_check_enabled) {
+          refreshEndpointHealth(endpoint.id).catch(() => {
+            // Ignore errors during polling
+          })
+        }
+      })
+    }, 10000)
+  }
+
+  function stopHealthPolling() {
+    if (healthPollingInterval !== null) {
+      clearInterval(healthPollingInterval)
+      healthPollingInterval = null
+    }
+  }
+
+  // Start request log polling for efficient batching during high-volume traffic
+  let requestLogPollingInterval: number | null = null
+
+  function startRequestLogPolling() {
+    // Clear existing interval if any
+    if (requestLogPollingInterval !== null) {
+      clearInterval(requestLogPollingInterval)
+    }
+
+    // Poll every 200ms (balance between responsiveness and performance)
+    requestLogPollingInterval = window.setInterval(async () => {
+      // Only poll if server is running
+      if (!isRunning.value) {
+        return
+      }
+
+      try {
+        const summaries = await PollRequestLogs()
+        if (summaries && summaries.length > 0) {
+          // For each new summary, either update existing log (if ID matches) or append new
+          const existingLogs = [...requestLogs.value]
+          summaries.forEach(newLog => {
+            const existingIndex = existingLogs.findIndex(log => log.id === newLog.id)
+            if (existingIndex >= 0) {
+              // Update existing log (e.g., pending → complete)
+              existingLogs[existingIndex] = newLog
+            } else {
+              // Append new log
+              existingLogs.push(newLog)
+            }
+          })
+          requestLogs.value = existingLogs
+        }
+      } catch (error) {
+        // Ignore errors during polling to prevent console spam
+      }
+    }, 200)
+  }
+
+  function stopRequestLogPolling() {
+    if (requestLogPollingInterval !== null) {
+      clearInterval(requestLogPollingInterval)
+      requestLogPollingInterval = null
+    }
+  }
+
+  // Set up event listeners (clean up existing ones first to prevent duplicates)
   function initEventListeners() {
+    // Remove any existing listeners first
+    EventsOff('server:status')
+    EventsOff('logs:cleared')
+    EventsOff('items:updated')
+    EventsOff('endpoints:updated')
+    EventsOff('endpoint:selected')
+    // NOTE: ctr:* events are handled via polling in HeaderBar.vue
+
+    // Set up fresh listeners
     EventsOn('server:status', (newStatus: main.ServerStatus) => {
       status.value = newStatus
     })
 
-    EventsOn('request:received', (log: models.RequestLog) => {
-      requestLogs.value = [...requestLogs.value, log]
-    })
+    // NOTE: request:received events are now handled via polling for better performance
+    // during high-volume traffic (see startRequestLogPolling)
 
     EventsOn('logs:cleared', () => {
       requestLogs.value = []
+      requestLogCache.value.clear()
       selectedLogId.value = null
     })
 
@@ -284,9 +552,35 @@ export const useServerStore = defineStore('server', () => {
       items.value = newItems
     })
 
+    EventsOn('endpoints:updated', (newEndpoints: models.Endpoint[]) => {
+      endpoints.value = newEndpoints
+    })
+
+    EventsOn('endpoint:selected', (endpointId: string) => {
+      selectedEndpointId.value = endpointId
+      refreshItems()
+    })
+
+    // NOTE: ctr:status, ctr:stats, and ctr:progress events are now handled via polling
+    // in HeaderBar.vue, which updates the store directly
+
     // Load initial data
     refreshItems()
     refreshConfig()
+    refreshEndpoints()
+
+    // Load selected endpoint ID
+    GetSelectedEndpointId().then(id => {
+      selectedEndpointId.value = id || ''
+    }).catch(error => {
+      console.error('Failed to load selected endpoint ID:', error)
+    })
+
+    // Start health polling
+    startHealthPolling()
+
+    // Start request log polling
+    startRequestLogPolling()
   }
 
   return {
@@ -297,12 +591,22 @@ export const useServerStore = defineStore('server', () => {
     items,
     expandedItemId,
     config,
+    endpoints,
+    selectedEndpointId,
     caInfo,
     corsConfig,
+    endpointHealth,
+    containerStatus,
+    containerStats,
     // Getters
     isRunning,
     port,
     selectedLog,
+    getLogDetails,
+    currentEndpoint,
+    getEndpointHealth,
+    getContainerStatus,
+    getContainerStats,
     // Actions
     startServer,
     stopServer,
@@ -320,6 +624,13 @@ export const useServerStore = defineStore('server', () => {
     clearLogs,
     selectLog,
     importOpenAPISpec,
+    // Endpoint Actions
+    refreshEndpoints,
+    selectEndpoint,
+    addNewEndpoint,
+    addNewEndpointWithConfig,
+    updateEndpointById,
+    deleteEndpointById,
     // HTTPS Actions
     loadCAInfo,
     regenerateCA,
@@ -329,6 +640,15 @@ export const useServerStore = defineStore('server', () => {
     saveCORSConfig,
     validateCORSScript,
     validateCORSHeaderExpression,
+    // Health Check Actions
+    refreshEndpointHealth,
+    testProxyConnection,
+    validateDockerImage,
+    restartContainerEndpoint,
+    startHealthPolling,
+    stopHealthPolling,
+    startRequestLogPolling,
+    stopRequestLogPolling,
     initEventListeners,
   }
 })

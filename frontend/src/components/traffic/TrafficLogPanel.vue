@@ -1,12 +1,26 @@
 <script lang="ts" setup>
-import { computed } from 'vue'
+import { ref, computed } from 'vue'
 import { useServerStore } from '../../stores/server'
 import { ExportLogs } from '../../../wailsjs/go/main/App'
+import RequestInspectorModal from '../inspector/RequestInspectorModal.vue'
+import type { models } from '../../../wailsjs/go/models'
 
 const serverStore = useServerStore()
 
-// Reverse logs to show newest first
-const reversedLogs = computed(() => [...serverStore.requestLogs].reverse())
+// Modal state
+const showInspectorModal = ref(false)
+const inspectorLog = ref<models.RequestLogSummary | null>(null)
+
+// Filter logs by selected endpoint, then reverse to show newest first
+const filteredLogs = computed(() => {
+  const endpointId = serverStore.selectedEndpointId
+  if (!endpointId) {
+    return [...serverStore.requestLogs].reverse()
+  }
+  return serverStore.requestLogs
+    .filter(log => log.endpoint_id === endpointId)
+    .reverse()
+})
 
 function formatTimestamp(timestamp: string): string {
   const date = new Date(timestamp)
@@ -38,6 +52,19 @@ function getStatusColor(code: number): string {
   return 'text-gray-400'
 }
 
+function formatStatus(log: models.RequestLogSummary): string {
+  // Check if pending (status is 0 or pending flag is true)
+  if (log.client_status === 0 || log.pending) {
+    return 'pending'
+  }
+  return log.client_status?.toString() || 'N/A'
+}
+
+function formatRTT(rtt: number | undefined): string {
+  if (rtt === undefined || rtt === null) return '-'
+  return `${rtt}ms`
+}
+
 async function handleExportJSON() {
   try {
     await ExportLogs('json')
@@ -53,6 +80,16 @@ async function handleExportCSV() {
     console.error('Failed to export logs:', error)
   }
 }
+
+function openInspector(log: models.RequestLogSummary, event: Event) {
+  event.stopPropagation() // Prevent row click
+  inspectorLog.value = log
+  showInspectorModal.value = true
+}
+
+function closeInspector() {
+  showInspectorModal.value = false
+}
 </script>
 
 <template>
@@ -61,24 +98,24 @@ async function handleExportCSV() {
     <div class="flex items-center justify-between p-3 border-b border-gray-700 flex-shrink-0">
       <h2 class="text-lg font-semibold text-white">Traffic Log</h2>
       <div class="flex items-center gap-2">
-        <span class="text-sm text-gray-400">{{ serverStore.requestLogs.length }} requests</span>
+        <span class="text-sm text-gray-400">{{ filteredLogs.length }} requests</span>
         <button
           @click="handleExportJSON"
-          :disabled="serverStore.requestLogs.length === 0"
+          :disabled="filteredLogs.length === 0"
           class="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Export JSON
         </button>
         <button
           @click="handleExportCSV"
-          :disabled="serverStore.requestLogs.length === 0"
+          :disabled="filteredLogs.length === 0"
           class="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Export CSV
         </button>
         <button
           @click="serverStore.clearLogs"
-          :disabled="serverStore.requestLogs.length === 0"
+          :disabled="filteredLogs.length === 0"
           class="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-xs text-white disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Clear
@@ -89,7 +126,7 @@ async function handleExportCSV() {
     <!-- Log List -->
     <div class="flex-1 overflow-y-auto">
       <!-- Empty State -->
-      <div v-if="serverStore.requestLogs.length === 0" class="flex items-center justify-center h-full">
+      <div v-if="filteredLogs.length === 0" class="flex items-center justify-center h-full">
         <div class="text-center text-gray-500">
           <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
@@ -103,7 +140,7 @@ async function handleExportCSV() {
       <!-- Request Items -->
       <div v-else class="divide-y divide-gray-800">
         <div
-          v-for="log in reversedLogs"
+          v-for="log in filteredLogs"
           :key="log.id"
           @click="serverStore.selectLog(log.id)"
           :class="[
@@ -120,27 +157,51 @@ async function handleExportCSV() {
             </span>
 
             <!-- Method Badge -->
-            <span :class="['text-xs font-bold w-14 flex-shrink-0', getMethodColor(log.method)]">
-              {{ log.method }}
+            <span :class="['text-xs font-bold w-14 flex-shrink-0', getMethodColor(log.method || 'GET')]">
+              {{ log.method || 'N/A' }}
             </span>
 
             <!-- Status Badge -->
-            <span :class="['text-xs font-mono w-8 flex-shrink-0', getStatusColor(log.status_code)]">
-              {{ log.status_code }}
+            <span :class="['text-xs font-mono w-16 flex-shrink-0', getStatusColor(log.client_status || 0)]">
+              {{ formatStatus(log) }}
+            </span>
+
+            <!-- RTT -->
+            <span class="text-xs text-gray-400 font-mono w-14 flex-shrink-0 text-right">
+              {{ formatRTT(log.client_rtt) }}
             </span>
 
             <!-- Path -->
             <span class="text-sm text-gray-300 truncate flex-1 font-mono">
-              {{ log.path }}
+              {{ log.path || 'N/A' }}
             </span>
 
             <!-- Source IP -->
             <span class="text-xs text-gray-500 flex-shrink-0">
-              {{ log.source_ip }}
+              {{ log.source_ip || 'N/A' }}
             </span>
+
+            <!-- Eye Icon Button -->
+            <button
+              @click="openInspector(log, $event)"
+              class="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-blue-400 transition-colors flex-shrink-0"
+              title="Inspect request"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+            </button>
           </div>
         </div>
       </div>
     </div>
+
+    <!-- Request Inspector Modal -->
+    <RequestInspectorModal
+      :show="showInspectorModal"
+      :log="inspectorLog"
+      @close="closeInspector"
+    />
   </div>
 </template>

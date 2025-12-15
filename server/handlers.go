@@ -5,6 +5,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,21 +16,60 @@ import (
 
 type RequestLogger interface {
 	LogRequest(log models.RequestLog)
+	UpdateRequestLog(log models.RequestLog)
 }
 
 type ResponseHandler struct {
-	config        *models.AppConfig
-	configMutex   sync.RWMutex
-	requestLogger RequestLogger
-	corsProcessor *CORSProcessor
+	config           *models.AppConfig
+	configMutex      sync.RWMutex
+	requestLogger    RequestLogger
+	corsProcessor    *CORSProcessor
+	proxyHandler     *ProxyHandler
+	containerHandler *ContainerHandler
+	regexCache       map[string]*regexp.Regexp // Cache for compiled regexes
+	regexCacheMutex  sync.RWMutex              // Mutex for regex cache
 }
 
-func NewResponseHandler(config *models.AppConfig, logger RequestLogger) *ResponseHandler {
+func NewResponseHandler(config *models.AppConfig, logger RequestLogger, proxyHandler *ProxyHandler, containerHandler *ContainerHandler) *ResponseHandler {
 	return &ResponseHandler{
-		config:        config,
-		requestLogger: logger,
-		corsProcessor: NewCORSProcessor(&config.CORS),
+		config:           config,
+		requestLogger:    logger,
+		corsProcessor:    NewCORSProcessor(&config.CORS),
+		proxyHandler:     proxyHandler,
+		containerHandler: containerHandler,
+		regexCache:       make(map[string]*regexp.Regexp),
 	}
+}
+
+// compileRegex compiles a regex pattern and caches it
+func (h *ResponseHandler) compileRegex(pattern string) (*regexp.Regexp, error) {
+	// Check cache first (read lock)
+	h.regexCacheMutex.RLock()
+	if re, exists := h.regexCache[pattern]; exists {
+		h.regexCacheMutex.RUnlock()
+		return re, nil
+	}
+	h.regexCacheMutex.RUnlock()
+
+	// Compile regex (outside lock to avoid blocking readers)
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store in cache (write lock)
+	h.regexCacheMutex.Lock()
+	h.regexCache[pattern] = re
+	h.regexCacheMutex.Unlock()
+
+	return re, nil
+}
+
+// InvalidateRegexCache clears the regex cache (call when config changes)
+func (h *ResponseHandler) InvalidateRegexCache() {
+	h.regexCacheMutex.Lock()
+	h.regexCache = make(map[string]*regexp.Regexp)
+	h.regexCacheMutex.Unlock()
 }
 
 func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
@@ -36,26 +77,142 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 	bodyBytes, _ := io.ReadAll(r.Body)
 	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
-	// Check if this is a CORS preflight that should be handled globally
 	h.configMutex.RLock()
-	if r.Method == "OPTIONS" && h.shouldHandleCORSPreflight(r) {
+	requestPath := r.URL.Path
+
+	// Step 1: Find matching endpoint by prefix and apply path translation
+	var matchedEndpoint *models.Endpoint
+	var translatedPath string
+	var items []models.ResponseItem
+	var captureGroups []string // For regex capture groups (used by proxy endpoints)
+
+	// Try to match an endpoint
+	if len(h.config.Endpoints) > 0 {
+		for i := range h.config.Endpoints {
+			endpoint := &h.config.Endpoints[i]
+			if !endpoint.IsEnabled() {
+				continue
+			}
+
+			// Check if PathPrefix is a regex (starts with ^) or plain prefix
+			var prefixMatches bool
+			if strings.HasPrefix(endpoint.PathPrefix, "^") {
+				// Regex matching with capture groups
+				re, err := h.compileRegex(endpoint.PathPrefix)
+				if err != nil {
+					log.Printf("Invalid regex pattern: %s (%v)", endpoint.PathPrefix, err)
+					prefixMatches = false
+				} else {
+					matches := re.FindStringSubmatch(requestPath)
+					if matches != nil {
+						prefixMatches = true
+						captureGroups = matches // Store all capture groups (matches[0] is full match, matches[1]... are groups)
+					} else {
+						prefixMatches = false
+					}
+				}
+			} else {
+				// Exact or prefix matching (with trailing slash)
+				// This prevents /test2 from matching prefix /test
+				prefixMatches = requestPath == endpoint.PathPrefix || strings.HasPrefix(requestPath, endpoint.PathPrefix+"/")
+			}
+
+			if prefixMatches {
+				matchedEndpoint = endpoint
+
+				// Apply path translation based on endpoint mode
+				switch endpoint.TranslationMode {
+				case models.TranslationModeNone:
+					translatedPath = requestPath
+				case models.TranslationModeStrip:
+					// Check if PathPrefix is a regex pattern
+					if strings.HasPrefix(endpoint.PathPrefix, "^") {
+						// Regex strip: find what matched and remove it
+						re, err := h.compileRegex(endpoint.PathPrefix)
+						if err != nil {
+							log.Printf("Invalid regex pattern for strip: %s (%v)", endpoint.PathPrefix, err)
+							translatedPath = requestPath
+						} else {
+							matched := re.FindString(requestPath)
+							if matched != "" {
+								translatedPath = strings.TrimPrefix(requestPath, matched)
+							} else {
+								translatedPath = requestPath
+							}
+						}
+					} else {
+						// Plain string strip
+						translatedPath = strings.TrimPrefix(requestPath, endpoint.PathPrefix)
+					}
+					// Ensure path starts with /
+					if !strings.HasPrefix(translatedPath, "/") {
+						translatedPath = "/" + translatedPath
+					}
+				case models.TranslationModeTranslate:
+					if endpoint.TranslatePattern != "" {
+						re, err := h.compileRegex(endpoint.TranslatePattern)
+						if err != nil {
+							log.Printf("Invalid regex pattern in endpoint %s: %v", endpoint.Name, err)
+							translatedPath = requestPath
+						} else {
+							translatedPath = re.ReplaceAllString(requestPath, endpoint.TranslateReplace)
+						}
+					} else {
+						translatedPath = requestPath
+					}
+				default:
+					translatedPath = requestPath
+				}
+
+				items = endpoint.Items
+				break // First match wins
+			}
+		}
+
+		// If no endpoint matched, return 404
+		if matchedEndpoint == nil {
+			h.configMutex.RUnlock()
+			http.Error(w, "No endpoint configured for this path", http.StatusNotFound)
+			return
+		}
+
+		// Dispatch based on endpoint type
+		h.configMutex.RUnlock()
+		switch matchedEndpoint.Type {
+		case models.EndpointTypeMock:
+			h.handleMockRequest(w, r, matchedEndpoint, translatedPath, bodyBytes)
+		case models.EndpointTypeProxy:
+			h.handleProxyRequest(w, r, matchedEndpoint, translatedPath, captureGroups)
+		case models.EndpointTypeContainer:
+			h.handleContainerRequest(w, r, matchedEndpoint, translatedPath)
+		default:
+			http.Error(w, "Unknown endpoint type", http.StatusInternalServerError)
+		}
+		return
+	} else {
+		// Fallback: No endpoints configured, use legacy Items
+		translatedPath = requestPath
+		items = h.config.Items
+	}
+
+	// Check if this is a CORS preflight that should be handled globally
+	if r.Method == "OPTIONS" && h.shouldHandleCORSPreflightForItems(r, translatedPath, items) {
 		h.configMutex.RUnlock()
 		h.handleCORSPreflight(w, r)
 		return
 	}
-	h.configMutex.RUnlock()
 
-	// Find matching response configuration and extract path parameters
-	h.configMutex.RLock()
+	// Step 2: Find matching response within the endpoint's items using translated path
 	var matchedResponse *models.MethodResponse
 	var matchedGroup *models.ResponseGroup
 	var pathParams map[string]string
 	var extractedVars map[string]interface{}
 
 	// Iterate through items to preserve group information
-	for _, item := range h.config.Items {
+	for _, item := range items {
 		if item.Type == "response" && item.Response != nil {
 			resp := item.Response
+
 			// Skip disabled responses
 			if !resp.IsEnabled() {
 				continue
@@ -70,9 +227,9 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 				}
 			}
 
-			// Check if path matches and extract path parameters
+			// Check if path matches and extract path parameters (using translated path)
 			if methodMatches {
-				matchResult := matchPathPatternWithParams(resp.PathPattern, r.URL.Path)
+				matchResult := matchPathPatternWithParams(resp.PathPattern, translatedPath)
 				if matchResult.Matches {
 					// Build initial context for validation (without vars yet)
 					tempContext := BuildRequestContext(r, bodyBytes, matchResult.PathParams)
@@ -81,7 +238,7 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 					validationResult := ValidateRequest(resp.RequestValidation, string(bodyBytes), tempContext)
 					if !validationResult.Valid {
 						// Validation failed - skip this response and try next
-						log.Printf("Validation failed for %s %s: %s", r.Method, r.URL.Path, validationResult.Error)
+						log.Printf("Validation failed for %s %s (translated: %s): %s", r.Method, r.URL.Path, translatedPath, validationResult.Error)
 						continue
 					}
 
@@ -117,9 +274,9 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 					}
 				}
 
-				// Check if path matches and extract path parameters
+				// Check if path matches and extract path parameters (using translated path)
 				if methodMatches {
-					matchResult := matchPathPatternWithParams(resp.PathPattern, r.URL.Path)
+					matchResult := matchPathPatternWithParams(resp.PathPattern, translatedPath)
 					if matchResult.Matches {
 						// Build initial context for validation (without vars yet)
 						tempContext := BuildRequestContext(r, bodyBytes, matchResult.PathParams)
@@ -128,7 +285,7 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 						validationResult := ValidateRequest(resp.RequestValidation, string(bodyBytes), tempContext)
 						if !validationResult.Valid {
 							// Validation failed - skip this response and try next
-							log.Printf("Validation failed for %s %s: %s", r.Method, r.URL.Path, validationResult.Error)
+							log.Printf("Validation failed for %s %s (translated: %s): %s", r.Method, r.URL.Path, translatedPath, validationResult.Error)
 							continue
 						}
 
@@ -152,8 +309,8 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// Fallback to legacy responses if no items matched
-	if matchedResponse == nil && len(h.config.Items) == 0 {
+	// Fallback to legacy responses if no items matched and no endpoints configured
+	if matchedResponse == nil && len(items) == 0 && len(h.config.Endpoints) == 0 {
 		for i := range h.config.Responses {
 			resp := &h.config.Responses[i]
 			// Skip disabled responses
@@ -170,9 +327,9 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 				}
 			}
 
-			// Check if path matches and extract path parameters
+			// Check if path matches and extract path parameters (using translated path)
 			if methodMatches {
-				matchResult := matchPathPatternWithParams(resp.PathPattern, r.URL.Path)
+				matchResult := matchPathPatternWithParams(resp.PathPattern, translatedPath)
 				if matchResult.Matches {
 					// Build initial context for validation (without vars yet)
 					tempContext := BuildRequestContext(r, bodyBytes, matchResult.PathParams)
@@ -181,7 +338,7 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 					validationResult := ValidateRequest(resp.RequestValidation, string(bodyBytes), tempContext)
 					if !validationResult.Valid {
 						// Validation failed - skip this response and try next
-						log.Printf("Validation failed for %s %s: %s", r.Method, r.URL.Path, validationResult.Error)
+						log.Printf("Validation failed for %s %s (translated: %s): %s", r.Method, r.URL.Path, translatedPath, validationResult.Error)
 						continue
 					}
 
@@ -196,12 +353,6 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	h.configMutex.RUnlock()
-
-	// Determine status code for logging
-	statusCode := http.StatusNotFound
-	if matchedResponse != nil {
-		statusCode = matchedResponse.StatusCode
-	}
 
 	// Deep copy headers to avoid reference issues
 	headersCopy := make(map[string][]string, len(r.Header))
@@ -219,23 +370,11 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 		queryParamsCopy[key] = valuesCopy
 	}
 
-	// Log the request with the status code we'll return
-	requestLog := models.RequestLog{
-		ID:          uuid.New().String(),
-		Timestamp:   time.Now(),
-		Method:      r.Method,
-		Path:        r.URL.Path,
-		StatusCode:  statusCode,
-		SourceIP:    r.RemoteAddr,
-		Headers:     headersCopy,
-		Body:        string(bodyBytes),
-		QueryParams: queryParamsCopy,
-		Protocol:    r.Proto,
-		UserAgent:   r.UserAgent(),
+	// Determine endpoint ID for logging (empty string if legacy fallback)
+	endpointID := ""
+	if matchedEndpoint != nil {
+		endpointID = matchedEndpoint.ID
 	}
-
-	// Send log to logger
-	h.requestLogger.LogRequest(requestLog)
 
 	if matchedResponse == nil {
 		http.Error(w, "No matching response configuration", http.StatusNotFound)
@@ -249,6 +388,9 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 			w.Header().Set(name, value)
 		}
 	}
+
+	// Capture request start time
+	startTime := time.Now()
 
 	// Process response based on mode
 	finalBody, finalHeaders, finalStatus, finalDelay := h.processResponse(
@@ -265,11 +407,330 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 		w.Header().Set(name, value)
 	}
 
+	// Capture time before first byte (right before WriteHeader)
+	firstByteTime := time.Now()
+
 	// Set status code
 	w.WriteHeader(finalStatus)
 
 	// Write response body
 	w.Write([]byte(finalBody))
+
+	// Capture completion time
+	completionTime := time.Now()
+
+	// Calculate timing metrics
+	delayMs := firstByteTime.Sub(startTime).Milliseconds()
+	rttMs := completionTime.Sub(startTime).Milliseconds()
+
+	// Capture final response headers for logging
+	finalRespHeaders := make(map[string][]string, len(w.Header()))
+	for name, values := range w.Header() {
+		valuesCopy := make([]string, len(values))
+		copy(valuesCopy, values)
+		finalRespHeaders[name] = valuesCopy
+	}
+
+	// Build full client URL (scheme://host:port/path?query)
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	fullURL := scheme + "://" + r.Host + r.URL.RequestURI()
+
+	// Get status text
+	statusText := http.StatusText(finalStatus)
+
+	// Log the request with full response details using new nested structure
+	requestLog := models.RequestLog{
+		ID:         uuid.New().String(),
+		Timestamp:  time.Now().Format(time.RFC3339),
+		EndpointID: endpointID,
+	}
+
+	// Populate client request
+	requestLog.ClientRequest.Method = r.Method
+	requestLog.ClientRequest.FullURL = fullURL
+	requestLog.ClientRequest.Path = r.URL.Path
+	requestLog.ClientRequest.QueryParams = queryParamsCopy
+	requestLog.ClientRequest.Headers = headersCopy
+	requestLog.ClientRequest.Body = string(bodyBytes)
+	requestLog.ClientRequest.Protocol = r.Proto
+	requestLog.ClientRequest.SourceIP = r.RemoteAddr
+	requestLog.ClientRequest.UserAgent = r.UserAgent()
+
+	// Populate client response
+	requestLog.ClientResponse.StatusCode = finalStatus
+	requestLog.ClientResponse.StatusText = statusText
+	requestLog.ClientResponse.Headers = finalRespHeaders
+	requestLog.ClientResponse.Body = finalBody
+	requestLog.ClientResponse.DelayMs = &delayMs
+	requestLog.ClientResponse.RTTMs = &rttMs
+
+	// Backend fields are nil for mock endpoints (no backend proxy)
+
+	// Send log to logger
+	h.requestLogger.LogRequest(requestLog)
+}
+
+// handleMockRequest handles mock endpoint requests with script-based responses
+func (h *ResponseHandler) handleMockRequest(w http.ResponseWriter, r *http.Request, endpoint *models.Endpoint, translatedPath string, bodyBytes []byte) {
+	h.configMutex.RLock()
+	items := endpoint.Items
+
+	// Check if this is a CORS preflight that should be handled globally
+	if r.Method == "OPTIONS" && h.shouldHandleCORSPreflightForItems(r, translatedPath, items) {
+		h.configMutex.RUnlock()
+		h.handleCORSPreflight(w, r)
+		return
+	}
+
+	// Find matching response within the endpoint's items using translated path
+	var matchedResponse *models.MethodResponse
+	var matchedGroup *models.ResponseGroup
+	var pathParams map[string]string
+	var extractedVars map[string]interface{}
+
+	// Iterate through items to preserve group information
+	for _, item := range items {
+		if item.Type == "response" && item.Response != nil {
+			resp := item.Response
+
+			// Skip disabled responses
+			if !resp.IsEnabled() {
+				continue
+			}
+
+			// Check if method matches
+			methodMatches := false
+			for _, method := range resp.Methods {
+				if method == r.Method {
+					methodMatches = true
+					break
+				}
+			}
+
+			// Check if path matches and extract path parameters (using translated path)
+			if methodMatches {
+				matchResult := matchPathPatternWithParams(resp.PathPattern, translatedPath)
+				if matchResult.Matches {
+					// Build initial context for validation (without vars yet)
+					tempContext := BuildRequestContext(r, bodyBytes, matchResult.PathParams)
+
+					// Run request body validation if configured
+					validationResult := ValidateRequest(resp.RequestValidation, string(bodyBytes), tempContext)
+					if !validationResult.Valid {
+						// Validation failed - skip this response and try next
+						log.Printf("Validation failed for %s %s (translated: %s): %s", r.Method, r.URL.Path, translatedPath, validationResult.Error)
+						continue
+					}
+
+					// Validation passed - use this response
+					matchedResponse = resp
+					matchedGroup = nil // No group for standalone responses
+					pathParams = matchResult.PathParams
+					extractedVars = validationResult.Vars
+					break
+				}
+			}
+		} else if item.Type == "group" && item.Group != nil {
+			group := item.Group
+			// Skip disabled groups
+			if !group.IsEnabled() {
+				continue
+			}
+
+			// Check responses within the group
+			for i := range group.Responses {
+				resp := &group.Responses[i]
+				// Skip disabled responses
+				if !resp.IsEnabled() {
+					continue
+				}
+
+				// Check if method matches
+				methodMatches := false
+				for _, method := range resp.Methods {
+					if method == r.Method {
+						methodMatches = true
+						break
+					}
+				}
+
+				// Check if path matches and extract path parameters (using translated path)
+				if methodMatches {
+					matchResult := matchPathPatternWithParams(resp.PathPattern, translatedPath)
+					if matchResult.Matches {
+						// Build initial context for validation (without vars yet)
+						tempContext := BuildRequestContext(r, bodyBytes, matchResult.PathParams)
+
+						// Run request body validation if configured
+						validationResult := ValidateRequest(resp.RequestValidation, string(bodyBytes), tempContext)
+						if !validationResult.Valid {
+							// Validation failed - skip this response and try next
+							log.Printf("Validation failed for %s %s (translated: %s): %s", r.Method, r.URL.Path, translatedPath, validationResult.Error)
+							continue
+						}
+
+						// Validation passed - use this response
+						matchedResponse = resp
+						matchedGroup = group
+						pathParams = matchResult.PathParams
+						extractedVars = validationResult.Vars
+						break
+					}
+				}
+			}
+
+			if matchedResponse != nil {
+				break
+			}
+		}
+
+		if matchedResponse != nil {
+			break
+		}
+	}
+	h.configMutex.RUnlock()
+
+	// Deep copy headers to avoid reference issues
+	headersCopy := make(map[string][]string, len(r.Header))
+	for key, values := range r.Header {
+		valuesCopy := make([]string, len(values))
+		copy(valuesCopy, values)
+		headersCopy[key] = valuesCopy
+	}
+
+	// Deep copy query params to avoid reference issues
+	queryParamsCopy := make(map[string][]string, len(r.URL.Query()))
+	for key, values := range r.URL.Query() {
+		valuesCopy := make([]string, len(values))
+		copy(valuesCopy, values)
+		queryParamsCopy[key] = valuesCopy
+	}
+
+	if matchedResponse == nil {
+		http.Error(w, "No matching response configuration", http.StatusNotFound)
+		return
+	}
+
+	// Apply CORS headers if needed
+	if h.shouldApplyCORS(matchedResponse, matchedGroup, r) {
+		corsHeaders := h.corsProcessor.ProcessCORS(r)
+		for name, value := range corsHeaders {
+			w.Header().Set(name, value)
+		}
+	}
+
+	// Capture request start time
+	startTime := time.Now()
+
+	// Process response based on mode
+	finalBody, finalHeaders, finalStatus, finalDelay := h.processResponse(
+		matchedResponse, r, bodyBytes, pathParams, extractedVars,
+	)
+
+	// Implement response delay
+	if finalDelay > 0 {
+		time.Sleep(time.Duration(finalDelay) * time.Millisecond)
+	}
+
+	// Set headers
+	for name, value := range finalHeaders {
+		w.Header().Set(name, value)
+	}
+
+	// Capture time before first byte (right before WriteHeader)
+	firstByteTime := time.Now()
+
+	// Set status code
+	w.WriteHeader(finalStatus)
+
+	// Write response body
+	w.Write([]byte(finalBody))
+
+	// Capture completion time
+	completionTime := time.Now()
+
+	// Calculate timing metrics
+	delayMs := firstByteTime.Sub(startTime).Milliseconds()
+	rttMs := completionTime.Sub(startTime).Milliseconds()
+
+	// Capture final response headers for logging
+	finalRespHeaders := make(map[string][]string, len(w.Header()))
+	for name, values := range w.Header() {
+		valuesCopy := make([]string, len(values))
+		copy(valuesCopy, values)
+		finalRespHeaders[name] = valuesCopy
+	}
+
+	// Build full client URL (scheme://host:port/path?query)
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	fullURL := scheme + "://" + r.Host + r.URL.RequestURI()
+
+	// Get status text
+	statusText := http.StatusText(finalStatus)
+
+	// Log the request with full response details using new nested structure
+	requestLog := models.RequestLog{
+		ID:         uuid.New().String(),
+		Timestamp:  time.Now().Format(time.RFC3339),
+		EndpointID: endpoint.ID,
+	}
+
+	// Populate client request
+	requestLog.ClientRequest.Method = r.Method
+	requestLog.ClientRequest.FullURL = fullURL
+	requestLog.ClientRequest.Path = r.URL.Path
+	requestLog.ClientRequest.QueryParams = queryParamsCopy
+	requestLog.ClientRequest.Headers = headersCopy
+	requestLog.ClientRequest.Body = string(bodyBytes)
+	requestLog.ClientRequest.Protocol = r.Proto
+	requestLog.ClientRequest.SourceIP = r.RemoteAddr
+	requestLog.ClientRequest.UserAgent = r.UserAgent()
+
+	// Populate client response
+	requestLog.ClientResponse.StatusCode = finalStatus
+	requestLog.ClientResponse.StatusText = statusText
+	requestLog.ClientResponse.Headers = finalRespHeaders
+	requestLog.ClientResponse.Body = finalBody
+	requestLog.ClientResponse.DelayMs = &delayMs
+	requestLog.ClientResponse.RTTMs = &rttMs
+
+	// Backend fields are nil for mock endpoints (no backend proxy)
+
+	// Send log to logger
+	h.requestLogger.LogRequest(requestLog)
+}
+
+// handleProxyRequest handles proxy endpoint requests
+func (h *ResponseHandler) handleProxyRequest(w http.ResponseWriter, r *http.Request, endpoint *models.Endpoint, translatedPath string, captureGroups []string) {
+	if h.proxyHandler == nil || endpoint.ProxyConfig == nil {
+		http.Error(w, "Proxy configuration missing", http.StatusInternalServerError)
+		return
+	}
+
+	// Delegate to proxy handler
+	h.proxyHandler.ServeHTTP(w, r, endpoint, translatedPath, captureGroups)
+}
+
+// handleContainerRequest handles container endpoint requests
+func (h *ResponseHandler) handleContainerRequest(w http.ResponseWriter, r *http.Request, endpoint *models.Endpoint, translatedPath string) {
+	if h.containerHandler == nil || endpoint.ContainerConfig == nil {
+		http.Error(w, "Container configuration missing", http.StatusInternalServerError)
+		return
+	}
+
+	if endpoint.ContainerConfig.ContainerID == "" {
+		http.Error(w, "Container not running", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Delegate to container handler
+	h.containerHandler.ServeHTTP(w, r, endpoint, translatedPath)
 }
 
 // processResponse processes the response based on the response mode
@@ -344,7 +805,7 @@ func (h *ResponseHandler) processResponse(
 	return
 }
 
-// shouldHandleCORSPreflight checks if global CORS should handle an OPTIONS request
+// shouldHandleCORSPreflight checks if global CORS should handle an OPTIONS request (legacy, for backward compatibility)
 func (h *ResponseHandler) shouldHandleCORSPreflight(r *http.Request) bool {
 	// Check if global CORS is enabled
 	if !h.config.CORS.Enabled {
@@ -367,6 +828,64 @@ func (h *ResponseHandler) shouldHandleCORSPreflight(r *http.Request) bool {
 				if matchResult.Matches {
 					// There's an explicit OPTIONS handler, don't use global CORS
 					return false
+				}
+			}
+		}
+	}
+
+	// No explicit OPTIONS handler, use global CORS
+	return true
+}
+
+// shouldHandleCORSPreflightForItems checks if global CORS should handle an OPTIONS request for specific items
+func (h *ResponseHandler) shouldHandleCORSPreflightForItems(r *http.Request, translatedPath string, items []models.ResponseItem) bool {
+	// Check if global CORS is enabled
+	if !h.config.CORS.Enabled {
+		return false
+	}
+
+	// Check if there's an explicit OPTIONS handler in the items for this translated path
+	for _, item := range items {
+		if item.Type == "response" && item.Response != nil {
+			resp := item.Response
+			if !resp.IsEnabled() {
+				continue
+			}
+
+			// Check if this response handles OPTIONS
+			for _, method := range resp.Methods {
+				if method == "OPTIONS" {
+					// Check if path matches (using translated path)
+					matchResult := matchPathPatternWithParams(resp.PathPattern, translatedPath)
+					if matchResult.Matches {
+						// There's an explicit OPTIONS handler, don't use global CORS
+						return false
+					}
+				}
+			}
+		} else if item.Type == "group" && item.Group != nil {
+			group := item.Group
+			if !group.IsEnabled() {
+				continue
+			}
+
+			// Check responses within the group
+			for i := range group.Responses {
+				resp := &group.Responses[i]
+				if !resp.IsEnabled() {
+					continue
+				}
+
+				// Check if this response handles OPTIONS
+				for _, method := range resp.Methods {
+					if method == "OPTIONS" {
+						// Check if path matches (using translated path)
+						matchResult := matchPathPatternWithParams(resp.PathPattern, translatedPath)
+						if matchResult.Matches {
+							// There's an explicit OPTIONS handler, don't use global CORS
+							return false
+						}
+					}
 				}
 			}
 		}

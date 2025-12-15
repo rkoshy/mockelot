@@ -202,6 +202,16 @@ JSON.parse(str);
 JSON.stringify(obj);
 ```
 
+## Documentation
+
+Comprehensive guides for all features:
+
+- **[Setup Guide](docs/SETUP.md)** - Complete setup instructions including HTTPS configuration and certificate installation
+- **[Mock Endpoint Guide](docs/MOCK-GUIDE.md)** - Deep dive into mock endpoints, response modes, and validation
+- **[Proxy Endpoint Guide](docs/PROXY-GUIDE.md)** - Reverse proxy configuration, header manipulation, and body transformation
+- **[Container Endpoint Guide](docs/CONTAINER-GUIDE.md)** - Docker/Podman container management and configuration
+- **[OpenAPI Import Guide](docs/OPENAPI_IMPORT.md)** - Import OpenAPI/Swagger specifications to generate mock endpoints
+
 ## Configuration
 
 Mockelot saves configurations as YAML files. You can:

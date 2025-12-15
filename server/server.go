@@ -31,15 +31,13 @@ type HTTPServer struct {
 	startupCancel    context.CancelFunc // Cancel function for startup
 }
 
-func NewHTTPServer(config *models.AppConfig, requestLogger RequestLogger, eventSender EventSender) *HTTPServer {
+func NewHTTPServer(config *models.AppConfig, requestLogger RequestLogger, eventSender EventSender, containerHandler *ContainerHandler, proxyHandler *ProxyHandler) *HTTPServer {
 	certManager, err := NewCertificateManager()
 	if err != nil {
 		log.Printf("Warning: Failed to initialize certificate manager: %v", err)
 	}
 
-	// Initialize proxy and container handlers
-	proxyHandler := NewProxyHandler(requestLogger)
-	containerHandler := NewContainerHandler(requestLogger, eventSender)
+	// Proxy handler is passed in (shared with container handler)
 
 	return &HTTPServer{
 		config:           config,
@@ -284,6 +282,10 @@ func (s *HTTPServer) Start() error {
 		}
 	}
 
+	// Start monitoring for any container endpoints in config
+	// This will detect and track any containers already running from previous sessions
+	s.EnsureContainerMonitoring()
+
 	return nil
 }
 
@@ -325,22 +327,45 @@ func (s *HTTPServer) StopHTTPS() error {
 	return nil
 }
 
+// EnsureContainerMonitoring starts status/stats polling for all container endpoints in config
+// This is called when server starts or config is loaded to monitor any already-running containers
+func (s *HTTPServer) EnsureContainerMonitoring() {
+	if s.containerHandler == nil {
+		log.Printf("WARNING: Container handler is nil")
+		return
+	}
+
+	s.configMutex.RLock()
+
+	// Build list of container endpoints - use pointers to ACTUAL config endpoints, not copies
+	var containerEndpoints []*models.Endpoint
+	for i := range s.config.Endpoints {
+		endpoint := &s.config.Endpoints[i]
+		if endpoint.Type == models.EndpointTypeContainer {
+			containerEndpoints = append(containerEndpoints, endpoint)
+		}
+	}
+	s.configMutex.RUnlock()
+
+	if len(containerEndpoints) > 0 {
+		// Stop any existing polling to avoid duplicates
+		s.containerHandler.StopPolling()
+
+		// Start fresh polling for all container endpoints
+		s.containerHandler.StartContainerStatusPolling(containerEndpoints)
+		s.containerHandler.StartContainerStatsPolling(containerEndpoints)
+	}
+}
+
 // StartContainers starts all enabled container endpoints
 // This should be called by the frontend after it's ready to receive progress events
 func (s *HTTPServer) StartContainers() error {
-	log.Printf("[StartContainers] Frontend ready signal received. Starting containers...")
-
 	s.configMutex.RLock()
 	endpoints := s.config.Endpoints
 	s.configMutex.RUnlock()
 
-	log.Printf("[StartContainers] Total endpoints: %d", len(endpoints))
-	for i, ep := range endpoints {
-		log.Printf("[StartContainers]   Endpoint %d: name=%s, type=%s, enabled=%v", i, ep.Name, ep.Type, ep.IsEnabled())
-	}
-
 	if s.containerHandler == nil {
-		log.Printf("[StartContainers] WARNING: Container handler not available")
+		log.Printf("WARNING: Container handler not available")
 		return nil
 	}
 
@@ -348,28 +373,57 @@ func (s *HTTPServer) StartContainers() error {
 	for i := range endpoints {
 		endpoint := &endpoints[i]
 		if endpoint.Type == models.EndpointTypeContainer && endpoint.IsEnabled() {
-			log.Printf("[StartContainers] Starting container for endpoint: %s (ID: %s)", endpoint.Name, endpoint.ID)
-			if err := s.containerHandler.StartContainer(s.startupCtx, endpoint); err != nil {
-				log.Printf("Failed to start container for endpoint %s: %v", endpoint.Name, err)
-				// Check if cancelled
-				if s.startupCtx.Err() != nil {
-					log.Printf("Container startup cancelled")
-					return fmt.Errorf("startup cancelled: %w", s.startupCtx.Err())
+			// Check if container is already running
+			status := s.containerHandler.GetContainerStatus(endpoint.ID)
+
+			if status != nil && status.Running {
+				// Container is already running
+				if endpoint.ContainerConfig != nil && endpoint.ContainerConfig.RestartOnServerStart {
+					// Restart the container
+					// Stop first
+					if err := s.containerHandler.StopContainer(s.startupCtx, endpoint); err != nil {
+						log.Printf("Failed to stop container for endpoint %s: %v", endpoint.Name, err)
+						// Check if cancelled
+						if s.startupCtx.Err() != nil {
+							return fmt.Errorf("startup cancelled: %w", s.startupCtx.Err())
+						}
+						// Continue with other containers even if one fails
+						continue
+					}
+
+					// Then start
+					if err := s.containerHandler.StartContainer(s.startupCtx, endpoint); err != nil {
+						log.Printf("Failed to start container for endpoint %s: %v", endpoint.Name, err)
+						// Check if cancelled
+						if s.startupCtx.Err() != nil {
+							return fmt.Errorf("startup cancelled: %w", s.startupCtx.Err())
+						}
+						// Continue with other containers even if one fails
+					}
 				}
-				// Continue with other containers even if one fails
+				// Skip starting - container is already running and RestartOnServerStart is false
+			} else {
+				// Container is not running, start it normally
+				if err := s.containerHandler.StartContainer(s.startupCtx, endpoint); err != nil {
+					log.Printf("Failed to start container for endpoint %s: %v", endpoint.Name, err)
+					// Check if cancelled
+					if s.startupCtx.Err() != nil {
+						return fmt.Errorf("startup cancelled: %w", s.startupCtx.Err())
+					}
+					// Continue with other containers even if one fails
+				}
 			}
+
 			containerEndpoints = append(containerEndpoints, endpoint)
 		}
 	}
 
 	// Start container status and stats polling (status: 10s, stats: 5s)
 	if len(containerEndpoints) > 0 {
-		log.Printf("Starting status and stats polling for %d container endpoint(s)", len(containerEndpoints))
 		s.containerHandler.StartContainerStatusPolling(containerEndpoints)
 		s.containerHandler.StartContainerStatsPolling(containerEndpoints)
 	}
 
-	log.Printf("Container startup complete")
 	return nil
 }
 
@@ -469,6 +523,40 @@ func (s *HTTPServer) GetContainerStats(endpointID string) *models.ContainerStats
 		return nil
 	}
 	return s.containerHandler.GetContainerStats(endpointID)
+}
+
+// GetContainerLogs retrieves container stdout/stderr logs
+func (s *HTTPServer) GetContainerLogs(ctx context.Context, endpointID string, tail int) (string, error) {
+	if s.containerHandler == nil {
+		return "", fmt.Errorf("container handler not available")
+	}
+	return s.containerHandler.GetContainerLogs(ctx, endpointID, tail)
+}
+
+// StartSingleContainer starts a single container endpoint
+func (s *HTTPServer) StartSingleContainer(ctx context.Context, endpoint *models.Endpoint) error {
+	if s.containerHandler == nil {
+		return fmt.Errorf("container handler not available")
+	}
+
+	if err := s.containerHandler.StartContainer(ctx, endpoint); err != nil {
+		return fmt.Errorf("failed to start container: %w", err)
+	}
+
+	return nil
+}
+
+// StopSingleContainer stops (and removes) a single container endpoint
+func (s *HTTPServer) StopSingleContainer(ctx context.Context, endpoint *models.Endpoint) error {
+	if s.containerHandler == nil {
+		return fmt.Errorf("container handler not available")
+	}
+
+	if err := s.containerHandler.StopContainer(ctx, endpoint); err != nil {
+		return fmt.Errorf("failed to stop container: %w", err)
+	}
+
+	return nil
 }
 
 // RestartContainer restarts a container endpoint

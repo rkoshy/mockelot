@@ -58,6 +58,42 @@ func migrateConfig(config *models.AppConfig) {
 	// Migrate existing items to ensure UseGlobalCORS is properly initialized
 	// Note: nil means "use group/global setting", so we only need to ensure the field exists
 	// No action needed as Go zero values (nil for *bool) are correct
+
+	// Migrate legacy Items to Endpoints structure
+	// If no endpoints exist but legacy Items exist, create a default endpoint
+	if len(config.Endpoints) == 0 && len(config.Items) > 0 {
+		defaultEndpoint := models.Endpoint{
+			ID:              "default",
+			Name:            "Default",
+			PathPrefix:      "/",
+			TranslationMode: models.TranslationModeNone,
+			Type:            models.EndpointTypeMock,
+			Items:           config.Items,
+		}
+		config.Endpoints = []models.Endpoint{defaultEndpoint}
+		config.Items = nil // Clear legacy field after migration
+	}
+
+	// If no endpoints exist and no Items, create an empty default endpoint for new users
+	if len(config.Endpoints) == 0 && len(config.Items) == 0 && len(config.Responses) == 0 {
+		defaultEndpoint := models.Endpoint{
+			ID:              "default",
+			Name:            "Default",
+			PathPrefix:      "/",
+			TranslationMode: models.TranslationModeNone,
+			Type:            models.EndpointTypeMock,
+			Items:           []models.ResponseItem{},
+		}
+		config.Endpoints = []models.Endpoint{defaultEndpoint}
+	}
+
+	// Auto-migrate existing endpoints to Mock type if not set
+	// This ensures backward compatibility when upgrading from versions without endpoint types
+	for i := range config.Endpoints {
+		if config.Endpoints[i].Type == "" {
+			config.Endpoints[i].Type = models.EndpointTypeMock
+		}
+	}
 }
 
 func (cm *ConfigManager) Load() (*models.AppConfig, error) {

@@ -3,15 +3,27 @@
 import {models} from '../models';
 import {main} from '../models';
 
+export function AddEndpoint(arg1:string,arg2:string,arg3:string,arg4:string):Promise<models.Endpoint>;
+
+export function AddEndpointWithConfig(arg1:Record<string, any>):Promise<models.Endpoint>;
+
 export function AddGroup(arg1:string):Promise<models.ResponseGroup>;
 
 export function AddResponse(arg1:models.MethodResponse):Promise<models.MethodResponse>;
 
+export function CancelContainerStart(arg1:string):Promise<void>;
+
 export function ClearRequestLogs():Promise<void>;
+
+export function DeleteContainer(arg1:string):Promise<void>;
+
+export function DeleteEndpoint(arg1:string):Promise<void>;
 
 export function DeleteResponse(arg1:string):Promise<void>;
 
 export function DownloadCACert():Promise<string>;
+
+export function Emit(arg1:string,arg2:any):Promise<void>;
 
 export function ExportLogs(arg1:string):Promise<void>;
 
@@ -21,15 +33,31 @@ export function GetCORSConfig():Promise<models.CORSConfig>;
 
 export function GetConfig():Promise<models.AppConfig>;
 
+export function GetContainerLogs(arg1:string,arg2:number):Promise<string>;
+
+export function GetContainerStats(arg1:string):Promise<models.ContainerStats>;
+
+export function GetContainerStatus(arg1:string):Promise<models.ContainerStatus>;
+
 export function GetDefaultCertNames():Promise<Array<string>>;
+
+export function GetDefaultContainerHeaders():Promise<Array<models.HeaderManipulation>>;
+
+export function GetEndpointHealth(arg1:string):Promise<models.HealthStatus>;
+
+export function GetEndpoints():Promise<Array<models.Endpoint>>;
 
 export function GetItems():Promise<Array<models.ResponseItem>>;
 
 export function GetRequestLogByID(arg1:string):Promise<models.RequestLog>;
 
-export function GetRequestLogs():Promise<Array<models.RequestLog>>;
+export function GetRequestLogDetails(arg1:string):Promise<models.RequestLog>;
+
+export function GetRequestLogs():Promise<Array<models.RequestLogSummary>>;
 
 export function GetResponses():Promise<Array<models.MethodResponse>>;
+
+export function GetSelectedEndpointId():Promise<string>;
 
 export function GetServerStatus():Promise<main.ServerStatus>;
 
@@ -41,13 +69,23 @@ export function LoadConfig():Promise<models.AppConfig>;
 
 export function LogRequest(arg1:models.RequestLog):Promise<void>;
 
+export function PollEvents():Promise<Array<main.Event>>;
+
+export function PollRequestLogs():Promise<Array<models.RequestLogSummary>>;
+
+export function PullDockerImage(arg1:string):Promise<void>;
+
 export function RegenerateCA():Promise<void>;
 
 export function ReorderResponses(arg1:Array<string>):Promise<void>;
 
+export function RestartContainer(arg1:string):Promise<void>;
+
 export function SaveConfig():Promise<void>;
 
 export function SelectCertFile(arg1:string):Promise<string>;
+
+export function SendEvent(arg1:string,arg2:any):Promise<void>;
 
 export function SetCORSConfig(arg1:models.CORSConfig):Promise<void>;
 
@@ -61,14 +99,34 @@ export function SetItems(arg1:Array<models.ResponseItem>):Promise<void>;
 
 export function SetResponses(arg1:Array<models.MethodResponse>):Promise<void>;
 
+export function SetSelectedEndpointId(arg1:string):Promise<void>;
+
+export function StartContainer(arg1:string):Promise<void>;
+
+export function StartContainers():Promise<void>;
+
 export function StartServer(arg1:number):Promise<void>;
 
+export function StopContainer(arg1:string):Promise<void>;
+
 export function StopServer():Promise<void>;
+
+export function TestContainerConfig(arg1:Record<string, any>):Promise<void>;
+
+export function TestProxyConnection(arg1:string):Promise<void>;
+
+export function UpdateEndpoint(arg1:models.Endpoint):Promise<void>;
+
+export function UpdateRequestLog(arg1:models.RequestLog):Promise<void>;
 
 export function UpdateResponse(arg1:models.MethodResponse):Promise<void>;
 
 export function UpdateResponseByID(arg1:models.MethodResponse):Promise<void>;
 
+export function ValidateAndInspectDockerImage(arg1:string):Promise<models.DockerImageInfo>;
+
 export function ValidateCORSHeaderExpression(arg1:string):Promise<void>;
 
 export function ValidateCORSScript(arg1:string):Promise<void>;
+
+export function ValidateDockerImage(arg1:string):Promise<void>;

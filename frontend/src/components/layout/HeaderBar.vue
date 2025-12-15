@@ -1,10 +1,21 @@
 <script lang="ts" setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch, provide } from 'vue'
 import { useServerStore } from '../../stores/server'
-import { SaveConfig, LoadConfig, SetHTTPSConfig, SetCertMode, SetCORSConfig, SetHTTP2Enabled } from '../../../wailsjs/go/main/App'
-import { models } from '../../types/models'
+import { SaveConfig, LoadConfig, SetHTTPSConfig, SetCertMode, SetCORSConfig, SetHTTP2Enabled, StartContainers, PollEvents } from '../../../wailsjs/go/main/App'
+import { models } from '../../../wailsjs/go/models'
 import ConfirmDialog from '../dialogs/ConfirmDialog.vue'
 import ServerConfigDialog from '../dialogs/ServerConfigDialog.vue'
+import ContainerProgressDialog from '../dialogs/ContainerProgressDialog.vue'
+import { EventsOn } from '../../../wailsjs/runtime/runtime'
+
+// Event structure from backend
+interface BackendEvent {
+  source: string
+  data: any
+}
+
+// Type for event handler callbacks
+type EventCallback = (data: any) => void
 
 const serverStore = useServerStore()
 const portInput = ref(8080)
@@ -14,6 +25,139 @@ const showImportDialog = ref(false)
 const showServerConfigDialog = ref(false)
 const serverConfigDialogTab = ref<'http' | 'https'>('http')
 const serverConfigDialogRef = ref<InstanceType<typeof ServerConfigDialog> | null>(null)
+
+// Container progress dialog state
+const showProgressDialog = ref(false)
+const progressEndpointName = ref('')
+const progressDialogRef = ref<InstanceType<typeof ContainerProgressDialog>>()
+const pendingProgressEvents = ref<any[]>([])
+
+// Event log for debugging
+const eventLog = ref<Array<{time: string, type: string, data: string}>>([])
+const showEventLog = ref(false)
+const maxEventLogEntries = 50
+
+// Event handler map for polling-based event distribution - now supports multiple handlers per event type
+const eventHandlers = new Map<string, EventCallback[]>()
+
+// Polling state
+let pollTimeoutId: number | null = null
+let isPolling = false
+
+function logEvent(type: string, data: any) {
+  const timestamp = new Date().toISOString()
+
+  eventLog.value.unshift({
+    time: timestamp,
+    type: type,
+    data: JSON.stringify(data, null, 2)
+  })
+
+  // Keep only last 50 events
+  if (eventLog.value.length > maxEventLogEntries) {
+    eventLog.value = eventLog.value.slice(0, maxEventLogEntries)
+  }
+}
+
+// Register event handler for polling-based distribution
+// Returns unregister function for cleanup
+function registerEventListener(eventName: string, callback: EventCallback): () => void {
+  // Initialize array for this event type if not exists
+  if (!eventHandlers.has(eventName)) {
+    eventHandlers.set(eventName, [])
+  }
+
+  // Add callback to array
+  const handlers = eventHandlers.get(eventName)!
+  handlers.push(callback)
+
+  // Return unregister function
+  return () => {
+    const idx = handlers.indexOf(callback)
+    if (idx !== -1) {
+      handlers.splice(idx, 1)
+    }
+  }
+}
+
+// Provide registration function to child components
+provide('registerEventListener', registerEventListener)
+
+// Poll for events from backend (recursive with setTimeout to avoid overlapping calls)
+async function pollEvents() {
+  // Prevent overlapping calls
+  if (isPolling) {
+    return
+  }
+
+  isPolling = true
+
+  try {
+    const events: BackendEvent[] = await PollEvents()
+
+    if (events && events.length > 0) {
+      for (const event of events) {
+        // Log to event log
+        logEvent(event.source, event.data)
+
+        // Call all registered handlers for this event type
+        const handlers = eventHandlers.get(event.source)
+        if (handlers && handlers.length > 0) {
+          handlers.forEach(handler => handler(event.data))
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[pollEvents] Error polling events:', error)
+  } finally {
+    isPolling = false
+
+    // Schedule next poll only after current poll completes (recursive setTimeout)
+    if (pollTimeoutId !== null) {
+      pollTimeoutId = window.setTimeout(pollEvents, 1000) // Poll every 1 second
+    }
+  }
+}
+
+// Start polling
+function startPolling() {
+  if (pollTimeoutId !== null) {
+    return // Already polling
+  }
+
+  pollTimeoutId = 1 // Set to non-null to enable polling
+  // Delay first poll to let UI initialize
+  setTimeout(() => pollEvents(), 1000)
+}
+
+// Stop polling
+function stopPolling() {
+  if (pollTimeoutId !== null) {
+    clearTimeout(pollTimeoutId)
+    pollTimeoutId = null
+  }
+}
+
+// Generate consistent color for event type based on hash
+function getEventColor(eventType: string): string {
+  let hash = 0
+  for (let i = 0; i < eventType.length; i++) {
+    hash = eventType.charCodeAt(i) + ((hash << 5) - hash)
+  }
+
+  const colors = [
+    'text-green-400',
+    'text-blue-400',
+    'text-purple-400',
+    'text-yellow-400',
+    'text-pink-400',
+    'text-cyan-400',
+    'text-orange-400',
+    'text-red-400'
+  ]
+
+  return colors[Math.abs(hash) % colors.length]
+}
 
 const statusText = computed(() => {
   if (!serverStore.isRunning) return 'Stopped'
@@ -25,6 +169,107 @@ const statusText = computed(() => {
   return `Running on :${serverStore.port}`
 })
 
+// Store unregister functions for cleanup
+const unregisterFunctions = ref<Array<() => void>>([])
+
+// Listen for container progress events
+onMounted(async () => {
+  // Register event listeners (all events are automatically logged)
+
+  // System test event - to verify event bridge is working
+  unregisterFunctions.value.push(
+    registerEventListener('system:test', (event: any) => {
+      // Test event received - silently processed
+    })
+  )
+
+  // Container progress - needs special handling for dialog
+  unregisterFunctions.value.push(
+    registerEventListener('ctr:progress', (event: any) => {
+      if (progressDialogRef.value) {
+        // Process any pending events first
+        while (pendingProgressEvents.value.length > 0) {
+          const pendingEvent = pendingProgressEvents.value.shift()
+          progressDialogRef.value.updateProgress(pendingEvent)
+        }
+        // Process current event
+        progressDialogRef.value.updateProgress(event)
+      } else {
+        pendingProgressEvents.value.push(event)
+      }
+    })
+  )
+
+  // Container status - update store
+  unregisterFunctions.value.push(
+    registerEventListener('ctr:status', (data: any) => {
+      if (data.endpoint_id) {
+        const status = new models.ContainerStatus({
+          endpoint_id: data.endpoint_id,
+          running: data.running,
+          status: data.status,
+          gone: data.gone,
+          last_check: data.last_check  // Already a string (ISO8601/RFC3339 format)
+        })
+        serverStore.containerStatus.set(data.endpoint_id, status)
+      }
+    })
+  )
+
+  // Container stats - update store
+  unregisterFunctions.value.push(
+    registerEventListener('ctr:stats', (data: any) => {
+      if (data.endpoint_id) {
+        const stats = new models.ContainerStats({
+          endpoint_id: data.endpoint_id,
+          cpu_percent: data.cpu_percent,
+          memory_usage_mb: data.memory_usage_mb,
+          memory_limit_mb: data.memory_limit_mb,
+          memory_percent: data.memory_percent,
+          network_rx_bytes: data.network_rx_bytes,
+          network_tx_bytes: data.network_tx_bytes,
+          block_read_bytes: data.block_read_bytes,
+          block_write_bytes: data.block_write_bytes,
+          pids: data.pids,
+          last_check: data.last_check  // Already a string (ISO8601/RFC3339 format)
+        })
+        serverStore.containerStats.set(data.endpoint_id, stats)
+      }
+    })
+  )
+
+  // If server is already running when component mounts, trigger container startup
+  if (serverStore.isRunning) {
+    try {
+      await StartContainers()
+    } catch (error) {
+      console.error('Failed to call StartContainers():', error)
+    }
+  }
+
+  // Start event polling
+  startPolling()
+})
+
+// Clean up polling and event handlers on unmount
+onUnmounted(() => {
+  stopPolling()
+
+  // Unregister all event listeners
+  unregisterFunctions.value.forEach(unregister => unregister())
+  unregisterFunctions.value = []
+})
+
+// Watch for dialog ref to become available and process pending events
+watch(progressDialogRef, (newRef) => {
+  if (newRef && pendingProgressEvents.value.length > 0) {
+    while (pendingProgressEvents.value.length > 0) {
+      const event = pendingProgressEvents.value.shift()
+      newRef.updateProgress(event)
+    }
+  }
+})
+
 async function toggleServer() {
   isLoading.value = true
   errorMessage.value = ''
@@ -33,13 +278,49 @@ async function toggleServer() {
     if (serverStore.isRunning) {
       await serverStore.stopServer()
     } else {
+      // Check for container endpoints and show progress dialog
+      const containerEndpoints = serverStore.endpoints.filter(e => e.type === 'container' && e.enabled)
+      if (containerEndpoints.length > 0) {
+        progressEndpointName.value = containerEndpoints[0].name
+        showProgressDialog.value = true
+        await nextTick()
+      }
+
       await serverStore.startServer(portInput.value)
+
+      // Now that server is running and dialog is ready, start containers
+      if (containerEndpoints.length > 0) {
+        // Give extra time for event listeners to be fully registered
+        await new Promise(resolve => setTimeout(resolve, 500))
+        try {
+          await StartContainers()
+        } catch (error) {
+          console.error('[HeaderBar] Failed to start containers:', error)
+          errorMessage.value = 'Server started but failed to start containers: ' + String(error)
+        }
+      }
     }
   } catch (error) {
     errorMessage.value = String(error)
   } finally {
     isLoading.value = false
   }
+}
+
+function handleProgressClose() {
+  showProgressDialog.value = false
+  pendingProgressEvents.value = [] // Clear any pending events
+}
+
+async function handleProgressCancel() {
+  // Stop the server to cancel container startup
+  try {
+    await serverStore.stopServer()
+  } catch (error) {
+    console.error('Failed to cancel container startup:', error)
+  }
+  showProgressDialog.value = false
+  pendingProgressEvents.value = [] // Clear any pending events
 }
 
 async function handleSaveConfig() {
@@ -257,6 +538,23 @@ function handleServerConfigClose() {
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
         </svg>
       </button>
+
+      <!-- Event Log Toggle -->
+      <button
+        @click="showEventLog = !showEventLog"
+        :class="[
+          'relative p-2 rounded text-gray-300 hover:text-white transition-colors',
+          showEventLog ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-700 hover:bg-gray-600'
+        ]"
+        title="Toggle Event Log"
+      >
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+        <span v-if="eventLog.length > 0" class="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+          {{ eventLog.length > 9 ? '9+' : eventLog.length }}
+        </span>
+      </button>
     </div>
 
     <!-- Import OpenAPI Dialog -->
@@ -280,5 +578,47 @@ function handleServerConfigClose() {
       @close="handleServerConfigClose"
       @apply="handleServerConfigApply"
     />
+
+    <!-- Container Progress Dialog -->
+    <ContainerProgressDialog
+      ref="progressDialogRef"
+      :show="showProgressDialog"
+      :endpoint-name="progressEndpointName"
+      @close="handleProgressClose"
+      @cancel="handleProgressCancel"
+    />
+
+    <!-- Event Log Panel -->
+    <div v-if="showEventLog" class="fixed bottom-0 left-0 right-0 bg-gray-800 border-t border-gray-700 max-h-96 overflow-auto z-50">
+      <div class="p-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-sm font-semibold text-white">Event Log (Last {{ eventLog.length }} events)</h3>
+          <button
+            @click="eventLog = []"
+            class="text-xs text-gray-400 hover:text-white"
+          >
+            Clear
+          </button>
+        </div>
+        <div v-if="eventLog.length === 0" class="text-sm text-gray-500 italic">
+          No events received yet...
+        </div>
+        <div v-else class="space-y-2">
+          <div
+            v-for="(event, index) in eventLog"
+            :key="index"
+            class="bg-gray-900 p-2 rounded text-xs font-mono"
+          >
+            <div class="flex items-center justify-between mb-1">
+              <span :class="['font-semibold', getEventColor(event.type)]">
+                {{ event.type }}
+              </span>
+              <span class="text-gray-500">{{ event.time }}</span>
+            </div>
+            <pre class="text-gray-300 whitespace-pre-wrap">{{ event.data }}</pre>
+          </div>
+        </div>
+      </div>
+    </div>
   </header>
 </template>
