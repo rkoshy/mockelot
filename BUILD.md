@@ -18,36 +18,49 @@ Binaries built on one version won't run on systems with a different version with
 
 **Best for**: Maximum compatibility across all Linux distributions
 
-AppImage bundles all dependencies into a single executable file that runs anywhere.
+AppImage bundles all dependencies into a single executable file. Due to webkit ABI incompatibilities, **separate AppImages are required for different webkit versions**.
 
 ```bash
-# Build AppImage (MUST be built on OLDEST supported distro)
-# Build on Debian 12 for maximum compatibility
-make appimage
+# Build AppImage for Debian 12 / Ubuntu 22.04 (webkit 4.0) - RECOMMENDED
+make appimage-debian12
+# Result: build/bin/mockelot-debian12-x86_64.AppImage
+# Runs on: Debian 12, Ubuntu 22.04, Linux Mint 21.x, and other webkit 4.0 systems
 
-# Result: build/bin/mockelot-x86_64.AppImage
-# Runs on: Debian 11-13, Ubuntu 20.04+, Fedora, Arch, etc.
+# Build AppImage for Debian 13 / Ubuntu 24.04+ (webkit 4.1)
+make appimage-debian13
+# Result: build/bin/mockelot-debian13-x86_64.AppImage
+# Runs on: Debian 13, Ubuntu 24.04+, Linux Mint 22.x+, and other webkit 4.1 systems
+
+# Build both AppImage variants
+make all-appimages
 ```
 
-**IMPORTANT - Build on Oldest Distro:**
-AppImages must be built on the **oldest** Linux distribution you want to support:
-- ✅ Build on **Debian 12** → Works on Debian 12, 13, and newer
-- ⚠️ Build on **Debian 13** → Only works on Debian 13+ (not backward compatible)
+**CRITICAL - WebKit Version Compatibility:**
+Wails applications depend on system webkit, which has **incompatible ABIs** between versions:
+- **webkit 4.0** (Debian 12, Ubuntu 22.04, Mint 21.x) ↔️ **NOT compatible with** ↔️ **webkit 4.1** (Debian 13, Ubuntu 24.04+, Mint 22.x+)
+- AppImages built on one webkit version will **not run** on systems with a different webkit version
+- Users must download the AppImage matching their system's webkit version
 
-The script will warn you if building on a newer distro.
+**Docker-based Build:**
+Both AppImage builds use Docker to ensure correct webkit version:
+- `appimage-debian12`: Builds in Debian 12 container with webkit 4.0
+- `appimage-debian13`: Builds in Debian 13 container with webkit 4.1
+- Requires Docker installed on build system
+- Ensures reproducible builds with correct dependencies
 
 **Advantages:**
-- ✅ Single file, no installation needed
-- ✅ Works on virtually any Linux distro (if built on oldest)
+- ✅ Single file, no installation needed for end users
 - ✅ Bundles all dependencies including libwebkit
 - ✅ Users just need to `chmod +x` and run
+- ✅ Reproducible builds via Docker
 
 **Disadvantages:**
-- ⚠️ Larger file size (~150-200MB with bundled webkit)
-- ⚠️ Must be built on oldest target distro
-- ⚠️ First launch is slightly slower
+- ⚠️ Larger file size (~110-130MB with bundled webkit)
+- ⚠️ Requires Docker for building
+- ⚠️ Two separate files needed to cover all distros
+- ⚠️ Users must choose correct variant for their system
 
-**When to use**: Distributing to end users or when you don't know what distro they'll use.
+**When to use**: Distributing to end users when you want easy installation without package management.
 
 ---
 
@@ -223,15 +236,35 @@ make windows          # Windows executable
 
 ### For Public Release
 ```bash
-# Build AppImage on Debian 12 (oldest supported distro)
-# This ensures compatibility with Debian 12, 13, Ubuntu 22.04, 24.04, etc.
-make appimage
+# Build BOTH AppImage variants using Docker
+make all-appimages
 
-# Distribute: build/bin/mockelot-x86_64.AppImage
-# Users run: chmod +x mockelot-x86_64.AppImage && ./mockelot-x86_64.AppImage
+# This creates:
+# - build/bin/mockelot-debian12-x86_64.AppImage (for webkit 4.0 systems)
+# - build/bin/mockelot-debian13-x86_64.AppImage (for webkit 4.1 systems)
+
+# Distribute both files with clear instructions:
+# - Debian 12 / Ubuntu 22.04 users: Download mockelot-debian12-x86_64.AppImage
+# - Debian 13 / Ubuntu 24.04+ users: Download mockelot-debian13-x86_64.AppImage
 ```
 
-**Critical**: Build AppImage on **Debian 12**, not Debian 13. AppImages built on newer distros won't work on older ones.
+**Distribution Instructions for Users:**
+Provide this guidance with your releases:
+```
+How to choose the correct AppImage:
+
+Debian/Ubuntu users:
+  - Debian 12 or Ubuntu 22.04, 23.04, 23.10: Use mockelot-debian12-x86_64.AppImage
+  - Debian 13 or Ubuntu 24.04+: Use mockelot-debian13-x86_64.AppImage
+
+If unsure, check your webkit version:
+  $ pkg-config --modversion webkit2gtk-4.0 2>/dev/null && echo "Use debian12 AppImage"
+  $ pkg-config --modversion webkit2gtk-4.1 2>/dev/null && echo "Use debian13 AppImage"
+
+To run:
+  $ chmod +x mockelot-*-x86_64.AppImage
+  $ ./mockelot-*-x86_64.AppImage
+```
 
 ### For Internal IT Department
 ```bash
@@ -418,10 +451,14 @@ jobs:
 
 | Use Case | Build Command | Output |
 |----------|--------------|---------|
-| 🎯 Distribute to users | `make appimage` | Universal Linux binary |
-| 🏢 Internal Debian 12 | `make debian12` | Optimized for Debian 12 |
-| 🏢 Internal Debian 13 | `make debian13` | Optimized for Debian 13 |
+| 🎯 Distribute to Debian 12/Ubuntu 22.04 users | `make appimage-debian12` | AppImage for webkit 4.0 systems |
+| 🎯 Distribute to Debian 13/Ubuntu 24.04+ users | `make appimage-debian13` | AppImage for webkit 4.1 systems |
+| 🎯 Distribute to all Linux users | `make all-appimages` | Both AppImage variants |
+| 🏢 Internal Debian 12 | `make debian12` | Native binary for Debian 12 |
+| 🏢 Internal Debian 13 | `make debian13` | Native binary for Debian 13 |
 | 💻 Local development | `make dev` | Development mode |
 | 🪟 Windows users | `make windows` | Windows executable |
 
-**TL;DR**: Use `make appimage` unless you have a specific reason not to.
+**TL;DR**:
+- For distribution: `make all-appimages` (requires Docker)
+- For development: `make dev` or `make linux`
