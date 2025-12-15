@@ -6,6 +6,7 @@ import { models } from '../../../wailsjs/go/models'
 import ConfirmDialog from '../dialogs/ConfirmDialog.vue'
 import ServerConfigDialog from '../dialogs/ServerConfigDialog.vue'
 import ContainerProgressDialog from '../dialogs/ContainerProgressDialog.vue'
+import LoadEndpointsDialog from '../dialogs/LoadEndpointsDialog.vue'
 import { EventsOn } from '../../../wailsjs/runtime/runtime'
 
 // Event structure from backend
@@ -22,6 +23,7 @@ const portInput = ref(8080)
 const isLoading = ref(false)
 const errorMessage = ref('')
 const showImportDialog = ref(false)
+const showLoadDialog = ref(false)
 const showServerConfigDialog = ref(false)
 const serverConfigDialogTab = ref<'http' | 'https'>('http')
 const serverConfigDialogRef = ref<InstanceType<typeof ServerConfigDialog> | null>(null)
@@ -331,17 +333,19 @@ async function handleSaveConfig() {
   }
 }
 
-async function handleLoadConfig() {
-  try {
-    const config = await LoadConfig()
-    if (config) {
-      portInput.value = config.port
-      // Refresh items from backend after config load
-      await serverStore.refreshItems()
-    }
-  } catch (error) {
-    errorMessage.value = String(error)
-  }
+function handleLoadConfig() {
+  showLoadDialog.value = true
+}
+
+async function handleLoadDialogLoaded() {
+  showLoadDialog.value = false
+  // Refresh config and items from backend
+  portInput.value = serverStore.config?.port || 8080
+  await serverStore.refreshItems()
+}
+
+function handleLoadDialogClose() {
+  showLoadDialog.value = false
 }
 
 function handleImportOpenAPI() {
@@ -586,6 +590,13 @@ function handleServerConfigClose() {
       :endpoint-name="progressEndpointName"
       @close="handleProgressClose"
       @cancel="handleProgressCancel"
+    />
+
+    <!-- Load Endpoints Dialog -->
+    <LoadEndpointsDialog
+      :show="showLoadDialog"
+      @close="handleLoadDialogClose"
+      @loaded="handleLoadDialogLoaded"
     />
 
     <!-- Event Log Panel -->
