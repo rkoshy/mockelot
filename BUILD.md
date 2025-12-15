@@ -21,21 +21,30 @@ Binaries built on one version won't run on systems with a different version with
 AppImage bundles all dependencies into a single executable file that runs anywhere.
 
 ```bash
-# Build AppImage
+# Build AppImage (MUST be built on OLDEST supported distro)
+# Build on Debian 12 for maximum compatibility
 make appimage
 
 # Result: build/bin/mockelot-x86_64.AppImage
 # Runs on: Debian 11-13, Ubuntu 20.04+, Fedora, Arch, etc.
 ```
 
+**IMPORTANT - Build on Oldest Distro:**
+AppImages must be built on the **oldest** Linux distribution you want to support:
+- ✅ Build on **Debian 12** → Works on Debian 12, 13, and newer
+- ⚠️ Build on **Debian 13** → Only works on Debian 13+ (not backward compatible)
+
+The script will warn you if building on a newer distro.
+
 **Advantages:**
 - ✅ Single file, no installation needed
-- ✅ Works on virtually any Linux distro
+- ✅ Works on virtually any Linux distro (if built on oldest)
 - ✅ Bundles all dependencies including libwebkit
 - ✅ Users just need to `chmod +x` and run
 
 **Disadvantages:**
-- ⚠️ Larger file size (~100MB+)
+- ⚠️ Larger file size (~150-200MB with bundled webkit)
+- ⚠️ Must be built on oldest target distro
 - ⚠️ First launch is slightly slower
 
 **When to use**: Distributing to end users or when you don't know what distro they'll use.
@@ -214,12 +223,15 @@ make windows          # Windows executable
 
 ### For Public Release
 ```bash
-# Build AppImage
+# Build AppImage on Debian 12 (oldest supported distro)
+# This ensures compatibility with Debian 12, 13, Ubuntu 22.04, 24.04, etc.
 make appimage
 
 # Distribute: build/bin/mockelot-x86_64.AppImage
 # Users run: chmod +x mockelot-x86_64.AppImage && ./mockelot-x86_64.AppImage
 ```
+
+**Critical**: Build AppImage on **Debian 12**, not Debian 13. AppImages built on newer distros won't work on older ones.
 
 ### For Internal IT Department
 ```bash
