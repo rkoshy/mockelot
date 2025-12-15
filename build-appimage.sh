@@ -20,8 +20,8 @@ if [ -x ./detect-platform.sh ]; then
     echo "Current platform: $CURRENT_PLATFORM (WebKit $WEBKIT_VERSION)"
 fi
 
-# Warn if building on Debian 13 / webkit 4.1
-if [ "$WEBKIT_VERSION" = "4.1" ]; then
+# Warn if building on webkit 4.1 system (unless running in Docker)
+if [ "$WEBKIT_VERSION" = "4.1" ] && [ -z "$SKIP_PLATFORM_CHECK" ]; then
     echo ""
     echo "⚠ WARNING: Building AppImage on webkit 4.1 system"
     echo "  AppImages should be built on the OLDEST supported distro"
@@ -29,8 +29,8 @@ if [ "$WEBKIT_VERSION" = "4.1" ]; then
     echo ""
     echo "Options:"
     echo "  1. Build on Debian 12 system (recommended)"
-    echo "  2. Use Docker to build on Debian 12: make debian12"
-    echo "  3. Continue anyway (may not work on older distros)"
+    echo "  2. Use Docker to build: make appimage-debian12 or make appimage-debian13"
+    echo "  3. Continue anyway (creates Debian 13+ only AppImage)"
     echo ""
     read -p "Continue anyway? [y/N] " -n 1 -r
     echo
