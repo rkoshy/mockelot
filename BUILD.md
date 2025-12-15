@@ -136,15 +136,42 @@ This helps you understand:
 
 ---
 
+## Quick Start - Install Dependencies
+
+The easiest way to install all required build dependencies:
+
+```bash
+# Automatically detects your platform and installs correct packages
+./install-deps.sh
+```
+
+This script automatically installs the correct webkit version for your distro.
+
+---
+
 ## Installation Requirements
 
-### For AppImage Builds
+### Automated Installation (Recommended)
+```bash
+chmod +x install-deps.sh
+./install-deps.sh
+```
+
+The script automatically detects your platform and installs:
+- Debian 12: `libwebkit2gtk-4.0-dev`
+- Debian 13: `libwebkit2gtk-4.1-dev`
+- Ubuntu 22.04: `libwebkit2gtk-4.0-dev`
+- Ubuntu 24.04: `libwebkit2gtk-4.1-dev`
+
+### Manual Installation
+
+#### For AppImage Builds
 ```bash
 # Install appimagetool dependencies
 sudo apt-get install wget fuse
 ```
 
-### For Docker Builds
+#### For Docker Builds
 ```bash
 # Install Docker
 sudo apt-get install docker.io
@@ -152,13 +179,13 @@ sudo usermod -aG docker $USER
 # Log out and back in for group changes
 ```
 
-### For Native Builds
+#### For Native Builds
 ```bash
-# Debian 12
-sudo apt-get install build-essential libgtk-3-dev libwebkit2gtk-4.0-dev
+# Debian 12 / Ubuntu 22.04
+sudo apt-get install build-essential libgtk-3-dev libwebkit2gtk-4.0-dev pkg-config
 
-# Debian 13
-sudo apt-get install build-essential libgtk-3-dev libwebkit2gtk-4.1-dev
+# Debian 13 / Ubuntu 24.04
+sudo apt-get install build-essential libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
 ```
 
 ---
@@ -242,6 +269,22 @@ chmod +x build/bin/mockelot-x86_64.AppImage
 ---
 
 ## Troubleshooting
+
+### "Package 'gtk+-3.0' was not found" or "Package 'webkit2gtk-4.0' was not found"
+**Problem**: Build dependencies not installed
+
+**Solution**:
+```bash
+# Run the automated installer
+./install-deps.sh
+
+# Or install manually for your distro:
+# Debian 12 / Ubuntu 22.04:
+sudo apt-get install build-essential libgtk-3-dev libwebkit2gtk-4.0-dev pkg-config
+
+# Debian 13 / Ubuntu 24.04:
+sudo apt-get install build-essential libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
+```
 
 ### "libwebkit2gtk-4.0.so.37: cannot open shared object file"
 **Problem**: Binary built for Debian 12 running on Debian 13 (or vice versa)
