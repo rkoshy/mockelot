@@ -9,7 +9,17 @@ all: linux windows
 # Build for Linux (amd64) - native
 linux:
 	@echo "Building for Linux (amd64)..."
-	~/go/bin/wails build -platform linux/amd64
+	@if [ -x ./detect-platform.sh ]; then \
+		WAILS_TAGS=$$(./detect-platform.sh --wails-tags); \
+		if [ -n "$$WAILS_TAGS" ]; then \
+			echo "Using build tags: $$WAILS_TAGS"; \
+			~/go/bin/wails build -platform linux/amd64 $$WAILS_TAGS; \
+		else \
+			~/go/bin/wails build -platform linux/amd64; \
+		fi \
+	else \
+		~/go/bin/wails build -platform linux/amd64; \
+	fi
 	@echo "Linux build complete: build/bin/mockelot"
 
 # Build for Windows (amd64)
