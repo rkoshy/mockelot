@@ -9,6 +9,8 @@ export function AddEndpointWithConfig(arg1:Record<string, any>):Promise<models.E
 
 export function AddGroup(arg1:string):Promise<models.ResponseGroup>;
 
+export function AddRecentFile(arg1:string):Promise<void>;
+
 export function AddResponse(arg1:models.MethodResponse):Promise<models.MethodResponse>;
 
 export function CancelContainerStart(arg1:string):Promise<void>;
@@ -49,6 +51,8 @@ export function GetEndpoints():Promise<Array<models.Endpoint>>;
 
 export function GetItems():Promise<Array<models.ResponseItem>>;
 
+export function GetRecentFiles():Promise<Array<models.RecentFile>>;
+
 export function GetRequestLogByID(arg1:string):Promise<models.RequestLog>;
 
 export function GetRequestLogDetails(arg1:string):Promise<models.RequestLog>;
@@ -67,6 +71,8 @@ export function InstallCACertSystem():Promise<void>;
 
 export function LoadConfig():Promise<models.AppConfig>;
 
+export function LoadConfigFromPath(arg1:string):Promise<models.AppConfig>;
+
 export function LogRequest(arg1:models.RequestLog):Promise<void>;
 
 export function PollEvents():Promise<Array<main.Event>>;
@@ -76,6 +82,8 @@ export function PollRequestLogs():Promise<Array<models.RequestLogSummary>>;
 export function PullDockerImage(arg1:string):Promise<void>;
 
 export function RegenerateCA():Promise<void>;
+
+export function RemoveRecentFile(arg1:string):Promise<void>;
 
 export function ReorderResponses(arg1:Array<string>):Promise<void>;
 

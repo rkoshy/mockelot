@@ -14,6 +14,10 @@ export function AddGroup(arg1) {
   return window['go']['main']['App']['AddGroup'](arg1);
 }
 
+export function AddRecentFile(arg1) {
+  return window['go']['main']['App']['AddRecentFile'](arg1);
+}
+
 export function AddResponse(arg1) {
   return window['go']['main']['App']['AddResponse'](arg1);
 }
@@ -94,6 +98,10 @@ export function GetItems() {
   return window['go']['main']['App']['GetItems']();
 }
 
+export function GetRecentFiles() {
+  return window['go']['main']['App']['GetRecentFiles']();
+}
+
 export function GetRequestLogByID(arg1) {
   return window['go']['main']['App']['GetRequestLogByID'](arg1);
 }
@@ -130,6 +138,10 @@ export function LoadConfig() {
   return window['go']['main']['App']['LoadConfig']();
 }
 
+export function LoadConfigFromPath(arg1) {
+  return window['go']['main']['App']['LoadConfigFromPath'](arg1);
+}
+
 export function LogRequest(arg1) {
   return window['go']['main']['App']['LogRequest'](arg1);
 }
@@ -148,6 +160,10 @@ export function PullDockerImage(arg1) {
 
 export function RegenerateCA() {
   return window['go']['main']['App']['RegenerateCA']();
+}
+
+export function RemoveRecentFile(arg1) {
+  return window['go']['main']['App']['RemoveRecentFile'](arg1);
 }
 
 export function ReorderResponses(arg1) {
