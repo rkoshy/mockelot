@@ -286,6 +286,23 @@ sudo apt-get install build-essential libgtk-3-dev libwebkit2gtk-4.0-dev pkg-conf
 sudo apt-get install build-essential libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
 ```
 
+### "Package 'webkit2gtk-4.0' was not found" (but you have webkit2gtk-4.1 installed)
+**Problem**: Wails is looking for webkit2gtk-4.0 but your system has webkit2gtk-4.1 (Debian 13/Ubuntu 24.04)
+
+**Solution**: The build system automatically detects this and uses the correct build tags. If you're building manually:
+```bash
+# Build with webkit2_41 tag (for Debian 13 / Ubuntu 24.04)
+~/go/bin/wails build -platform linux/amd64 -tags webkit2_41
+
+# Or just use make (automatically detects)
+make linux
+```
+
+**Automatic Detection**: When you use `make linux` or `make debian13`, the build system:
+1. Detects your installed webkit version
+2. Automatically adds `-tags webkit2_41` if needed
+3. No manual configuration required
+
 ### "libwebkit2gtk-4.0.so.37: cannot open shared object file"
 **Problem**: Binary built for Debian 12 running on Debian 13 (or vice versa)
 

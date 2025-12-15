@@ -46,6 +46,15 @@ elif [ "$OS_ID" = "ubuntu" ]; then
     fi
 fi
 
+# Get Wails build tags for webkit version
+get_wails_tags() {
+    if [ "$WEBKIT_VERSION" = "4.1" ]; then
+        echo "-tags webkit2_41"
+    else
+        echo ""
+    fi
+}
+
 # Output format based on argument
 case "${1:-}" in
     --platform)
@@ -54,10 +63,14 @@ case "${1:-}" in
     --webkit)
         echo "$WEBKIT_VERSION"
         ;;
+    --wails-tags)
+        get_wails_tags
+        ;;
     --verbose)
         echo "OS: $OS_ID $OS_VERSION_ID ($OS_VERSION_CODENAME)"
         echo "WebKit: ${WEBKIT_VERSION:-not found}"
         echo "Platform: $PLATFORM"
+        echo "Wails Tags: $(get_wails_tags)"
         ;;
     *)
         echo "$PLATFORM"

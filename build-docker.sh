@@ -65,9 +65,24 @@ if [ "$CURRENT_PLATFORM" = "$DISTRO" ]; then
     # Create output directory
     mkdir -p build/bin
 
+    # Detect webkit version and set build tags
+    WAILS_TAGS=""
+    if [ -x ./detect-platform.sh ]; then
+        WAILS_TAGS=$(./detect-platform.sh --wails-tags)
+    elif command -v pkg-config &> /dev/null; then
+        if pkg-config --exists webkit2gtk-4.1; then
+            WAILS_TAGS="-tags webkit2_41"
+        fi
+    fi
+
     # Build natively
     echo "Building application natively..."
-    ~/go/bin/wails build -platform linux/amd64
+    if [ -n "$WAILS_TAGS" ]; then
+        echo "Using build tags: $WAILS_TAGS"
+        ~/go/bin/wails build -platform linux/amd64 $WAILS_TAGS
+    else
+        ~/go/bin/wails build -platform linux/amd64
+    fi
 
     # Copy to target name
     cp build/bin/mockelot "build/bin/$OUTPUT_NAME"
@@ -89,11 +104,19 @@ else
     # Run build in container
     echo ""
     echo "Step 2: Building application in container..."
+
+    # Determine build tags for target distro
+    BUILD_CMD="wails build -platform linux/amd64"
+    if [ "$DISTRO" = "debian13" ]; then
+        echo "Using webkit2_41 build tag for Debian 13"
+        BUILD_CMD="wails build -platform linux/amd64 -tags webkit2_41"
+    fi
+
     docker run --rm \
         -v "$(pwd):/build" \
         -w /build \
         "$TAG" \
-        bash -c "wails build -platform linux/amd64 && cp build/bin/mockelot build/bin/$OUTPUT_NAME"
+        bash -c "$BUILD_CMD && cp build/bin/mockelot build/bin/$OUTPUT_NAME"
 
     echo ""
     echo "✓ Docker build complete: build/bin/$OUTPUT_NAME"
