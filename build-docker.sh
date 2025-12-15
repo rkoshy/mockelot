@@ -1,6 +1,7 @@
 #!/bin/bash
 # Build Mockelot in Docker containers for specific Debian versions
 # This ensures binary compatibility with target distro's libwebkit version
+# Automatically uses native build if current platform matches target
 
 set -e
 
@@ -27,27 +28,77 @@ case $DISTRO in
         ;;
 esac
 
+# Detect current platform
+CURRENT_PLATFORM=""
+if [ -x ./detect-platform.sh ]; then
+    CURRENT_PLATFORM=$(./detect-platform.sh --platform)
+elif [ -f /etc/os-release ]; then
+    source /etc/os-release
+    if [ "$ID" = "debian" ]; then
+        if [ "$VERSION_ID" = "12" ]; then
+            CURRENT_PLATFORM="debian12"
+        elif [ "$VERSION_ID" = "13" ]; then
+            CURRENT_PLATFORM="debian13"
+        fi
+    elif [ "$ID" = "ubuntu" ]; then
+        # Check webkit version to determine compatibility
+        if command -v pkg-config &> /dev/null; then
+            if pkg-config --exists webkit2gtk-4.1; then
+                CURRENT_PLATFORM="debian13"
+            elif pkg-config --exists webkit2gtk-4.0; then
+                CURRENT_PLATFORM="debian12"
+            fi
+        fi
+    fi
+fi
+
 echo "Building Mockelot for $DISTRO..."
+echo "Current platform detected: ${CURRENT_PLATFORM:-unknown}"
 echo ""
 
-# Build the Docker image
-echo "Step 1: Building Docker image..."
-docker build -f "$DOCKERFILE" -t "$TAG" .
+# Check if we can build natively
+if [ "$CURRENT_PLATFORM" = "$DISTRO" ]; then
+    echo "✓ Current platform matches target platform!"
+    echo "  Using native build (faster, no Docker needed)"
+    echo ""
 
-# Create output directory
-mkdir -p build/bin
+    # Create output directory
+    mkdir -p build/bin
 
-# Run build in container
-echo ""
-echo "Step 2: Building application in container..."
-docker run --rm \
-    -v "$(pwd):/build" \
-    -w /build \
-    "$TAG" \
-    bash -c "wails build -platform linux/amd64 && cp build/bin/mockelot build/bin/$OUTPUT_NAME"
+    # Build natively
+    echo "Building application natively..."
+    ~/go/bin/wails build -platform linux/amd64
 
-echo ""
-echo "✓ Build complete: build/bin/$OUTPUT_NAME"
+    # Copy to target name
+    cp build/bin/mockelot "build/bin/$OUTPUT_NAME"
+
+    echo ""
+    echo "✓ Native build complete: build/bin/$OUTPUT_NAME"
+else
+    echo "⚠ Current platform ($CURRENT_PLATFORM) differs from target ($DISTRO)"
+    echo "  Using Docker build for compatibility"
+    echo ""
+
+    # Build the Docker image
+    echo "Step 1: Building Docker image..."
+    docker build -f "$DOCKERFILE" -t "$TAG" .
+
+    # Create output directory
+    mkdir -p build/bin
+
+    # Run build in container
+    echo ""
+    echo "Step 2: Building application in container..."
+    docker run --rm \
+        -v "$(pwd):/build" \
+        -w /build \
+        "$TAG" \
+        bash -c "wails build -platform linux/amd64 && cp build/bin/mockelot build/bin/$OUTPUT_NAME"
+
+    echo ""
+    echo "✓ Docker build complete: build/bin/$OUTPUT_NAME"
+fi
+
 echo ""
 echo "This binary is built against $DISTRO libraries and will run on:"
 if [ "$DISTRO" = "debian12" ]; then
