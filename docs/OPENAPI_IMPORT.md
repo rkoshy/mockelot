@@ -251,3 +251,11 @@ All validation scripts follow this pattern:
 ## Conclusion
 
 The OpenAPI import feature is fully functional and tested. It provides a powerful way to quickly create mock endpoints from API specifications, complete with realistic data generation and request validation. The feature integrates seamlessly with Mockelot's existing response management system.
+
+---
+
+**Related Documentation:**
+- [MOCK-GUIDE.md](MOCK-GUIDE.md) - Customize imported endpoints with static, template, and script responses
+- [PROXY-GUIDE.md](PROXY-GUIDE.md) - Reverse proxy endpoints for existing APIs
+- [CONTAINER-GUIDE.md](CONTAINER-GUIDE.md) - Docker/Podman container endpoints
+- [SETUP.md](SETUP.md) - HTTPS configuration and deployment

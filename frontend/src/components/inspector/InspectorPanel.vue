@@ -1,6 +1,7 @@
 <script lang="ts" setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useServerStore } from '../../stores/server'
+import { models } from '../../../wailsjs/go/models'
 import BodyEditorModal from '../shared/BodyEditorModal.vue'
 import FormatterSelector from '../shared/FormatterSelector.vue'
 import PrometheusViewer from '../shared/PrometheusViewer.vue'
@@ -17,13 +18,29 @@ const viewMode = ref<'text' | 'table'>('text') // For Prometheus table view
 
 const selectedLog = computed(() => serverStore.selectedLog)
 
-// Get content type from request headers
+// Full log details (fetched on-demand)
+const fullLog = ref<models.RequestLog | null>(null)
+const isLoadingDetails = ref(false)
+
+// Fetch full log details when a log is selected
+watch(selectedLog, async (newLog) => {
+  if (newLog) {
+    isLoadingDetails.value = true
+    fullLog.value = await serverStore.getLogDetails(newLog.id)
+    isLoadingDetails.value = false
+  } else {
+    fullLog.value = null
+  }
+}, { immediate: true })
+
+// Get content type from client request headers
 const requestContentType = computed(() => {
-  if (!selectedLog.value) return ''
-  const headers = selectedLog.value.headers || {}
+  if (!fullLog.value?.client_request) return ''
+  const headers = fullLog.value.client_request.headers || {}
   for (const [key, values] of Object.entries(headers)) {
-    if (key.toLowerCase() === 'content-type' && values.length > 0) {
-      return values[0]
+    const headerValues = values as string[]
+    if (key.toLowerCase() === 'content-type' && headerValues.length > 0) {
+      return headerValues[0]
     }
   }
   return ''
@@ -31,8 +48,8 @@ const requestContentType = computed(() => {
 
 // Detected content type (from header or auto-detected)
 const detectedContentType = computed(() => {
-  if (!selectedLog.value?.body) return ''
-  return requestContentType.value || detectContentType(selectedLog.value.body)
+  if (!fullLog.value?.client_request?.body) return ''
+  return requestContentType.value || detectContentType(fullLog.value.client_request.body)
 })
 
 // Effective content type (override or detected)
@@ -44,35 +61,34 @@ const canFormat = computed(() => supportsFormatting(effectiveContentType.value))
 
 // Check if current content is Prometheus (supports table view)
 const isPrometheus = computed(() => {
-  if (!selectedLog.value?.body) return false
+  if (!fullLog.value?.client_request?.body) return false
   const type = effectiveContentType.value.toLowerCase()
   return type.includes('version=0.0.4') ||
          type === 'application/openmetrics-text' ||
-         isPrometheusMetrics(selectedLog.value.body)
+         isPrometheusMetrics(fullLog.value.client_request.body)
 })
 
 // Format body when switching to formatted view
 async function formatBody() {
-  if (!selectedLog.value?.body || !canFormat.value) return
+  if (!fullLog.value?.client_request?.body || !canFormat.value) return
   try {
-    formattedBody.value = await formatContent(selectedLog.value.body, effectiveContentType.value)
+    formattedBody.value = await formatContent(fullLog.value.client_request.body, effectiveContentType.value)
   } catch {
-    formattedBody.value = selectedLog.value.body
+    formattedBody.value = fullLog.value.client_request.body
   }
 }
 
 // Display body
 const displayBody = computed(() => {
-  if (!selectedLog.value?.body) return ''
+  if (!fullLog.value?.client_request?.body) return ''
   if (isRaw.value || !canFormat.value) {
-    return selectedLog.value.body
+    return fullLog.value.client_request.body
   }
-  return formattedBody.value || selectedLog.value.body
+  return formattedBody.value || fullLog.value.client_request.body
 })
 
 // Watch for body changes and format
-import { watch } from 'vue'
-watch(() => selectedLog.value?.body, async () => {
+watch(() => fullLog.value?.client_request?.body, async () => {
   isRaw.value = false
   formatterOverride.value = '' // Reset override when log changes
   viewMode.value = 'text' // Reset view mode when log changes
@@ -112,6 +128,10 @@ function formatTimestamp(timestamp: string): string {
   const date = new Date(timestamp)
   return date.toLocaleString()
 }
+
+function formatMs(ms: number): string {
+  return `${ms}ms`
+}
 </script>
 
 <template>
@@ -137,21 +157,44 @@ function formatTimestamp(timestamp: string): string {
 
     <!-- Inspector Content -->
     <template v-else>
+      <!-- Loading State -->
+      <div v-if="isLoadingDetails" class="flex-1 flex items-center justify-center">
+        <div class="text-center text-gray-500">
+          <p class="text-lg">Loading request details...</p>
+        </div>
+      </div>
+
+      <!-- Request Details -->
+      <template v-else-if="fullLog">
       <!-- Request Summary -->
       <div class="p-3 bg-gray-800/50 border-b border-gray-700 flex-shrink-0">
         <div class="flex items-center gap-2 mb-2">
           <span class="px-2 py-0.5 bg-blue-600 rounded text-xs font-bold text-white">
-            {{ selectedLog.method }}
+            {{ fullLog.client_request?.method || 'N/A' }}
           </span>
           <span class="px-2 py-0.5 bg-gray-700 rounded text-xs font-mono text-gray-300">
-            {{ selectedLog.status_code }}
+            {{ fullLog.client_response?.status_code || 'N/A' }}
+          </span>
+          <span v-if="fullLog.backend_response" class="px-2 py-0.5 bg-gray-700 rounded text-xs font-mono text-gray-300">
+            Backend: {{ fullLog.backend_response.status_code }}
           </span>
         </div>
-        <p class="text-sm text-gray-300 font-mono break-all">{{ selectedLog.path }}</p>
+        <p class="text-sm text-gray-300 font-mono break-all mb-1">
+          {{ fullLog.client_request?.full_url || fullLog.client_request?.path || 'N/A' }}
+        </p>
+        <p v-if="fullLog.backend_request" class="text-sm text-gray-400 font-mono break-all">
+          <span class="text-gray-500">Backend:</span> {{ fullLog.backend_request.full_url || 'N/A' }}
+        </p>
         <div class="mt-2 flex items-center gap-4 text-xs text-gray-500">
           <span>{{ formatTimestamp(selectedLog.timestamp) }}</span>
-          <span>{{ selectedLog.source_ip }}</span>
-          <span>{{ selectedLog.protocol }}</span>
+          <span>{{ fullLog.client_request?.source_ip || 'N/A' }}</span>
+          <span>{{ fullLog.client_request?.protocol || 'N/A' }}</span>
+          <span v-if="fullLog.client_response" class="text-blue-400">
+            Client RTT: {{ formatMs(fullLog.client_response.rtt_ms || 0) }}
+          </span>
+          <span v-if="fullLog.backend_response" class="text-green-400">
+            Backend RTT: {{ formatMs(fullLog.backend_response.rtt_ms || 0) }}
+          </span>
         </div>
       </div>
 
@@ -168,7 +211,7 @@ function formatTimestamp(timestamp: string): string {
         >
           Headers
           <span class="ml-1 px-1.5 py-0.5 bg-gray-700 rounded text-xs">
-            {{ Object.keys(selectedLog.headers || {}).length }}
+            {{ Object.keys(fullLog.client_request?.headers || {}).length }}
           </span>
         </button>
         <button
@@ -181,8 +224,8 @@ function formatTimestamp(timestamp: string): string {
           ]"
         >
           Body
-          <span v-if="selectedLog.body" class="ml-1 px-1.5 py-0.5 bg-gray-700 rounded text-xs">
-            {{ selectedLog.body.length }}
+          <span v-if="fullLog.client_request?.body" class="ml-1 px-1.5 py-0.5 bg-gray-700 rounded text-xs">
+            {{ fullLog.client_request.body.length }}
           </span>
         </button>
         <button
@@ -196,7 +239,7 @@ function formatTimestamp(timestamp: string): string {
         >
           Query
           <span class="ml-1 px-1.5 py-0.5 bg-gray-700 rounded text-xs">
-            {{ Object.keys(selectedLog.query_params || {}).length }}
+            {{ Object.keys(fullLog.client_request?.query_params || {}).length }}
           </span>
         </button>
       </div>
@@ -206,21 +249,21 @@ function formatTimestamp(timestamp: string): string {
         <!-- Headers Tab -->
         <div v-if="activeTab === 'headers'" class="space-y-1">
           <div
-            v-for="(header, index) in formatHeaders(selectedLog.headers || {})"
+            v-for="(header, index) in formatHeaders(fullLog.client_request?.headers || {})"
             :key="index"
             class="flex gap-2 py-1 border-b border-gray-800 last:border-0"
           >
             <span class="text-blue-400 text-sm font-medium flex-shrink-0">{{ header.key }}:</span>
             <span class="text-gray-300 text-sm break-all">{{ header.value }}</span>
           </div>
-          <div v-if="Object.keys(selectedLog.headers || {}).length === 0" class="text-gray-500 text-sm">
+          <div v-if="Object.keys(fullLog.client_request?.headers || {}).length === 0" class="text-gray-500 text-sm">
             No headers
           </div>
         </div>
 
         <!-- Body Tab -->
         <div v-if="activeTab === 'body'" class="flex flex-col h-full">
-          <div v-if="selectedLog.body" class="flex flex-col flex-1 min-h-0">
+          <div v-if="fullLog.client_request?.body" class="flex flex-col flex-1 min-h-0">
             <!-- Body toolbar -->
             <div class="flex items-center justify-between mb-2 flex-shrink-0">
               <div class="flex items-center gap-2 flex-wrap">
@@ -284,7 +327,7 @@ function formatTimestamp(timestamp: string): string {
               v-if="isPrometheus && viewMode === 'table'"
               class="bg-gray-800 rounded p-3 flex-1 overflow-auto"
             >
-              <PrometheusViewer :content="selectedLog.body" />
+              <PrometheusViewer :content="fullLog.client_request.body" />
             </div>
 
             <!-- Text View -->
@@ -300,14 +343,14 @@ function formatTimestamp(timestamp: string): string {
         <!-- Query Tab -->
         <div v-if="activeTab === 'query'" class="space-y-1">
           <div
-            v-for="(param, index) in formatQueryParams(selectedLog.query_params || {})"
+            v-for="(param, index) in formatQueryParams(fullLog.client_request?.query_params || {})"
             :key="index"
             class="flex gap-2 py-1 border-b border-gray-800 last:border-0"
           >
             <span class="text-purple-400 text-sm font-medium flex-shrink-0">{{ param.key }}:</span>
             <span class="text-gray-300 text-sm break-all">{{ param.value }}</span>
           </div>
-          <div v-if="Object.keys(selectedLog.query_params || {}).length === 0" class="text-gray-500 text-sm">
+          <div v-if="Object.keys(fullLog.client_request?.query_params || {}).length === 0" class="text-gray-500 text-sm">
             No query parameters
           </div>
         </div>
@@ -315,13 +358,14 @@ function formatTimestamp(timestamp: string): string {
 
       <!-- Body Modal (read-only) -->
       <BodyEditorModal
-        v-if="selectedLog.body"
-        :model-value="selectedLog.body"
+        v-if="fullLog.client_request?.body"
+        :model-value="fullLog.client_request.body"
         v-model:visible="showBodyModal"
         :content-type="effectiveContentType"
         :read-only="true"
         title="Request Body"
       />
+      </template>
     </template>
   </div>
 </template>
