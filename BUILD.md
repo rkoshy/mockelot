@@ -42,33 +42,44 @@ make appimage
 
 ---
 
-### Option 2: Docker Builds (Distro-Specific)
+### Option 2: Docker Builds (Distro-Specific) - Smart Detection
 
 **Best for**: Building binaries optimized for specific distributions
 
-Build in Docker containers with exact target distro libraries.
+Build in Docker containers with exact target distro libraries. The build system automatically detects if your current platform matches the target and uses a native build if possible.
 
 ```bash
 # Build for Debian 12 (Bookworm)
 make debian12
 # Result: build/bin/mockelot-debian12
+# If you're on Debian 12: uses native build (fast!)
+# If you're on Debian 13: uses Docker build
 
 # Build for Debian 13 (Trixie)
 make debian13
 # Result: build/bin/mockelot-debian13
+# If you're on Debian 13: uses native build (fast!)
+# If you're on Debian 12: uses Docker build
 
 # Build for all Debian versions
 make all-debian
 ```
+
+**Smart Platform Detection:**
+The build system checks:
+1. Current OS (Debian/Ubuntu version)
+2. Installed libwebkit version (4.0 vs 4.1)
+3. Automatically chooses native or Docker build
 
 **Advantages:**
 - ✅ Smaller binary size (~50MB)
 - ✅ Native performance
 - ✅ Matches target distro exactly
 - ✅ Reproducible builds
+- ✅ Auto-detects when Docker isn't needed (faster!)
 
 **Disadvantages:**
-- ⚠️ Requires Docker installed
+- ⚠️ Requires Docker installed (only when cross-building)
 - ⚠️ Must distribute correct binary for each distro
 - ⚠️ Users need matching libwebkit version
 
@@ -97,6 +108,31 @@ make linux
 - ⚠️ May not work on other distros
 
 **When to use**: Local development and testing.
+
+---
+
+## Platform Detection
+
+The build system includes smart platform detection that automatically chooses between native and Docker builds.
+
+### Check Your Current Platform
+```bash
+# Make script executable
+chmod +x detect-platform.sh
+
+# Detect platform
+./detect-platform.sh --verbose
+
+# Example output:
+# OS: debian 12 (bookworm)
+# WebKit: 4.0
+# Platform: debian12
+```
+
+This helps you understand:
+- What builds will be native (fast)
+- What builds will need Docker
+- If your system is compatible with target distro
 
 ---
 
@@ -233,6 +269,21 @@ sudo mv appimagetool-x86_64.AppImage /usr/local/bin/appimagetool
 ```bash
 sudo usermod -aG docker $USER
 # Log out and back in
+```
+
+### "How do I know if my build will use Docker?"
+**Problem**: Want to know before building if Docker is needed
+
+**Solution**:
+```bash
+# Check your platform
+./detect-platform.sh --verbose
+
+# If output shows "Platform: debian12" and you run "make debian12",
+# it will use native build (no Docker needed)
+
+# If output shows "Platform: debian12" and you run "make debian13",
+# it will use Docker build
 ```
 
 ---
