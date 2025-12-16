@@ -36,7 +36,12 @@ if (props.modelValue && props.modelValue.length > 0) {
 }
 
 // Watch for changes to modelValue from parent (e.g., when reset button is clicked)
+// Use a flag to prevent infinite loop
+let isUpdatingFromProp = false
 watch(() => props.modelValue, (newValue) => {
+  if (isUpdatingFromProp) return // Prevent loop
+
+  isUpdatingFromProp = true
   if (newValue) {
     headers.value = newValue.map((h, i) => ({
       ...h,
@@ -45,6 +50,7 @@ watch(() => props.modelValue, (newValue) => {
   } else {
     headers.value = []
   }
+  isUpdatingFromProp = false
 }, { deep: true })
 
 // Add new header row
@@ -67,6 +73,8 @@ function removeHeader(index: number) {
 
 // Emit headers update
 function emitHeaders() {
+  if (isUpdatingFromProp) return // Prevent emitting while updating from prop
+
   const validHeaders = headers.value
     .filter(h => h.name.trim() !== '')
     .map(({ id, ...h }) => h)
