@@ -122,7 +122,6 @@ function handleKeydown(e: KeyboardEvent) {
       <div
         v-if="show"
         class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50"
-        @click.self="handleCancel"
       >
         <div class="bg-gray-800 rounded-lg shadow-xl max-w-5xl w-full mx-4 border border-gray-700 flex flex-col max-h-[85vh]">
           <!-- Header -->

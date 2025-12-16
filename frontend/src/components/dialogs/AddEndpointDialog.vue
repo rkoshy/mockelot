@@ -422,7 +422,6 @@ function handleKeydown(e: KeyboardEvent) {
       <div
         v-if="show"
         class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-80"
-        @click.self="handleCancel"
       >
         <!-- Wizard Dialog - 80% of screen -->
         <div class="bg-gray-800 rounded-lg shadow-xl w-[80vw] h-[80vh] mx-4 border border-gray-700 flex flex-col">

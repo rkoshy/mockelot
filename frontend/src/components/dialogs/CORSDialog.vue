@@ -51,7 +51,6 @@ watch(() => props.show, (show) => {
       <div
         v-if="show"
         class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-        @click.self="handleClose"
       >
         <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
           <!-- Header -->

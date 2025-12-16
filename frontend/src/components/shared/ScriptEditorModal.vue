@@ -113,7 +113,6 @@ onUnmounted(() => {
     <div
       v-if="visible"
       class="fixed inset-0 z-50 flex items-center justify-center"
-      @click.self="emit('update:visible', false)"
     >
       <!-- Backdrop -->
       <div class="absolute inset-0 bg-black/70" />
