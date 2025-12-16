@@ -25,6 +25,15 @@ const (
 	ValidationMatchContains = "contains" // Body must contain pattern
 )
 
+// HeaderValidationMode constants for header validation
+const (
+	HeaderValidationModeNone     = "none"     // No validation (default)
+	HeaderValidationModeExact    = "exact"    // Exact match
+	HeaderValidationModeContains = "contains" // Contains substring
+	HeaderValidationModeRegex    = "regex"    // Regex pattern
+	HeaderValidationModeScript   = "script"   // JavaScript expression
+)
+
 // CertMode constants for HTTPS certificate modes
 const (
 	CertModeAuto         = "auto"          // Auto-generate CA and server certs
@@ -59,12 +68,23 @@ const (
 	HeaderModeExpression = "expression" // JS expression for dynamic value
 )
 
+// HeaderValidation defines validation for a single request header
+type HeaderValidation struct {
+	Name       string `json:"name" yaml:"name"`                                 // Header name to validate
+	Mode       string `json:"mode,omitempty" yaml:"mode,omitempty"`             // Validation mode: "none", "exact", "contains", "regex", "script"
+	Value      string `json:"value,omitempty" yaml:"value,omitempty"`           // For exact/contains modes
+	Pattern    string `json:"pattern,omitempty" yaml:"pattern,omitempty"`       // For regex mode
+	Expression string `json:"expression,omitempty" yaml:"expression,omitempty"` // For script mode (JS)
+	Required   bool   `json:"required,omitempty" yaml:"required,omitempty"`     // Whether header must exist
+}
+
 // RequestValidation defines how to validate and extract data from request body
 type RequestValidation struct {
-	Mode      string `json:"mode,omitempty" yaml:"mode,omitempty"`             // "none", "static", "regex", "script"
-	Pattern   string `json:"pattern,omitempty" yaml:"pattern,omitempty"`       // Static text or regex pattern
-	MatchType string `json:"match_type,omitempty" yaml:"match_type,omitempty"` // For static: "exact" or "contains"
-	Script    string `json:"script,omitempty" yaml:"script,omitempty"`         // JavaScript validation script
+	Mode      string              `json:"mode,omitempty" yaml:"mode,omitempty"`             // "none", "static", "regex", "script"
+	Pattern   string              `json:"pattern,omitempty" yaml:"pattern,omitempty"`       // Static text or regex pattern
+	MatchType string              `json:"match_type,omitempty" yaml:"match_type,omitempty"` // For static: "exact" or "contains"
+	Script    string              `json:"script,omitempty" yaml:"script,omitempty"`         // JavaScript validation script
+	Headers   []HeaderValidation  `json:"headers,omitempty" yaml:"headers,omitempty"`       // Header validations (AND logic with body)
 }
 
 // MethodResponse represents the configuration for a specific HTTP method's response
