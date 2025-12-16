@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, onUnmounted } from 'vue'
 import { models } from '../../types/models'
 import {
   HTTP_METHODS,
@@ -18,6 +18,8 @@ import BodyEditorModal from '../shared/BodyEditorModal.vue'
 import ContentTypeSelector from '../shared/ContentTypeSelector.vue'
 import ComboBox from '../shared/ComboBox.vue'
 import ScriptEditorModal from '../shared/ScriptEditorModal.vue'
+import ResponseEditorContent from './ResponseEditorContent.vue'
+import ResponseEditorPanel from './ResponseEditorPanel.vue'
 
 // Convert STATUS_CODES to combobox options
 const statusCodeOptions = computed(() =>
@@ -41,16 +43,6 @@ const emit = defineEmits<{
 
 // Local copy for editing
 const localResponse = ref<models.MethodResponse>(new models.MethodResponse({ ...props.response }))
-
-// Headers management
-const newHeaderKey = ref('')
-const newHeaderValue = ref('')
-
-// Body editor modal
-const showBodyEditor = ref(false)
-
-// Script editor modal
-const showScriptEditor = ref(false)
 
 // Current response mode (defaults to 'static')
 const currentMode = computed({
@@ -101,14 +93,11 @@ const validationScript = computed({
   }
 })
 
-// Validation section accordion state
-const showValidationSection = ref(false)
+// Active tab for editor content
+const activeTab = ref<'request' | 'response'>('request')
 
-// Response section accordion state
-const showResponseSection = ref(false)
-
-// Validation script editor modal
-const showValidationScriptEditor = ref(false)
+// Slide-in panel state
+const showEditorPanel = ref(false)
 
 // Whether response is enabled (defaults to true)
 const isEnabled = computed({
@@ -167,6 +156,16 @@ function clearBody() {
   localResponse.value.headers = headers
 }
 
+// Track dirty state
+const isDirty = computed(() => {
+  return JSON.stringify(localResponse.value) !== JSON.stringify(props.response)
+})
+
+// Reset to original
+function resetChanges() {
+  localResponse.value = new models.MethodResponse({ ...props.response })
+}
+
 // Sync with props changes
 watch(() => props.response, (newVal) => {
   localResponse.value = new models.MethodResponse({ ...newVal })
@@ -183,46 +182,6 @@ function getMethodColor(method: string): string {
     OPTIONS: 'bg-gray-600'
   }
   return colors[method] || 'bg-gray-600'
-}
-
-// Toggle HTTP method
-function toggleMethod(method: string) {
-  const methods = [...localResponse.value.methods]
-  const index = methods.indexOf(method)
-  if (index > -1) {
-    methods.splice(index, 1)
-  } else {
-    methods.push(method)
-  }
-  localResponse.value.methods = methods
-}
-
-// Add header
-function addHeader() {
-  if (newHeaderKey.value.trim() && newHeaderValue.value.trim()) {
-    localResponse.value.headers = {
-      ...localResponse.value.headers,
-      [newHeaderKey.value.trim()]: newHeaderValue.value.trim()
-    }
-    newHeaderKey.value = ''
-    newHeaderValue.value = ''
-  }
-}
-
-// Remove header
-function removeHeader(key: string) {
-  const headers = { ...localResponse.value.headers }
-  delete headers[key]
-  localResponse.value.headers = headers
-}
-
-// Update status code and text together
-function updateStatusCode(code: number) {
-  localResponse.value.status_code = code
-  const found = STATUS_CODES.find(s => s.code === code)
-  if (found) {
-    localResponse.value.status_text = found.text
-  }
 }
 
 // Apply changes
@@ -270,6 +229,47 @@ function onDragOver(e: DragEvent) {
 function onDrop(e: DragEvent) {
   emit('drop', e)
 }
+
+// Keyboard shortcuts
+function handleKeydown(e: KeyboardEvent) {
+  // Ignore when typing in inputs or textareas
+  if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
+    return
+  }
+
+  if (e.key === 'e' || e.key === 'E') {
+    e.preventDefault()
+    emit('toggle')
+  } else if (e.ctrlKey && e.key === 'b') {
+    e.preventDefault()
+    // Context-aware: open body editor or script editor
+    if (currentMode.value === 'script') {
+      // Script mode - no body editor, this shortcut not applicable
+      return
+    }
+    // Open body editor (handled in ResponseEditorContent)
+  } else if (e.ctrlKey && e.key === 's') {
+    e.preventDefault()
+    // Open script editor (validation or response)
+    // Handled in ResponseEditorContent
+  } else if (e.ctrlKey && e.key === 'Enter') {
+    e.preventDefault()
+    applyChanges()
+  }
+}
+
+// Add/remove keyboard listener when card is expanded
+watch(() => props.isExpanded, (newVal) => {
+  if (newVal) {
+    document.addEventListener('keydown', handleKeydown)
+  } else {
+    document.removeEventListener('keydown', handleKeydown)
+  }
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleKeydown)
+})
 </script>
 
 <template>
@@ -351,440 +351,137 @@ function onDrop(e: DragEvent) {
     </div>
 
     <!-- Expanded Content -->
-    <div v-if="isExpanded" class="border-t border-gray-700 p-4 space-y-4">
-      <!-- Path Pattern -->
-      <div class="space-y-1">
-        <label class="block text-xs font-medium text-gray-400">Path Pattern (supports regex: ^...)</label>
-        <input
-          v-model="localResponse.path_pattern"
-          type="text"
-          placeholder="/* or ^/api/v[0-9]+/"
-          class="w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-sm text-white font-mono
-                 focus:outline-none focus:border-blue-500"
+    <div v-if="isExpanded" class="border-t border-gray-700 flex flex-col">
+      <!-- Tab Navigation -->
+      <div class="flex items-center border-b border-gray-700">
+        <!-- Tabs -->
+        <div class="flex flex-1">
+          <button
+            @click="activeTab = 'request'"
+            :class="[
+              'px-4 py-2 text-sm font-medium transition-colors',
+              activeTab === 'request'
+                ? 'text-blue-400 border-b-2 border-blue-400'
+                : 'text-gray-400 hover:text-gray-300'
+            ]"
+          >
+            Request
+          </button>
+          <button
+            @click="activeTab = 'response'"
+            :class="[
+              'px-4 py-2 text-sm font-medium transition-colors',
+              activeTab === 'response'
+                ? 'text-blue-400 border-b-2 border-blue-400'
+                : 'text-gray-400 hover:text-gray-300'
+            ]"
+          >
+            Response
+          </button>
+        </div>
+
+        <!-- Full Editor Button -->
+        <button
+          @click="showEditorPanel = true"
+          class="mr-3 px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded text-gray-300 transition-colors flex items-center gap-1"
+          title="Open in full editor panel"
+        >
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+          </svg>
+          Full Editor
+        </button>
+      </div>
+
+      <!-- Tab Content -->
+      <div class="p-4">
+        <ResponseEditorContent
+          :local-response="localResponse"
+          :active-tab="activeTab"
+          :current-mode="currentMode"
+          :validation-mode="validationMode"
+          :validation-match-type="validationMatchType"
+          :validation-pattern="validationPattern"
+          :validation-script="validationScript"
+          :content-type="contentType"
+          :has-body="hasBody"
+          :body-placeholder="bodyPlaceholder"
+          :handles-options="handlesOptions"
+          :use-global-c-o-r-s="useGlobalCORS"
+          :status-code-options="statusCodeOptions"
+          @update:local-response="localResponse = $event"
+          @update:current-mode="currentMode = $event"
+          @update:validation-mode="validationMode = $event"
+          @update:validation-match-type="validationMatchType = $event"
+          @update:validation-pattern="validationPattern = $event"
+          @update:validation-script="validationScript = $event"
+          @update:content-type="contentType = $event"
+          @update:use-global-c-o-r-s="useGlobalCORS = $event; applyChanges()"
+          @apply-changes="applyChanges"
+          @clear-body="clearBody"
         />
       </div>
 
-      <!-- HTTP Methods -->
-      <div class="space-y-1">
-        <label class="block text-xs font-medium text-gray-400">HTTP Methods</label>
-        <div class="flex flex-wrap gap-1">
+      <!-- Action Buttons -->
+      <div class="flex items-center justify-between gap-2 p-4 pt-0">
+        <!-- Destructive action - left -->
+        <button
+          @click="emit('delete')"
+          class="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-900/20 rounded transition-colors"
+          title="Delete this response"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+        </button>
+
+        <!-- Primary actions - right -->
+        <div class="flex gap-2">
           <button
-            v-for="method in HTTP_METHODS"
-            :key="method"
-            @click="toggleMethod(method)"
+            @click="resetChanges"
+            :disabled="!isDirty"
             :class="[
-              'px-2 py-0.5 rounded text-xs font-medium transition-colors',
-              localResponse.methods.includes(method)
-                ? getMethodColor(method) + ' text-white'
-                : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+              'px-3 py-1.5 rounded text-sm font-medium transition-colors',
+              isDirty
+                ? 'bg-gray-700 hover:bg-gray-600 text-white'
+                : 'bg-gray-800 text-gray-600 cursor-not-allowed'
+            ]"
+            title="Reset to original values"
+          >
+            Reset
+          </button>
+          <button
+            @click="applyChanges"
+            :disabled="!isDirty"
+            :class="[
+              'px-3 py-1.5 rounded text-sm font-medium transition-colors',
+              isDirty
+                ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                : 'bg-blue-900 text-blue-700 cursor-not-allowed'
             ]"
           >
-            {{ method }}
+            Save
           </button>
         </div>
       </div>
-
-      <!-- Global CORS -->
-      <div class="space-y-1">
-        <label class="flex items-center gap-2 cursor-pointer" :class="{ 'opacity-50 cursor-not-allowed': handlesOptions }">
-          <input
-            v-model="useGlobalCORS"
-            type="checkbox"
-            :disabled="handlesOptions"
-            @change="applyChanges"
-            class="w-3.5 h-3.5 rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-          />
-          <span class="text-xs font-medium text-gray-400">Use Global CORS</span>
-        </label>
-        <p v-if="handlesOptions" class="text-[10px] text-yellow-400 ml-5">
-          ℹ️ CORS override disabled - this entry handles OPTIONS requests
-        </p>
-        <p v-else-if="useGlobalCORS" class="text-[10px] text-gray-500 ml-5">
-          Global CORS headers will be applied to this response (if enabled in server config)
-        </p>
-        <p v-else class="text-[10px] text-gray-500 ml-5">
-          Global CORS will NOT be applied to this response, even if enabled globally
-        </p>
-      </div>
-
-      <!-- Request Validation (Accordion) -->
-      <div class="space-y-1">
-        <button
-          @click="showValidationSection = !showValidationSection"
-          class="flex items-center justify-between w-full text-left py-1.5 border-b border-gray-600 hover:border-gray-500 transition-colors"
-        >
-          <label class="text-xs font-medium text-gray-400 cursor-pointer">
-            Request Body Validation
-            <span v-if="validationMode !== 'none'" class="text-[10px] text-purple-400 ml-1">({{ VALIDATION_MODE_LABELS[validationMode] }})</span>
-          </label>
-          <svg
-            class="w-4 h-4 text-gray-400 transition-transform"
-            :class="{ 'rotate-180': showValidationSection }"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-
-        <div v-if="showValidationSection" class="space-y-2 pt-1">
-          <!-- Validation Mode Selector -->
-          <div class="flex gap-1">
-            <button
-              v-for="mode in VALIDATION_MODES"
-              :key="mode"
-              @click="validationMode = mode"
-              :class="[
-                'px-2 py-1 rounded text-xs font-medium transition-colors',
-                validationMode === mode
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
-              ]"
-            >
-              {{ VALIDATION_MODE_LABELS[mode] }}
-            </button>
-          </div>
-
-          <!-- Static Validation Options -->
-          <template v-if="validationMode === 'static'">
-            <div class="space-y-2">
-              <div class="flex gap-1">
-                <button
-                  v-for="matchType in VALIDATION_MATCH_TYPES"
-                  :key="matchType"
-                  @click="validationMatchType = matchType"
-                  :class="[
-                    'px-2 py-0.5 rounded text-[10px] font-medium transition-colors',
-                    validationMatchType === matchType
-                      ? 'bg-gray-600 text-white'
-                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                  ]"
-                >
-                  {{ VALIDATION_MATCH_TYPE_LABELS[matchType] }}
-                </button>
-              </div>
-              <input
-                v-model="validationPattern"
-                type="text"
-                placeholder="Text to match in request body..."
-                class="w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-xs text-white
-                       focus:outline-none focus:border-purple-500"
-              />
-            </div>
-          </template>
-
-          <!-- Regex Validation Options -->
-          <template v-else-if="validationMode === 'regex'">
-            <div class="space-y-2">
-              <input
-                v-model="validationPattern"
-                type="text"
-                :placeholder="'(?P<userId>\\d+)'"
-                class="w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-xs text-white font-mono
-                       focus:outline-none focus:border-purple-500"
-              />
-              <p class="text-[10px] text-gray-500">
-                Use <code class="text-purple-400">(?P&lt;name&gt;pattern)</code> to extract named variables.
-                Variables available as <code class="text-yellow-400">request.vars.name</code> in scripts or
-                <code class="text-yellow-400" v-pre>{{.Vars.name}}</code> in templates.
-              </p>
-            </div>
-          </template>
-
-          <!-- Script Validation Options -->
-          <template v-else-if="validationMode === 'script'">
-            <div class="space-y-2">
-              <div class="flex items-center justify-between">
-                <p class="text-[10px] text-gray-500">JavaScript validation with variable extraction</p>
-                <button
-                  @click="showValidationScriptEditor = true"
-                  class="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 transition-colors flex items-center gap-1"
-                >
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-                  </svg>
-                  Edit
-                </button>
-              </div>
-              <textarea
-                v-model="validationScript"
-                rows="4"
-                placeholder="// Set result.valid = true/false
-// Extract variables: result.vars.userId = ...
-
-const json = JSON.parse(body);
-result.valid = json.userId !== undefined;
-result.vars.userId = json.userId;
-result.vars.action = json.action || 'default';"
-                class="w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-xs text-white
-                       font-mono focus:outline-none focus:border-purple-500 resize-none"
-              />
-            </div>
-          </template>
-
-          <!-- None mode description -->
-          <p v-else class="text-[10px] text-gray-500">
-            No validation - this response will match if path and method match.
-          </p>
-        </div>
-      </div>
-
-      <!-- Validation Script Editor Modal -->
-      <ScriptEditorModal
-        :model-value="validationScript"
-        @update:model-value="validationScript = $event"
-        v-model:visible="showValidationScriptEditor"
-        title="Edit Validation Script"
-      />
-
-      <!-- Response Body (Accordion) -->
-      <div class="space-y-1">
-        <button
-          @click="showResponseSection = !showResponseSection"
-          class="flex items-center justify-between w-full text-left py-1.5 border-b border-gray-600 hover:border-gray-500 transition-colors"
-        >
-          <label class="text-xs font-medium text-gray-400 cursor-pointer">
-            Response Status &amp; Body
-            <span class="text-[10px] text-blue-400 ml-1">({{ localResponse.status_code }} - {{ RESPONSE_MODE_LABELS[currentMode] }})</span>
-          </label>
-          <svg
-            class="w-4 h-4 text-gray-400 transition-transform"
-            :class="{ 'rotate-180': showResponseSection }"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-
-        <div v-if="showResponseSection" class="space-y-3 pt-1">
-          <!-- Status Code -->
-          <div class="space-y-1">
-            <label class="block text-[10px] font-medium text-gray-500">Status Code</label>
-            <ComboBox
-              :model-value="localResponse.status_code"
-              :model-text="localResponse.status_text"
-              :options="statusCodeOptions"
-              @update:model-value="localResponse.status_code = Number($event)"
-              @update:model-text="localResponse.status_text = $event"
-            />
-          </div>
-
-          <!-- Response Delay -->
-          <div class="space-y-1">
-            <label class="block text-[10px] font-medium text-gray-500">Response Delay (ms)</label>
-            <input
-              v-model.number="localResponse.response_delay"
-              type="number"
-              min="0"
-              max="60000"
-              class="w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-xs text-white
-                     focus:outline-none focus:border-blue-500"
-            />
-          </div>
-
-          <!-- Response Headers -->
-          <div class="space-y-1">
-            <label class="block text-[10px] font-medium text-gray-500">Response Headers</label>
-
-            <!-- Existing Headers -->
-            <div class="space-y-1">
-              <div
-                v-for="(value, key) in localResponse.headers"
-                :key="key"
-                class="flex items-center gap-2 bg-gray-900 px-2 py-1 rounded text-xs"
-              >
-                <span class="text-blue-400 flex-shrink-0">{{ key }}:</span>
-                <span class="text-gray-300 truncate flex-1">{{ value }}</span>
-                <button
-                  @click="removeHeader(String(key))"
-                  class="text-red-400 hover:text-red-300 flex-shrink-0"
-                >
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            <!-- Add Header Form - stacked vertically -->
-            <div class="space-y-2">
-              <input
-                v-model="newHeaderKey"
-                type="text"
-                placeholder="Header name"
-                class="w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-xs text-white
-                       focus:outline-none focus:border-blue-500"
-              />
-              <div class="flex gap-2">
-                <input
-                  v-model="newHeaderValue"
-                  type="text"
-                  placeholder="Value"
-                  class="flex-1 px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-xs text-white
-                         focus:outline-none focus:border-blue-500"
-                />
-                <button
-                  @click="addHeader"
-                  class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded text-xs text-white font-medium"
-                >
-                  Add
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Response Mode Selector -->
-          <div class="space-y-1">
-            <label class="block text-[10px] font-medium text-gray-500">Response Mode</label>
-            <div class="flex gap-1">
-              <button
-                v-for="mode in RESPONSE_MODES"
-                :key="mode"
-                @click="currentMode = mode"
-                :class="[
-                  'px-2 py-1 rounded text-xs font-medium transition-colors',
-                  currentMode === mode
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
-                ]"
-              >
-                {{ RESPONSE_MODE_LABELS[mode] }}
-              </button>
-            </div>
-            <p class="text-[10px] text-gray-500">
-              <template v-if="currentMode === 'static'">Simple response with no processing</template>
-              <template v-else-if="currentMode === 'template'">Use <span v-pre>{{.PathParams.id}}</span> syntax for dynamic values</template>
-              <template v-else>JavaScript with access to request/response objects</template>
-            </p>
-          </div>
-
-          <!-- Response Body Section (Static and Template modes) -->
-          <div v-if="currentMode !== 'script'" class="space-y-2">
-            <div class="flex items-center justify-between">
-              <label class="block text-[10px] font-medium text-gray-500">
-                Body Content
-                <span v-if="currentMode === 'template'" class="text-yellow-500 ml-1">(Template)</span>
-              </label>
-              <div class="flex items-center gap-2">
-                <button
-                  v-if="hasBody"
-                  @click="clearBody"
-                  class="px-2 py-0.5 bg-gray-700 hover:bg-red-600 rounded text-xs text-gray-300 hover:text-white transition-colors"
-                  title="Clear body and content type"
-                >
-                  Clear
-                </button>
-                <button
-                  @click="showBodyEditor = true"
-                  class="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 transition-colors flex items-center gap-1"
-                >
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-                  </svg>
-                  Expand
-                </button>
-              </div>
-            </div>
-
-            <!-- Content-Type Selector -->
-            <div class="space-y-1">
-              <label class="block text-[10px] font-medium text-gray-500">Content-Type</label>
-              <ContentTypeSelector
-                v-model="contentType"
-                @clear="clearBody"
-              />
-            </div>
-
-            <!-- Body Textarea -->
-            <textarea
-              v-model="localResponse.body"
-              rows="4"
-              :placeholder="bodyPlaceholder"
-              class="w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-xs text-white
-                     font-mono focus:outline-none focus:border-blue-500 resize-none"
-            />
-
-            <!-- Template Help -->
-            <div v-if="currentMode === 'template'" class="text-[10px] text-gray-500 bg-gray-900 rounded p-2">
-              <span class="font-semibold text-yellow-500">Template Variables:</span>
-              <code class="ml-1" v-pre>{{.Method}}</code>,
-              <code v-pre>{{.Path}}</code>,
-              <code v-pre>{{.PathParams.id}}</code>,
-              <code v-pre>{{.Body.Raw}}</code>,
-              <code v-pre>{{.GetQueryParam "key"}}</code>
-            </div>
-          </div>
-
-          <!-- Script Body Section (Script mode) -->
-          <div v-else class="space-y-2">
-            <div class="flex items-center justify-between">
-              <label class="block text-[10px] font-medium text-gray-500">
-                Script Body
-                <span class="text-yellow-500 ml-1">(JavaScript)</span>
-              </label>
-              <button
-                @click="showScriptEditor = true"
-                class="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 transition-colors flex items-center gap-1"
-              >
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-                </svg>
-                Edit Script
-              </button>
-            </div>
-
-            <!-- Script Textarea -->
-            <textarea
-              v-model="localResponse.script_body"
-              rows="6"
-              placeholder="// Access request data via 'request' object
-// Modify response via 'response' object
-
-const userId = request.pathParams.id;
-response.status = 200;
-response.body = JSON.stringify({ userId });"
-              class="w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-xs text-white
-                     font-mono focus:outline-none focus:border-blue-500 resize-none"
-            />
-          </div>
-        </div>
-      </div>
-
-      <!-- Body Editor Modal (for Static/Template) -->
-      <BodyEditorModal
-        :model-value="localResponse.body || ''"
-        @update:model-value="localResponse.body = $event"
-        v-model:visible="showBodyEditor"
-        :content-type="contentType"
-        title="Edit Response Body"
-      />
-
-      <!-- Script Editor Modal (for Script mode) -->
-      <ScriptEditorModal
-        :model-value="localResponse.script_body || ''"
-        @update:model-value="localResponse.script_body = $event"
-        v-model:visible="showScriptEditor"
-        title="Edit Script"
-      />
-
-      <!-- Action Buttons -->
-      <div class="flex gap-2 pt-2">
-        <button
-          @click="applyChanges"
-          class="flex-1 py-1.5 bg-blue-600 hover:bg-blue-700 rounded text-sm font-medium text-white transition-colors"
-        >
-          Save Changes
-        </button>
-        <button
-          @click="emit('delete')"
-          class="px-3 py-1.5 bg-red-600 hover:bg-red-700 rounded text-sm font-medium text-white transition-colors"
-        >
-          Delete
-        </button>
-      </div>
     </div>
+
+    <!-- Slide-in Editor Panel -->
+    <ResponseEditorPanel
+      :visible="showEditorPanel"
+      :local-response="localResponse"
+      :current-mode="currentMode"
+      :validation-mode="validationMode"
+      :validation-match-type="validationMatchType"
+      :validation-pattern="validationPattern"
+      :validation-script="validationScript"
+      :content-type="contentType"
+      :has-body="hasBody"
+      :body-placeholder="bodyPlaceholder"
+      :handles-options="handlesOptions"
+      :use-global-c-o-r-s="useGlobalCORS"
+      @save="localResponse = $event; applyChanges(); showEditorPanel = false"
+      @close="showEditorPanel = false"
+    />
   </div>
 </template>
