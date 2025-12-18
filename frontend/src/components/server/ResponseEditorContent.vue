@@ -19,6 +19,7 @@ import ContentTypeSelector from '../shared/ContentTypeSelector.vue'
 import ComboBox from '../shared/ComboBox.vue'
 import ScriptEditorModal from '../shared/ScriptEditorModal.vue'
 import HeaderValidationList from '../dialogs/HeaderValidationList.vue'
+import type { ScriptErrorInfo } from './ScriptErrorLogDialog.vue'
 
 const props = withDefaults(defineProps<{
   localResponse: models.MethodResponse
@@ -35,8 +36,10 @@ const props = withDefaults(defineProps<{
   useGlobalCORS: boolean
   statusCodeOptions: Array<{ value: number, label: string }>
   isInPanel?: boolean
+  scriptError?: ScriptErrorInfo | null
 }>(), {
-  isInPanel: false
+  isInPanel: false,
+  scriptError: null
 })
 
 const emit = defineEmits<{
@@ -60,6 +63,44 @@ const newHeaderValue = ref('')
 const showBodyEditor = ref(false)
 const showScriptEditor = ref(false)
 const showValidationScriptEditor = ref(false)
+
+// Refs for script textareas and line number divs
+const validationScriptTextareaRef = ref<HTMLTextAreaElement | null>(null)
+const validationScriptLineNumbersRef = ref<HTMLDivElement | null>(null)
+const responseScriptTextareaRef = ref<HTMLTextAreaElement | null>(null)
+const responseScriptLineNumbersRef = ref<HTMLDivElement | null>(null)
+
+// Calculate line numbers for validation script
+const validationScriptLineNumbers = computed(() => {
+  const lines = (props.validationScript || '').split('\n')
+  return Array.from({ length: lines.length }, (_, i) => i + 1)
+})
+
+// Calculate line numbers for response script
+const responseScriptLineNumbers = computed(() => {
+  const lines = (props.localResponse.script_body || '').split('\n')
+  return Array.from({ length: lines.length }, (_, i) => i + 1)
+})
+
+// Sync scroll for validation script
+function handleValidationScriptScroll() {
+  if (validationScriptTextareaRef.value && validationScriptLineNumbersRef.value) {
+    validationScriptLineNumbersRef.value.scrollTop = validationScriptTextareaRef.value.scrollTop
+  }
+}
+
+// Sync scroll for response script
+function handleResponseScriptScroll() {
+  if (responseScriptTextareaRef.value && responseScriptLineNumbersRef.value) {
+    responseScriptLineNumbersRef.value.scrollTop = responseScriptTextareaRef.value.scrollTop
+  }
+}
+
+// Expose modal state so parent components can control it
+defineExpose({
+  showScriptEditor,
+  showValidationScriptEditor
+})
 
 // Computed row counts based on context (inline vs panel)
 const validationScriptRows = computed(() => props.isInPanel ? 20 : 12)
@@ -312,20 +353,41 @@ function updateHeaderValidations(headers: models.HeaderValidation[]) {
                 Edit
               </button>
             </div>
-            <textarea
-              :value="validationScript"
-              @input="emit('update:validationScript', ($event.target as HTMLTextAreaElement).value)"
-              :rows="validationScriptRows"
-              placeholder="// Set result.valid = true/false
+            <!-- Validation Script Textarea with Line Numbers -->
+            <div class="flex border border-gray-600 rounded overflow-hidden bg-gray-900">
+              <!-- Line Numbers -->
+              <div
+                ref="validationScriptLineNumbersRef"
+                class="flex flex-col py-1.5 px-2 bg-gray-800 border-r border-gray-600 text-gray-500 text-xs font-mono select-none overflow-hidden"
+              >
+                <div
+                  v-for="lineNum in validationScriptLineNumbers"
+                  :key="lineNum"
+                  class="leading-[1.375rem] text-right pr-2"
+                  style="min-height: 22px"
+                >
+                  {{ lineNum }}
+                </div>
+              </div>
+              <!-- Textarea -->
+              <textarea
+                ref="validationScriptTextareaRef"
+                :value="validationScript"
+                @input="emit('update:validationScript', ($event.target as HTMLTextAreaElement).value)"
+                @scroll="handleValidationScriptScroll"
+                :rows="validationScriptRows"
+                placeholder="// Set result.valid = true/false
 // Extract variables: result.vars.userId = ...
 
 const json = JSON.parse(body);
 result.valid = json.userId !== undefined;
 result.vars.userId = json.userId;
 result.vars.action = json.action || 'default';"
-              class="w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-xs text-white
-                     font-mono focus:outline-none focus:border-purple-500 resize-y"
-            />
+                class="flex-1 px-2 py-1.5 bg-gray-900 text-xs text-white
+                       font-mono focus:outline-none focus:border-purple-500 resize-y leading-[1.375rem]"
+                style="outline: none; border: none;"
+              />
+            </div>
           </div>
         </template>
 
@@ -349,6 +411,7 @@ result.vars.action = json.action || 'default';"
         @update:model-value="emit('update:validationScript', $event)"
         v-model:visible="showValidationScriptEditor"
         title="Edit Validation Script"
+        :error-info="scriptError"
       />
     </template>
 
@@ -533,20 +596,40 @@ result.vars.action = json.action || 'default';"
           </button>
         </div>
 
-        <!-- Script Textarea -->
-        <textarea
-          :value="localResponse.script_body"
-          @input="updateScriptBody(($event.target as HTMLTextAreaElement).value)"
-          :rows="responseScriptRows"
-          placeholder="// Access request data via 'request' object
+        <!-- Script Textarea with Line Numbers -->
+        <div class="flex border border-gray-600 rounded overflow-hidden bg-gray-900">
+          <!-- Line Numbers -->
+          <div
+            ref="responseScriptLineNumbersRef"
+            class="flex flex-col py-1.5 px-2 bg-gray-800 border-r border-gray-600 text-gray-500 text-xs font-mono select-none overflow-hidden"
+          >
+            <div
+              v-for="lineNum in responseScriptLineNumbers"
+              :key="lineNum"
+              class="leading-[1.375rem] text-right pr-2"
+              style="min-height: 22px"
+            >
+              {{ lineNum }}
+            </div>
+          </div>
+          <!-- Textarea -->
+          <textarea
+            ref="responseScriptTextareaRef"
+            :value="localResponse.script_body"
+            @input="updateScriptBody(($event.target as HTMLTextAreaElement).value)"
+            @scroll="handleResponseScriptScroll"
+            :rows="responseScriptRows"
+            placeholder="// Access request data via 'request' object
 // Modify response via 'response' object
 
 const userId = request.pathParams.id;
 response.status = 200;
 response.body = JSON.stringify({ userId });"
-          class="w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-xs text-white
-                 font-mono focus:outline-none focus:border-blue-500 resize-y"
-        />
+            class="flex-1 px-2 py-1.5 bg-gray-900 text-xs text-white
+                   font-mono focus:outline-none focus:border-blue-500 resize-y leading-[1.375rem]"
+            style="outline: none; border: none;"
+          />
+        </div>
       </div>
 
       <!-- Body Editor Modal (for Static/Template) -->
@@ -564,6 +647,7 @@ response.body = JSON.stringify({ userId });"
         @update:model-value="updateScriptBody($event)"
         v-model:visible="showScriptEditor"
         title="Edit Script"
+        :error-info="scriptError"
       />
     </template>
   </div>

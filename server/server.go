@@ -17,21 +17,22 @@ import (
 )
 
 type HTTPServer struct {
-	httpServer       *http.Server
-	httpsServer      *http.Server
-	config           *models.AppConfig
-	configMutex      sync.RWMutex
-	requestLogger    RequestLogger
-	httpStopChan     chan struct{}
-	httpsStopChan    chan struct{}
-	certManager      *CertificateManager
-	proxyHandler     *ProxyHandler
-	containerHandler *ContainerHandler
-	startupCtx       context.Context    // Context for container startup
-	startupCancel    context.CancelFunc // Cancel function for startup
+	httpServer        *http.Server
+	httpsServer       *http.Server
+	config            *models.AppConfig
+	configMutex       sync.RWMutex
+	requestLogger     RequestLogger
+	scriptErrorLogger ScriptErrorLogger
+	httpStopChan      chan struct{}
+	httpsStopChan     chan struct{}
+	certManager       *CertificateManager
+	proxyHandler      *ProxyHandler
+	containerHandler  *ContainerHandler
+	startupCtx        context.Context    // Context for container startup
+	startupCancel     context.CancelFunc // Cancel function for startup
 }
 
-func NewHTTPServer(config *models.AppConfig, requestLogger RequestLogger, eventSender EventSender, containerHandler *ContainerHandler, proxyHandler *ProxyHandler) *HTTPServer {
+func NewHTTPServer(config *models.AppConfig, requestLogger RequestLogger, scriptErrorLogger ScriptErrorLogger, eventSender EventSender, containerHandler *ContainerHandler, proxyHandler *ProxyHandler) *HTTPServer {
 	certManager, err := NewCertificateManager()
 	if err != nil {
 		log.Printf("Warning: Failed to initialize certificate manager: %v", err)
@@ -40,13 +41,14 @@ func NewHTTPServer(config *models.AppConfig, requestLogger RequestLogger, eventS
 	// Proxy handler is passed in (shared with container handler)
 
 	return &HTTPServer{
-		config:           config,
-		requestLogger:    requestLogger,
-		httpStopChan:     make(chan struct{}),
-		httpsStopChan:    make(chan struct{}),
-		certManager:      certManager,
-		proxyHandler:     proxyHandler,
-		containerHandler: containerHandler,
+		config:            config,
+		requestLogger:     requestLogger,
+		scriptErrorLogger: scriptErrorLogger,
+		httpStopChan:      make(chan struct{}),
+		httpsStopChan:     make(chan struct{}),
+		certManager:       certManager,
+		proxyHandler:      proxyHandler,
+		containerHandler:  containerHandler,
 	}
 }
 
@@ -67,7 +69,7 @@ func (s *HTTPServer) StartHTTP() error {
 		handler = HTTPSRedirectHandler(httpsPort)
 	} else {
 		// Use normal response handler
-		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.proxyHandler, s.containerHandler)
+		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler)
 		handler = http.HandlerFunc(responseHandler.HandleRequest)
 	}
 
@@ -206,7 +208,7 @@ func (s *HTTPServer) StartHTTPS() error {
 	}
 
 	// Create response handler
-	responseHandler := NewResponseHandler(s.config, s.requestLogger, s.proxyHandler, s.containerHandler)
+	responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler)
 
 	// Create HTTPS server
 	s.httpsServer = &http.Server{

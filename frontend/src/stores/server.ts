@@ -63,6 +63,9 @@ export const useServerStore = defineStore('server', () => {
   // Container Stats State
   const containerStats = ref<Map<string, models.ContainerStats>>(new Map())
 
+  // Script Error State
+  const scriptErrors = ref<Map<string, any[]>>(new Map())
+
   // Getters
   const isRunning = computed(() => status.value.running)
   const port = computed(() => status.value.port)
@@ -107,6 +110,17 @@ export const useServerStore = defineStore('server', () => {
   // Get container stats for an endpoint
   function getContainerStats(endpointId: string): models.ContainerStats | undefined {
     return containerStats.value.get(endpointId)
+  }
+
+  // Get script errors for a response
+  function getScriptErrors(responseId: string): any[] {
+    return scriptErrors.value.get(responseId) || []
+  }
+
+  // Check if response has errors
+  function hasScriptErrors(responseId: string): boolean {
+    const errors = scriptErrors.value.get(responseId)
+    return errors !== undefined && errors.length > 0
   }
 
   // Actions
@@ -526,17 +540,47 @@ export const useServerStore = defineStore('server', () => {
 
   // Set up event listeners (clean up existing ones first to prevent duplicates)
   function initEventListeners() {
+    console.log('=== initEventListeners called ===')
+
     // Remove any existing listeners first
     EventsOff('server:status')
     EventsOff('logs:cleared')
     EventsOff('items:updated')
     EventsOff('endpoints:updated')
     EventsOff('endpoint:selected')
+    EventsOff('script:error')
+    EventsOff('script:error:cleared')
     // NOTE: ctr:* events are handled via polling in HeaderBar.vue
+
+    console.log('Setting up script:error event listener')
 
     // Set up fresh listeners
     EventsOn('server:status', (newStatus: main.ServerStatus) => {
       status.value = newStatus
+    })
+
+    // Script error events
+    EventsOn('script:error', (data: any) => {
+      console.log('Received script:error event:', data)
+      if (data.response_id) {
+        const errors = scriptErrors.value.get(data.response_id) || []
+        errors.push(data)
+        // Create a new Map to trigger Vue reactivity
+        const newMap = new Map(scriptErrors.value)
+        newMap.set(data.response_id, errors)
+        scriptErrors.value = newMap
+        console.log(`Updated script errors for response ${data.response_id}, total errors: ${errors.length}`)
+      }
+    })
+
+    EventsOn('script:error:cleared', (data: any) => {
+      console.log('Received script:error:cleared event:', data)
+      if (data.response_id) {
+        // Create a new Map to trigger Vue reactivity
+        const newMap = new Map(scriptErrors.value)
+        newMap.delete(data.response_id)
+        scriptErrors.value = newMap
+      }
     })
 
     // NOTE: request:received events are now handled via polling for better performance
@@ -598,6 +642,7 @@ export const useServerStore = defineStore('server', () => {
     endpointHealth,
     containerStatus,
     containerStats,
+    scriptErrors,
     // Getters
     isRunning,
     port,
@@ -607,6 +652,8 @@ export const useServerStore = defineStore('server', () => {
     getEndpointHealth,
     getContainerStatus,
     getContainerStats,
+    getScriptErrors,
+    hasScriptErrors,
     // Actions
     startServer,
     stopServer,

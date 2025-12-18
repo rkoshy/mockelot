@@ -191,6 +191,18 @@ func runValidationScript(vm *goja.Runtime, script string, body string, reqContex
 		return nil, fmt.Errorf("failed to set body: %v", err)
 	}
 
+	// Set up response object (for advanced validation scripts that may want to inspect/modify response)
+	// Initialize with empty response structure
+	response := map[string]interface{}{
+		"status":  200,
+		"headers": make(map[string]string),
+		"body":    "",
+		"delay":   0,
+	}
+	if err := vm.Set("response", response); err != nil {
+		return nil, fmt.Errorf("failed to set response object: %v", err)
+	}
+
 	// Initialize result object
 	result := map[string]interface{}{
 		"valid": true,

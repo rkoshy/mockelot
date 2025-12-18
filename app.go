@@ -42,6 +42,15 @@ type Event struct {
 	Data   map[string]interface{} `json:"data"`   // Event payload - MUST be a map for Wails serialization
 }
 
+// ScriptErrorLog represents a logged script execution error
+type ScriptErrorLog struct {
+	Timestamp  time.Time `json:"timestamp"`
+	Error      string    `json:"error"`
+	ResponseID string    `json:"response_id"`
+	Path       string    `json:"path"`
+	Method     string    `json:"method"`
+}
+
 // App struct
 type App struct {
 	ctx                    context.Context
@@ -59,6 +68,8 @@ type App struct {
 	eventQueueMutex        sync.Mutex // Mutex for thread-safe event queue access
 	containerStartContexts map[string]context.CancelFunc // Map of endpoint ID to cancel function for container startup
 	containerStartMutex    sync.Mutex                    // Mutex for thread-safe access to containerStartContexts
+	scriptErrors           map[string][]ScriptErrorLog   // Map of response ID to list of script errors
+	scriptErrorsMutex      sync.RWMutex                  // Mutex for thread-safe access to scriptErrors
 }
 
 // NewApp creates a new App application struct
@@ -85,8 +96,9 @@ func NewApp() *App {
 			Running: false,
 			Port:    8080,
 		},
-		eventQueue: make([]Event, 0), // Event queue for frontend polling
+		eventQueue:             make([]Event, 0),                       // Event queue for frontend polling
 		containerStartContexts: make(map[string]context.CancelFunc),
+		scriptErrors:           make(map[string][]ScriptErrorLog), // Script error tracking
 	}
 
 	// Initialize proxy handler (shared between server and container handler)
@@ -230,7 +242,7 @@ func (a *App) StartServer(port int) error {
 	// Update config with the port
 	a.config.Port = port
 
-	a.server = server.NewHTTPServer(a.config, a, a, a.containerHandler, a.proxyHandler)
+	a.server = server.NewHTTPServer(a.config, a, a, a, a.containerHandler, a.proxyHandler)
 
 	err := a.server.Start()
 	if err != nil {
@@ -2701,4 +2713,83 @@ func (a *App) PollRequestLogs() []models.RequestLogSummary {
 	a.requestLogSummaryQueue = make([]models.RequestLogSummary, 0)
 
 	return summaries
+}
+
+// ========== Script Error Management ==========
+
+// LogScriptError logs a script execution error and emits an event to the frontend
+func (a *App) LogScriptError(responseID, path, method, errorMsg string) {
+	a.scriptErrorsMutex.Lock()
+	defer a.scriptErrorsMutex.Unlock()
+
+	log.Printf("LogScriptError called: responseID=%s, path=%s, method=%s, error=%s", responseID, path, method, errorMsg)
+
+	errorLog := ScriptErrorLog{
+		Timestamp:  time.Now(),
+		Error:      errorMsg,
+		ResponseID: responseID,
+		Path:       path,
+		Method:     method,
+	}
+
+	// Append to error log for this response (keep last 100 errors per response)
+	if _, exists := a.scriptErrors[responseID]; !exists {
+		a.scriptErrors[responseID] = make([]ScriptErrorLog, 0)
+	}
+	a.scriptErrors[responseID] = append(a.scriptErrors[responseID], errorLog)
+
+	// Keep only last 100 errors per response
+	if len(a.scriptErrors[responseID]) > 100 {
+		a.scriptErrors[responseID] = a.scriptErrors[responseID][len(a.scriptErrors[responseID])-100:]
+	}
+
+	// Emit event to frontend via Wails runtime (not polling queue)
+	eventData := map[string]interface{}{
+		"response_id": responseID,
+		"path":        path,
+		"method":      method,
+		"error":       errorMsg,
+		"timestamp":   errorLog.Timestamp.Format(time.RFC3339),
+	}
+	log.Printf("Emitting script:error event with data: %+v", eventData)
+	runtime.EventsEmit(a.ctx, "script:error", eventData)
+}
+
+// GetScriptErrors returns all script errors for a given response ID
+func (a *App) GetScriptErrors(responseID string) []ScriptErrorLog {
+	a.scriptErrorsMutex.RLock()
+	defer a.scriptErrorsMutex.RUnlock()
+
+	if errors, exists := a.scriptErrors[responseID]; exists {
+		// Return a copy to avoid race conditions
+		result := make([]ScriptErrorLog, len(errors))
+		copy(result, errors)
+		return result
+	}
+	return []ScriptErrorLog{}
+}
+
+// ClearScriptErrors clears all script errors for a given response ID
+func (a *App) ClearScriptErrors(responseID string) {
+	a.scriptErrorsMutex.Lock()
+	defer a.scriptErrorsMutex.Unlock()
+
+	delete(a.scriptErrors, responseID)
+
+	// Emit event to frontend via Wails runtime (not polling queue)
+	runtime.EventsEmit(a.ctx, "script:error:cleared", map[string]interface{}{
+		"response_id": responseID,
+	})
+}
+
+// GetAllResponseIDsWithErrors returns a list of all response IDs that have script errors
+func (a *App) GetAllResponseIDsWithErrors() []string {
+	a.scriptErrorsMutex.RLock()
+	defer a.scriptErrorsMutex.RUnlock()
+
+	ids := make([]string, 0, len(a.scriptErrors))
+	for id := range a.scriptErrors {
+		ids = append(ids, id)
+	}
+	return ids
 }
