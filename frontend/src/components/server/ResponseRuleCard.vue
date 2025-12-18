@@ -20,6 +20,10 @@ import ComboBox from '../shared/ComboBox.vue'
 import ScriptEditorModal from '../shared/ScriptEditorModal.vue'
 import ResponseEditorContent from './ResponseEditorContent.vue'
 import ResponseEditorPanel from './ResponseEditorPanel.vue'
+import ScriptErrorLogDialog, { type ScriptErrorInfo } from './ScriptErrorLogDialog.vue'
+import { useServerStore } from '../../stores/server'
+
+const serverStore = useServerStore()
 
 // Convert STATUS_CODES to combobox options
 const statusCodeOptions = computed(() =>
@@ -98,6 +102,91 @@ const activeTab = ref<'request' | 'response'>('request')
 
 // Slide-in panel state
 const showEditorPanel = ref(false)
+
+// Script error dialog state
+const showErrorDialog = ref(false)
+
+// Auto-open script editor flag
+const autoOpenScriptEditor = ref(false)
+
+// Current script error info for "Go To Error" navigation
+const currentScriptError = ref<ScriptErrorInfo | null>(null)
+
+// "Go To Error" mode - tracks if we need to restore state
+const isGoToErrorMode = ref(false)
+const savedStateBeforeGoToError = ref<{
+  wasExpanded: boolean
+  activeTabBefore: 'request' | 'response'
+  panelWasOpen: boolean
+} | null>(null)
+
+// Handle "Go To Error" from error dialog
+function handleGoToError(error: ScriptErrorInfo) {
+  // Close error dialog
+  showErrorDialog.value = false
+
+  // Save current state for restoration
+  savedStateBeforeGoToError.value = {
+    wasExpanded: props.isExpanded,
+    activeTabBefore: activeTab.value,
+    panelWasOpen: showEditorPanel.value
+  }
+
+  // Store error info to pass to editor
+  currentScriptError.value = error
+
+  // Enter "Go To Error" mode
+  isGoToErrorMode.value = true
+
+  // Expand card if it wasn't already (so user sees context)
+  if (!props.isExpanded) {
+    emit('toggle')
+  }
+
+  // Open the full editor panel with auto-launch of script editor
+  autoOpenScriptEditor.value = true
+  showEditorPanel.value = true
+}
+
+// Restore state after "Go To Error" modal closes
+function restoreStateAfterGoToError() {
+  if (!isGoToErrorMode.value || !savedStateBeforeGoToError.value) {
+    return
+  }
+
+  const saved = savedStateBeforeGoToError.value
+
+  // Close the panel
+  showEditorPanel.value = false
+
+  // Restore tab
+  activeTab.value = saved.activeTabBefore
+
+  // Restore expansion state
+  if (!saved.wasExpanded && props.isExpanded) {
+    emit('toggle')
+  }
+
+  // Clear state
+  isGoToErrorMode.value = false
+  savedStateBeforeGoToError.value = null
+  autoOpenScriptEditor.value = false
+  currentScriptError.value = null
+}
+
+// Check if this response has script errors
+const hasErrors = computed(() => {
+  if (!props.response.id) {
+    return false
+  }
+  return serverStore.hasScriptErrors(props.response.id)
+})
+
+// Get error count
+const errorCount = computed(() => {
+  if (!props.response.id) return 0
+  return serverStore.getScriptErrors(props.response.id).length
+})
 
 // Whether response is enabled (defaults to true)
 const isEnabled = computed({
@@ -326,6 +415,21 @@ onUnmounted(() => {
           </svg>
         </button>
 
+        <!-- Script Error Indicator -->
+        <button
+          v-if="hasErrors"
+          @click.stop="showErrorDialog = true"
+          class="flex-shrink-0 flex items-center gap-1 px-1.5 py-0.5 bg-red-900/30 hover:bg-red-900/50 rounded transition-colors"
+          :title="`${errorCount} script error${errorCount > 1 ? 's' : ''} - click to view`"
+        >
+          <svg class="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9 9a1 1 0 012 0v4a1 1 0 11-2 0V9zm1-4a1 1 0 100 2 1 1 0 000-2z" clip-rule="evenodd" />
+          </svg>
+          <span class="text-xs font-medium text-red-400">
+            {{ errorCount }}
+          </span>
+        </button>
+
         <!-- Expand/Collapse Arrow -->
         <svg
           class="w-4 h-4 text-gray-400 transition-transform flex-shrink-0"
@@ -480,8 +584,21 @@ onUnmounted(() => {
       :body-placeholder="bodyPlaceholder"
       :handles-options="handlesOptions"
       :use-global-c-o-r-s="useGlobalCORS"
-      @save="localResponse = $event; applyChanges(); showEditorPanel = false"
-      @close="showEditorPanel = false"
+      :auto-open-script-editor="autoOpenScriptEditor"
+      :script-error="currentScriptError"
+      :is-go-to-error-mode="isGoToErrorMode"
+      @save="localResponse = $event; applyChanges(); showEditorPanel = false; autoOpenScriptEditor = false; currentScriptError = null; isGoToErrorMode = false"
+      @close="isGoToErrorMode ? restoreStateAfterGoToError() : (showEditorPanel = false, autoOpenScriptEditor = false, currentScriptError = null)"
+      @script-modal-closed="restoreStateAfterGoToError"
+    />
+
+    <!-- Script Error Log Dialog -->
+    <ScriptErrorLogDialog
+      v-if="response.id"
+      :visible="showErrorDialog"
+      :response-id="response.id"
+      @close="showErrorDialog = false"
+      @go-to-error="handleGoToError"
     />
   </div>
 </template>

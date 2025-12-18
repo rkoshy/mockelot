@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { models } from '../../types/models'
 import {
   STATUS_CODES,
@@ -8,8 +8,9 @@ import {
   type ValidationMatchType
 } from '../../types/models'
 import ResponseEditorContent from './ResponseEditorContent.vue'
+import type { ScriptErrorInfo } from './ScriptErrorLogDialog.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   visible: boolean
   localResponse: models.MethodResponse
   currentMode: ResponseMode
@@ -22,14 +23,25 @@ const props = defineProps<{
   bodyPlaceholder: string
   handlesOptions: boolean
   useGlobalCORS: boolean
-}>()
+  autoOpenScriptEditor?: boolean
+  scriptError?: ScriptErrorInfo | null
+  isGoToErrorMode?: boolean
+}>(), {
+  autoOpenScriptEditor: false,
+  scriptError: null,
+  isGoToErrorMode: false
+})
 
 const emit = defineEmits<{
   close: []
   save: [response: models.MethodResponse]
+  scriptModalClosed: []
 }>()
 
 const activeTab = ref<'request' | 'response'>('request')
+
+// Ref to ResponseEditorContent for programmatic control
+const editorContentRef = ref<InstanceType<typeof ResponseEditorContent> | null>(null)
 
 // Create a local copy to work with
 const panelResponse = ref<models.MethodResponse>(new models.MethodResponse({ ...props.localResponse }))
@@ -70,6 +82,14 @@ const statusCodeOptions = computed(() =>
   STATUS_CODES.map(s => ({ value: s.code, label: `${s.code} - ${s.text}` }))
 )
 
+// Watch for script modal close in "Go To Error" mode
+watch(() => editorContentRef.value?.showScriptEditor, (newVal, oldVal) => {
+  // Detect when script modal closes (true -> false) in Go To Error mode
+  if (props.isGoToErrorMode && oldVal === true && newVal === false) {
+    emit('scriptModalClosed')
+  }
+})
+
 // Reset state when dialog opens
 watch(() => props.visible, (newVal) => {
   if (newVal) {
@@ -93,6 +113,22 @@ watch(() => props.visible, (newVal) => {
       validationScript: props.validationScript,
       contentType: props.contentType,
       useGlobalCORS: props.useGlobalCORS
+    }
+
+    // Auto-open script editor if requested (for "Go To Error" navigation)
+    if (props.autoOpenScriptEditor) {
+      nextTick(() => {
+        if (editorContentRef.value) {
+          // Switch to response tab (most errors are in response scripts)
+          activeTab.value = 'response'
+          // Open the script editor modal after another tick to ensure tab switch is complete
+          nextTick(() => {
+            if (editorContentRef.value) {
+              editorContentRef.value.showScriptEditor = true
+            }
+          })
+        }
+      })
     }
   }
 })
@@ -222,6 +258,7 @@ watch(() => props.visible, (show) => {
           <!-- Content -->
           <div class="flex-1 overflow-y-auto p-6">
             <ResponseEditorContent
+              ref="editorContentRef"
               :local-response="panelResponse"
               :active-tab="activeTab"
               :current-mode="panelCurrentMode"
@@ -236,6 +273,7 @@ watch(() => props.visible, (show) => {
               :use-global-c-o-r-s="panelUseGlobalCORS"
               :status-code-options="statusCodeOptions"
               :is-in-panel="true"
+              :script-error="scriptError"
               @update:local-response="panelResponse = $event"
               @update:current-mode="panelCurrentMode = $event"
               @update:validation-mode="panelValidationMode = $event"

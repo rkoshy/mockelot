@@ -17,6 +17,8 @@ export function CancelContainerStart(arg1:string):Promise<void>;
 
 export function ClearRequestLogs():Promise<void>;
 
+export function ClearScriptErrors(arg1:string):Promise<void>;
+
 export function DeleteContainer(arg1:string):Promise<void>;
 
 export function DeleteEndpoint(arg1:string):Promise<void>;
@@ -28,6 +30,8 @@ export function DownloadCACert():Promise<string>;
 export function Emit(arg1:string,arg2:any):Promise<void>;
 
 export function ExportLogs(arg1:string):Promise<void>;
+
+export function GetAllResponseIDsWithErrors():Promise<Array<string>>;
 
 export function GetCACertInfo():Promise<models.CACertInfo>;
 
@@ -61,6 +65,8 @@ export function GetRequestLogs():Promise<Array<models.RequestLogSummary>>;
 
 export function GetResponses():Promise<Array<models.MethodResponse>>;
 
+export function GetScriptErrors(arg1:string):Promise<Array<main.ScriptErrorLog>>;
+
 export function GetSelectedEndpointId():Promise<string>;
 
 export function GetServerStatus():Promise<main.ServerStatus>;
@@ -74,6 +80,8 @@ export function LoadConfig():Promise<models.AppConfig>;
 export function LoadConfigFromPath(arg1:string):Promise<models.AppConfig>;
 
 export function LogRequest(arg1:models.RequestLog):Promise<void>;
+
+export function LogScriptError(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function PollEvents():Promise<Array<main.Event>>;
 

@@ -19,25 +19,31 @@ type RequestLogger interface {
 	UpdateRequestLog(log models.RequestLog)
 }
 
-type ResponseHandler struct {
-	config           *models.AppConfig
-	configMutex      sync.RWMutex
-	requestLogger    RequestLogger
-	corsProcessor    *CORSProcessor
-	proxyHandler     *ProxyHandler
-	containerHandler *ContainerHandler
-	regexCache       map[string]*regexp.Regexp // Cache for compiled regexes
-	regexCacheMutex  sync.RWMutex              // Mutex for regex cache
+type ScriptErrorLogger interface {
+	LogScriptError(responseID, path, method, errorMsg string)
 }
 
-func NewResponseHandler(config *models.AppConfig, logger RequestLogger, proxyHandler *ProxyHandler, containerHandler *ContainerHandler) *ResponseHandler {
+type ResponseHandler struct {
+	config            *models.AppConfig
+	configMutex       sync.RWMutex
+	requestLogger     RequestLogger
+	scriptErrorLogger ScriptErrorLogger
+	corsProcessor     *CORSProcessor
+	proxyHandler      *ProxyHandler
+	containerHandler  *ContainerHandler
+	regexCache        map[string]*regexp.Regexp // Cache for compiled regexes
+	regexCacheMutex   sync.RWMutex              // Mutex for regex cache
+}
+
+func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptErrorLogger ScriptErrorLogger, proxyHandler *ProxyHandler, containerHandler *ContainerHandler) *ResponseHandler {
 	return &ResponseHandler{
-		config:           config,
-		requestLogger:    logger,
-		corsProcessor:    NewCORSProcessor(&config.CORS),
-		proxyHandler:     proxyHandler,
-		containerHandler: containerHandler,
-		regexCache:       make(map[string]*regexp.Regexp),
+		config:            config,
+		requestLogger:     logger,
+		scriptErrorLogger: scriptErrorLogger,
+		corsProcessor:     NewCORSProcessor(&config.CORS),
+		proxyHandler:      proxyHandler,
+		containerHandler:  containerHandler,
+		regexCache:        make(map[string]*regexp.Regexp),
 	}
 }
 
@@ -790,6 +796,10 @@ func (h *ResponseHandler) processResponse(
 		scriptResp, err := ProcessScript(resp.ScriptBody, reqContext, resp)
 		if err != nil {
 			log.Printf("Script execution error: %v", err)
+			// Log error to frontend
+			if h.scriptErrorLogger != nil && resp.ID != "" {
+				h.scriptErrorLogger.LogScriptError(resp.ID, r.URL.Path, r.Method, err.Error())
+			}
 			// Fall back to static response on error
 		} else {
 			body = scriptResp.Body

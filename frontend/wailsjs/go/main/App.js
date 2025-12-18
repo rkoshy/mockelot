@@ -30,6 +30,10 @@ export function ClearRequestLogs() {
   return window['go']['main']['App']['ClearRequestLogs']();
 }
 
+export function ClearScriptErrors(arg1) {
+  return window['go']['main']['App']['ClearScriptErrors'](arg1);
+}
+
 export function DeleteContainer(arg1) {
   return window['go']['main']['App']['DeleteContainer'](arg1);
 }
@@ -52,6 +56,10 @@ export function Emit(arg1, arg2) {
 
 export function ExportLogs(arg1) {
   return window['go']['main']['App']['ExportLogs'](arg1);
+}
+
+export function GetAllResponseIDsWithErrors() {
+  return window['go']['main']['App']['GetAllResponseIDsWithErrors']();
 }
 
 export function GetCACertInfo() {
@@ -118,6 +126,10 @@ export function GetResponses() {
   return window['go']['main']['App']['GetResponses']();
 }
 
+export function GetScriptErrors(arg1) {
+  return window['go']['main']['App']['GetScriptErrors'](arg1);
+}
+
 export function GetSelectedEndpointId() {
   return window['go']['main']['App']['GetSelectedEndpointId']();
 }
@@ -144,6 +156,10 @@ export function LoadConfigFromPath(arg1) {
 
 export function LogRequest(arg1) {
   return window['go']['main']['App']['LogRequest'](arg1);
+}
+
+export function LogScriptError(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['LogScriptError'](arg1, arg2, arg3, arg4);
 }
 
 export function PollEvents() {

@@ -1,10 +1,12 @@
 <script lang="ts" setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
+import type { ScriptErrorInfo } from '../server/ScriptErrorLogDialog.vue'
 
 const props = defineProps<{
   modelValue: string
   visible: boolean
   title?: string
+  errorInfo?: ScriptErrorInfo | null
 }>()
 
 const emit = defineEmits<{
@@ -14,6 +16,68 @@ const emit = defineEmits<{
 
 const showHelp = ref(true)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
+const lineNumbersRef = ref<HTMLDivElement | null>(null)
+
+// Calculate line numbers based on content
+const lineNumbers = computed(() => {
+  const lines = (props.modelValue || '').split('\n')
+  return Array.from({ length: lines.length }, (_, i) => i + 1)
+})
+
+// Parse line number from error message
+function parseErrorLine(errorMessage: string): number | null {
+  // Try to match patterns like:
+  // "at line 5", "Line 5:", "line 5:10", etc.
+  const patterns = [
+    /\bline\s+(\d+)/i,
+    /\bat\s+(\d+):/i,
+    /:(\d+):\d+/  // line:column format
+  ]
+
+  for (const pattern of patterns) {
+    const match = errorMessage.match(pattern)
+    if (match && match[1]) {
+      return parseInt(match[1], 10)
+    }
+  }
+
+  return null
+}
+
+// Position cursor on error line when modal opens with error info
+watch(() => props.visible, (newVal) => {
+  if (newVal && props.errorInfo && textareaRef.value) {
+    nextTick(() => {
+      if (textareaRef.value) {
+        const errorLine = parseErrorLine(props.errorInfo!.error)
+        if (errorLine !== null) {
+          // Calculate character position for the error line
+          const lines = props.modelValue.split('\n')
+          let position = 0
+          for (let i = 0; i < Math.min(errorLine - 1, lines.length); i++) {
+            position += lines[i].length + 1 // +1 for newline
+          }
+
+          // Set cursor position and focus
+          textareaRef.value.focus()
+          textareaRef.value.setSelectionRange(position, position)
+
+          // Scroll to make the line visible
+          const lineHeight = 24 // matches style="min-height: 24px"
+          const targetScroll = (errorLine - 1) * lineHeight - (textareaRef.value.clientHeight / 2)
+          textareaRef.value.scrollTop = Math.max(0, targetScroll)
+        }
+      }
+    })
+  }
+})
+
+// Sync scroll between line numbers and textarea
+function handleScroll() {
+  if (textareaRef.value && lineNumbersRef.value) {
+    lineNumbersRef.value.scrollTop = textareaRef.value.scrollTop
+  }
+}
 
 // Handle escape key to close
 function handleKeydown(e: KeyboardEvent) {
@@ -148,25 +212,72 @@ onUnmounted(() => {
           </div>
         </div>
 
+        <!-- Error Display (shown when errorInfo is provided) -->
+        <div v-if="errorInfo" class="px-4 py-3 bg-red-900/20 border-b border-red-900/50">
+          <div class="flex items-start gap-3">
+            <!-- Error Icon -->
+            <div class="flex-shrink-0 mt-0.5">
+              <svg class="w-5 h-5 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9 9a1 1 0 012 0v4a1 1 0 11-2 0V9zm1-4a1 1 0 100 2 1 1 0 000-2z" clip-rule="evenodd" />
+              </svg>
+            </div>
+
+            <!-- Error Details -->
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 mb-1">
+                <h4 class="text-sm font-semibold text-red-400">Script Execution Error</h4>
+                <span class="text-xs text-gray-500">{{ new Date(errorInfo.timestamp).toLocaleString() }}</span>
+              </div>
+              <div class="flex items-center gap-2 text-xs text-gray-400 mb-2">
+                <span class="font-mono">{{ errorInfo.method }}</span>
+                <span>→</span>
+                <span class="font-mono">{{ errorInfo.path }}</span>
+              </div>
+              <div class="bg-gray-950 border border-gray-800 rounded p-2">
+                <pre class="text-xs text-red-400 font-mono whitespace-pre-wrap break-words">{{ errorInfo.error }}</pre>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Content -->
         <div class="flex flex-1 overflow-hidden">
           <!-- Editor -->
           <div class="flex-1 flex flex-col p-4 min-w-0">
-            <textarea
-              ref="textareaRef"
-              :value="modelValue"
-              @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
-              class="flex-1 w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white
-                     font-mono focus:outline-none focus:border-blue-500 resize-none"
-              placeholder="// Write your JavaScript code here...
+            <div class="flex-1 flex border border-gray-600 rounded-lg overflow-hidden bg-gray-900">
+              <!-- Line Numbers -->
+              <div
+                ref="lineNumbersRef"
+                class="flex flex-col py-2 px-2 bg-gray-800 border-r border-gray-600 text-gray-500 text-sm font-mono select-none overflow-hidden"
+              >
+                <div
+                  v-for="lineNum in lineNumbers"
+                  :key="lineNum"
+                  class="leading-6 text-right pr-2"
+                  style="min-height: 24px"
+                >
+                  {{ lineNum }}
+                </div>
+              </div>
+              <!-- Code Editor -->
+              <textarea
+                ref="textareaRef"
+                :value="modelValue"
+                @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
+                @scroll="handleScroll"
+                class="flex-1 w-full px-3 py-2 bg-gray-900 text-sm text-white
+                       font-mono focus:outline-none resize-none leading-6"
+                placeholder="// Write your JavaScript code here...
 // Access request data via 'request' object
 // Modify response via 'response' object
 
 const userId = request.pathParams.id;
 response.status = 200;
 response.body = JSON.stringify({ userId: userId });"
-              spellcheck="false"
-            />
+                spellcheck="false"
+                style="outline: none; border: none;"
+              />
+            </div>
           </div>
 
           <!-- Help Panel -->

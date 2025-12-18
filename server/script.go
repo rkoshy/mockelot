@@ -69,19 +69,25 @@ func ProcessScript(scriptBody string, reqContext *RequestContext, originalRespon
 
 func runScript(vm *goja.Runtime, scriptBody string, reqContext *RequestContext, originalResponse *models.MethodResponse) (*ScriptResponse, error) {
 	// Prepare headers for response (convert from original or use empty map)
-	originalHeaders := make(map[string]string)
+	originalHeaders := make(map[string]interface{})
 	if originalResponse.Headers != nil {
 		for k, v := range originalResponse.Headers {
 			originalHeaders[k] = v
 		}
 	}
 
-	// Initialize response object with defaults from original response
-	response := &ScriptResponse{
+	// Initialize result object to be returned
+	result := &ScriptResponse{
 		Status:  originalResponse.StatusCode,
-		Headers: originalHeaders,
+		Headers: make(map[string]string),
 		Body:    originalResponse.Body,
 		Delay:   originalResponse.ResponseDelay,
+	}
+	// Copy original headers to result
+	if originalResponse.Headers != nil {
+		for k, v := range originalResponse.Headers {
+			result.Headers[k] = v
+		}
 	}
 
 	// Set up request object (read-only)
@@ -90,8 +96,14 @@ func runScript(vm *goja.Runtime, scriptBody string, reqContext *RequestContext, 
 		return nil, &ScriptError{Message: fmt.Sprintf("failed to set request object: %v", err)}
 	}
 
-	// Set up response object (writable)
-	if err := vm.Set("response", response); err != nil {
+	// Set up response object (writable) as plain JavaScript object for Goja compatibility
+	responseObj := map[string]interface{}{
+		"status":  originalResponse.StatusCode,
+		"headers": originalHeaders,
+		"body":    originalResponse.Body,
+		"delay":   originalResponse.ResponseDelay,
+	}
+	if err := vm.Set("response", responseObj); err != nil {
 		return nil, &ScriptError{Message: fmt.Sprintf("failed to set response object: %v", err)}
 	}
 
@@ -159,40 +171,40 @@ func runScript(vm *goja.Runtime, scriptBody string, reqContext *RequestContext, 
 	// Extract updated response from VM
 	responseVal := vm.Get("response")
 	if responseVal != nil && !goja.IsUndefined(responseVal) && !goja.IsNull(responseVal) {
-		responseObj := responseVal.Export()
-		if respMap, ok := responseObj.(map[string]interface{}); ok {
+		responseExported := responseVal.Export()
+		if respMap, ok := responseExported.(map[string]interface{}); ok {
 			// Extract status
 			if status, ok := respMap["status"].(int64); ok {
-				response.Status = int(status)
+				result.Status = int(status)
 			} else if status, ok := respMap["status"].(float64); ok {
-				response.Status = int(status)
+				result.Status = int(status)
 			}
 
 			// Extract headers
 			if headers, ok := respMap["headers"].(map[string]interface{}); ok {
-				response.Headers = make(map[string]string)
+				result.Headers = make(map[string]string)
 				for k, v := range headers {
 					if str, ok := v.(string); ok {
-						response.Headers[k] = str
+						result.Headers[k] = str
 					} else {
-						response.Headers[k] = fmt.Sprintf("%v", v)
+						result.Headers[k] = fmt.Sprintf("%v", v)
 					}
 				}
 			}
 
 			// Extract body
 			if body, ok := respMap["body"].(string); ok {
-				response.Body = body
+				result.Body = body
 			}
 
 			// Extract delay
 			if delay, ok := respMap["delay"].(int64); ok {
-				response.Delay = int(delay)
+				result.Delay = int(delay)
 			} else if delay, ok := respMap["delay"].(float64); ok {
-				response.Delay = int(delay)
+				result.Delay = int(delay)
 			}
 		}
 	}
 
-	return response, nil
+	return result, nil
 }
