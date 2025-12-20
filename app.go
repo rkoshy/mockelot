@@ -59,6 +59,7 @@ type App struct {
 	proxyHandler           *server.ProxyHandler     // Proxy handler shared between HTTPServer and ContainerHandler
 	config                 *models.AppConfig
 	serverConfigMgr        *config.ServerConfigManager
+	currentConfigPath      string                         // Path to the currently loaded/saved config file
 	requestLogs            []models.RequestLog
 	logMutex               sync.RWMutex
 	requestLogSummaryQueue []models.RequestLogSummary // Queue of request log summaries for frontend polling
@@ -107,6 +108,12 @@ func NewApp() *App {
 	// Initialize container handler (independent of server)
 	// App implements EventSender interface via SendEvent method
 	app.containerHandler = server.NewContainerHandler(app, app, app.proxyHandler)
+
+	// Ensure all endpoints have DisplayOrder set
+	app.ensureDisplayOrder()
+
+	// Ensure rejections endpoint exists
+	app.ensureRejectionsEndpoint()
 
 	return app
 }
@@ -615,7 +622,24 @@ func (a *App) AddEndpoint(name string, pathPrefix string, translationMode string
 		}
 	}
 
-	a.config.Endpoints = append(a.config.Endpoints, endpoint)
+	// Insert endpoint before system endpoints (like Rejections)
+	// Find the index of the first system endpoint
+	insertIndex := len(a.config.Endpoints)
+	for i, ep := range a.config.Endpoints {
+		if ep.IsSystem {
+			insertIndex = i
+			break
+		}
+	}
+
+	// Insert at the found index
+	if insertIndex < len(a.config.Endpoints) {
+		// Insert before system endpoints
+		a.config.Endpoints = append(a.config.Endpoints[:insertIndex], append([]models.Endpoint{endpoint}, a.config.Endpoints[insertIndex:]...)...)
+	} else {
+		// No system endpoints, append at end
+		a.config.Endpoints = append(a.config.Endpoints, endpoint)
+	}
 
 	// If server is running, update it
 	if a.server != nil {
@@ -760,7 +784,24 @@ func (a *App) AddEndpointWithConfig(config map[string]interface{}) (models.Endpo
 		}
 	}
 
-	a.config.Endpoints = append(a.config.Endpoints, endpoint)
+	// Insert endpoint before system endpoints (like Rejections)
+	// Find the index of the first system endpoint
+	insertIndex := len(a.config.Endpoints)
+	for i, ep := range a.config.Endpoints {
+		if ep.IsSystem {
+			insertIndex = i
+			break
+		}
+	}
+
+	// Insert at the found index
+	if insertIndex < len(a.config.Endpoints) {
+		// Insert before system endpoints
+		a.config.Endpoints = append(a.config.Endpoints[:insertIndex], append([]models.Endpoint{endpoint}, a.config.Endpoints[insertIndex:]...)...)
+	} else {
+		// No system endpoints, append at end
+		a.config.Endpoints = append(a.config.Endpoints, endpoint)
+	}
 
 	log.Printf("Created endpoint with full config: ID=%s, Name=%s, Type=%s", endpoint.ID, endpoint.Name, endpoint.Type)
 
@@ -853,6 +894,65 @@ func parseEnvironmentVars(data []interface{}) []models.EnvironmentVar {
 	return result
 }
 
+// ensureRejectionsEndpoint creates the system "Rejections" endpoint if it doesn't exist
+// This endpoint catches all requests that don't match any other endpoint
+func (a *App) ensureRejectionsEndpoint() {
+	const rejectionsID = "system-rejections"
+
+	// Check if rejections endpoint already exists
+	for i := range a.config.Endpoints {
+		if a.config.Endpoints[i].ID == rejectionsID {
+			// Endpoint exists - ensure it has correct system properties
+			a.config.Endpoints[i].IsSystem = true
+			a.config.Endpoints[i].DisplayOrder = 999999 // Always last
+			return
+		}
+	}
+
+	// Create rejections endpoint
+	enabled := true
+	rejectionsEndpoint := models.Endpoint{
+		ID:           rejectionsID,
+		Name:         "Rejections",
+		PathPrefix:   "/",
+		TranslationMode: models.TranslationModeNone,
+		Enabled:      &enabled,
+		IsSystem:     true,
+		DisplayOrder: 999999, // Always last in matching order
+		Type:         models.EndpointTypeMock,
+		Items: []models.ResponseItem{
+			{
+				Type: "response",
+				Response: &models.MethodResponse{
+					ID:          "reject-request",
+					Enabled:     &enabled,
+					PathPattern: "/*",
+					Methods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
+					StatusCode:  404,
+					StatusText:  "Not Found",
+					Headers: map[string]string{
+						"Content-Type": "text/plain",
+					},
+					Body: "No matching endpoint found",
+				},
+			},
+		},
+	}
+
+	// Add to endpoints list
+	a.config.Endpoints = append(a.config.Endpoints, rejectionsEndpoint)
+}
+
+// ensureDisplayOrder ensures all endpoints have DisplayOrder set
+// Legacy configs may not have this field, so we set it based on array index
+func (a *App) ensureDisplayOrder() {
+	for i := range a.config.Endpoints {
+		if a.config.Endpoints[i].DisplayOrder == 0 && !a.config.Endpoints[i].IsSystem {
+			a.config.Endpoints[i].DisplayOrder = i
+		}
+	}
+}
+
 // UpdateEndpoint updates an existing endpoint
 func (a *App) UpdateEndpoint(endpoint models.Endpoint) error {
 	for i := range a.config.Endpoints {
@@ -894,6 +994,10 @@ func (a *App) UpdateEndpoint(endpoint models.Endpoint) error {
 func (a *App) DeleteEndpoint(id string) error {
 	for i, endpoint := range a.config.Endpoints {
 		if endpoint.ID == id {
+			// Prevent deletion of system endpoints
+			if endpoint.IsSystem {
+				return fmt.Errorf("cannot delete system endpoint")
+			}
 			a.config.Endpoints = append(a.config.Endpoints[:i], a.config.Endpoints[i+1:]...)
 			break
 		}
@@ -1559,12 +1663,34 @@ func (a *App) SetSelectedEndpointId(endpointId string) error {
 	return nil
 }
 
-// SaveConfig saves the user configuration (request processing rules + CORS) to a YAML file
+// SaveCurrentConfig saves to the current config file (overwrites)
+func (a *App) SaveCurrentConfig() error {
+	if a.currentConfigPath == "" {
+		return fmt.Errorf("no file currently loaded - use Save As instead")
+	}
+
+	return a.saveConfigToPath(a.currentConfigPath)
+}
+
+// SaveConfig prompts user for a file with default name based on current file + timestamp
 func (a *App) SaveConfig() error {
+	// Generate default filename
+	defaultFilename := "http-tester-config.yaml"
+	if a.currentConfigPath != "" {
+		// Extract filename without extension
+		base := filepath.Base(a.currentConfigPath)
+		ext := filepath.Ext(base)
+		nameWithoutExt := strings.TrimSuffix(base, ext)
+
+		// Add timestamp
+		timestamp := time.Now().Format("060102-150405") // YYMMDD-HHMMSS
+		defaultFilename = fmt.Sprintf("%s - %s%s", nameWithoutExt, timestamp, ext)
+	}
+
 	// Open save dialog
 	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:           "Save Configuration",
-		DefaultFilename: "http-tester-config.yaml",
+		Title:           "Save Configuration As",
+		DefaultFilename: defaultFilename,
 		Filters: []runtime.FileFilter{
 			{DisplayName: "YAML Files", Pattern: "*.yaml;*.yml"},
 		},
@@ -1576,13 +1702,27 @@ func (a *App) SaveConfig() error {
 		return nil // User cancelled
 	}
 
-	// Create UserConfig with all endpoints, responses, and CORS
+	// Save and update current path
+	if err := a.saveConfigToPath(path); err != nil {
+		return err
+	}
+
+	a.currentConfigPath = path
+	a.AddRecentFile(path)
+	return nil
+}
+
+// saveConfigToPath saves the configuration to the specified path
+func (a *App) saveConfigToPath(path string) error {
+	// Create UserConfig with all endpoints, responses, CORS, and SOCKS5 settings
 	userConfig := &models.UserConfig{
-		Responses:    a.config.Responses,
-		Items:        a.config.Items,
-		Endpoints:    a.config.Endpoints,
-		CORS:         a.config.CORS,
-		LastModified: time.Now(),
+		Responses:      a.config.Responses,
+		Items:          a.config.Items,
+		Endpoints:      a.config.Endpoints,
+		CORS:           a.config.CORS,
+		SOCKS5Config:   a.config.SOCKS5Config,
+		DomainTakeover: a.config.DomainTakeover,
+		LastModified:   time.Now(),
 	}
 
 	// Save to YAML file
@@ -1650,10 +1790,12 @@ func (a *App) LoadConfig() (*models.AppConfig, error) {
 		}
 	}
 
-	// Update only the request processing rules and CORS (preserve server settings)
+	// Update only the request processing rules, CORS, and SOCKS5 settings (preserve server settings)
 	a.config.Responses = userCfg.Responses
 	a.config.Items = userCfg.Items
 	a.config.CORS = userCfg.CORS
+	a.config.SOCKS5Config = userCfg.SOCKS5Config
+	a.config.DomainTakeover = userCfg.DomainTakeover
 
 	// Load endpoints if present in config (will replace all existing endpoints)
 	if len(userCfg.Endpoints) > 0 {
@@ -1678,6 +1820,12 @@ func (a *App) LoadConfig() (*models.AppConfig, error) {
 			}
 		}
 	}
+
+	// Ensure all endpoints have DisplayOrder set (for legacy configs)
+	a.ensureDisplayOrder()
+
+	// Ensure rejections endpoint exists
+	a.ensureRejectionsEndpoint()
 
 	// Update server if running
 	if a.server != nil {
@@ -1709,7 +1857,8 @@ func (a *App) LoadConfig() (*models.AppConfig, error) {
 	runtime.EventsEmit(a.ctx, "items:updated", userCfg.Items)
 	runtime.EventsEmit(a.ctx, "endpoints:updated", a.config.Endpoints)
 
-	// Add to recent files
+	// Set current config path and add to recent files
+	a.currentConfigPath = path
 	a.AddRecentFile(path)
 
 	return a.config, nil
@@ -1928,10 +2077,12 @@ func (a *App) LoadConfigFromPath(path string) (*models.AppConfig, error) {
 		}
 	}
 
-	// Update only the request processing rules and CORS (preserve server settings)
+	// Update only the request processing rules, CORS, and SOCKS5 settings (preserve server settings)
 	a.config.Responses = userCfg.Responses
 	a.config.Items = userCfg.Items
 	a.config.CORS = userCfg.CORS
+	a.config.SOCKS5Config = userCfg.SOCKS5Config
+	a.config.DomainTakeover = userCfg.DomainTakeover
 
 	// Load endpoints if present in config (will replace all existing endpoints)
 	if len(userCfg.Endpoints) > 0 {
@@ -1956,6 +2107,12 @@ func (a *App) LoadConfigFromPath(path string) (*models.AppConfig, error) {
 			}
 		}
 	}
+
+	// Ensure all endpoints have DisplayOrder set (for legacy configs)
+	a.ensureDisplayOrder()
+
+	// Ensure rejections endpoint exists
+	a.ensureRejectionsEndpoint()
 
 	// Update server if running
 	if a.server != nil {
@@ -1987,7 +2144,8 @@ func (a *App) LoadConfigFromPath(path string) (*models.AppConfig, error) {
 	runtime.EventsEmit(a.ctx, "items:updated", userCfg.Items)
 	runtime.EventsEmit(a.ctx, "endpoints:updated", a.config.Endpoints)
 
-	// Add to recent files
+	// Set current config path and add to recent files
+	a.currentConfigPath = path
 	a.AddRecentFile(path)
 
 	return a.config, nil
@@ -2556,6 +2714,62 @@ func (a *App) ValidateCORSScript(script string) error {
 	return server.ValidateCORSScript(script)
 }
 
+// SOCKS5ConfigResponse represents the combined SOCKS5 and domain takeover configuration
+type SOCKS5ConfigResponse struct {
+	SOCKS5Config    *models.SOCKS5Config           `json:"socks5_config"`
+	DomainTakeover *models.DomainTakeoverConfig `json:"domain_takeover"`
+}
+
+// GetSOCKS5Config returns the current SOCKS5 and domain takeover configuration
+func (a *App) GetSOCKS5Config() SOCKS5ConfigResponse {
+	return SOCKS5ConfigResponse{
+		SOCKS5Config:    a.config.SOCKS5Config,
+		DomainTakeover: a.config.DomainTakeover,
+	}
+}
+
+// SetSOCKS5Config updates the SOCKS5 and domain takeover configuration
+func (a *App) SetSOCKS5Config(socks5Config *models.SOCKS5Config, domainTakeover *models.DomainTakeoverConfig) error {
+	// Update config
+	a.config.SOCKS5Config = socks5Config
+	a.config.DomainTakeover = domainTakeover
+
+	// Auto-save server config
+	serverCfg := &models.ServerConfig{
+		Port:                a.config.Port,
+		HTTP2Enabled:        a.config.HTTP2Enabled,
+		HTTPSEnabled:        a.config.HTTPSEnabled,
+		HTTPSPort:           a.config.HTTPSPort,
+		HTTPToHTTPSRedirect: a.config.HTTPToHTTPSRedirect,
+		CertMode:            a.config.CertMode,
+		CertPaths:           a.config.CertPaths,
+		CertNames:           a.config.CertNames,
+		CORS:                a.config.CORS,
+		SOCKS5Config:        a.config.SOCKS5Config,
+		DomainTakeover:     a.config.DomainTakeover,
+	}
+	if err := a.serverConfigMgr.Save(serverCfg); err != nil {
+		fmt.Printf("Warning: failed to save server config: %v\n", err)
+	}
+
+	// If server is running, restart it to apply SOCKS5 changes
+	if a.server != nil {
+		// Stop existing server
+		if err := a.StopServer(); err != nil {
+			return fmt.Errorf("failed to stop server: %w", err)
+		}
+		// Start server with new config
+		if err := a.StartServer(a.config.Port); err != nil {
+			return fmt.Errorf("failed to restart server: %w", err)
+		}
+	}
+
+	// Emit event to frontend
+	runtime.EventsEmit(a.ctx, "socks5:config-updated", nil)
+
+	return nil
+}
+
 // SetHTTP2Enabled enables or disables HTTP/2 support for both HTTP and HTTPS servers
 func (a *App) SetHTTP2Enabled(enabled bool) error {
 	// Update config
@@ -2619,6 +2833,8 @@ func (a *App) LogRequest(log models.RequestLog) {
 		ClientRTT:  log.ClientResponse.RTTMs,
 		HasBackend: log.BackendRequest != nil || log.BackendResponse != nil,
 		ClientBodySize: len(log.ClientRequest.Body),
+		ValidationFailed: log.ValidationFailed,
+		ResponseFailed:   log.ResponseFailed,
 	}
 
 	// Add backend info if present
@@ -2671,6 +2887,8 @@ func (a *App) UpdateRequestLog(log models.RequestLog) {
 		HasBackend: log.BackendRequest != nil || log.BackendResponse != nil,
 		ClientBodySize: len(log.ClientRequest.Body),
 		Pending:    false, // Update means request is complete
+		ValidationFailed: log.ValidationFailed,
+		ResponseFailed:   log.ResponseFailed,
 	}
 
 	// Add backend info if present

@@ -50,6 +50,13 @@ const draggedIndex = ref<number | null>(null)
 const dragOverIndex = ref<number | null>(null)
 
 function onDragStart(index: number, event: DragEvent) {
+  // Prevent dragging system endpoints
+  const endpoint = serverStore.endpoints[index]
+  if (endpoint?.is_system) {
+    event.preventDefault()
+    return
+  }
+
   draggedIndex.value = index
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move'
@@ -58,12 +65,26 @@ function onDragStart(index: number, event: DragEvent) {
 }
 
 function onDragOver(index: number, event: DragEvent) {
+  // Prevent dropping on system endpoints
+  const endpoint = serverStore.endpoints[index]
+  if (endpoint?.is_system) {
+    return
+  }
+
   event.preventDefault()
   dragOverIndex.value = index
 }
 
 function onDrop(index: number, event: DragEvent) {
   event.preventDefault()
+
+  // Prevent dropping on system endpoints
+  const endpoint = serverStore.endpoints[index]
+  if (endpoint?.is_system) {
+    draggedIndex.value = null
+    dragOverIndex.value = null
+    return
+  }
 
   if (draggedIndex.value === null || draggedIndex.value === index) {
     draggedIndex.value = null
@@ -452,10 +473,18 @@ onUnmounted(() => {
           v-for="endpoint in serverStore.endpoints"
           :key="endpoint.id"
           :class="[
-            'relative px-3 py-2 text-sm font-medium border-r border-gray-700 transition-colors flex flex-col items-start gap-1 min-w-[140px] group cursor-pointer',
+            'relative px-3 py-2 text-sm font-medium border-r border-gray-700 transition-colors flex flex-col items-start gap-1 min-w-[140px] group',
             serverStore.selectedEndpointId === endpoint.id
-              ? 'bg-gray-900 text-white border-b-2 border-blue-500'
-              : 'text-gray-400 hover:text-gray-200 hover:bg-gray-750'
+              ? 'bg-gray-900 text-white border-b-2'
+              : 'text-gray-400 hover:text-gray-200 hover:bg-gray-750',
+            endpoint.name === 'Rejections'
+              ? 'border-b-2 border-b-red-600'
+              : serverStore.selectedEndpointId === endpoint.id
+                ? 'border-b-blue-500'
+                : '',
+            endpoint.is_system
+              ? 'cursor-default bg-gray-800/50 border-l-2 border-l-yellow-600'
+              : 'cursor-pointer'
           ]"
         >
           <!-- Invisible clickable overlay covering entire tab -->
@@ -468,6 +497,16 @@ onUnmounted(() => {
           <!-- Row 1: Name, Type, Status, Health, Settings -->
           <div class="flex items-center gap-1.5 w-full relative z-10 pointer-events-none">
             <span class="font-semibold truncate flex-shrink">{{ endpoint.name }}</span>
+
+            <!-- System Endpoint Badge -->
+            <span
+              v-if="endpoint.is_system"
+              class="px-1 py-0.5 text-[10px] rounded font-medium flex-shrink-0 bg-yellow-900/50 text-yellow-400 border border-yellow-700"
+              title="System endpoint - cannot be deleted or reordered"
+            >
+              SYS
+            </span>
+
             <!-- Type Badge -->
             <span
               :class="[
@@ -503,9 +542,9 @@ onUnmounted(() => {
             </span>
             <span v-if="!endpoint.enabled" class="text-[10px] opacity-50 flex-shrink-0">(off)</span>
 
-            <!-- Settings Gear Icon (only visible on current tab) - higher z-index and larger -->
+            <!-- Settings Gear Icon (only visible on current tab, hidden for system endpoints) - higher z-index and larger -->
             <button
-              v-if="serverStore.selectedEndpointId === endpoint.id"
+              v-if="serverStore.selectedEndpointId === endpoint.id && !endpoint.is_system"
               @click.stop="openEndpointSettings(endpoint)"
               class="ml-auto p-1 hover:bg-gray-700 rounded transition-colors flex-shrink-0 pointer-events-auto relative z-20"
               title="Endpoint Settings"
@@ -538,8 +577,8 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Endpoint Controls (only for mock endpoints) -->
-    <div v-if="serverStore.currentEndpoint?.type === 'mock'" class="flex items-center justify-between p-3 border-b border-gray-700 flex-shrink-0">
+    <!-- Endpoint Controls (only for mock endpoints, not system endpoints) -->
+    <div v-if="serverStore.currentEndpoint?.type === 'mock' && !serverStore.currentEndpoint?.is_system" class="flex items-center justify-between p-3 border-b border-gray-700 flex-shrink-0">
       <div class="flex gap-2">
         <button
           @click="serverStore.addNewGroup"
@@ -601,11 +640,17 @@ onUnmounted(() => {
     <!-- Resizable Content Area -->
     <div class="flex-1 flex flex-row min-h-0">
       <!-- Left Section: Mock Rules OR Proxy/Container Status -->
-      <div :style="{ width: dividerPosition + 'px' }" class="overflow-y-auto flex flex-col min-h-0">
+      <div
+        :style="{ width: dividerPosition + 'px' }"
+        :class="[
+          'overflow-y-auto flex flex-col min-h-0',
+          serverStore.currentEndpoint?.name === 'Rejections' ? 'bg-red-950/20' : ''
+        ]"
+      >
         <!-- Mock Endpoint: Rules List -->
         <div v-if="serverStore.currentEndpoint?.type === 'mock'" class="flex-1 overflow-y-auto p-3 space-y-2" @dragend="onDragEnd">
       <!-- Empty State -->
-      <div v-if="serverStore.items.length === 0" class="flex items-center justify-center h-32">
+      <div v-if="!serverStore.items || serverStore.items.length === 0" class="flex items-center justify-center h-32">
         <div class="text-center text-gray-500">
           <p class="text-sm">No response rules configured</p>
           <p class="text-xs mt-1">Click "+ Response" or "+ Group" to get started</p>

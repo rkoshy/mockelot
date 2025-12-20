@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { models } from '../../types/models'
 import {
   HTTP_METHODS,
@@ -37,9 +37,11 @@ const props = withDefaults(defineProps<{
   statusCodeOptions: Array<{ value: number, label: string }>
   isInPanel?: boolean
   scriptError?: ScriptErrorInfo | null
+  isSystemEndpoint?: boolean
 }>(), {
   isInPanel: false,
-  scriptError: null
+  scriptError: null,
+  isSystemEndpoint: false
 })
 
 const emit = defineEmits<{
@@ -163,15 +165,23 @@ function updatePathPattern(value: string) {
   emit('update:localResponse', updated)
 }
 
-// Update status code
-function updateStatusCode(code: number) {
-  const updated = new models.MethodResponse({ ...props.localResponse, status_code: code })
-  emit('update:localResponse', updated)
-}
+// Update status (combined code and text)
+function updateStatus(payload: { value: number | string; text: string }) {
+  const code = typeof payload.value === 'number' ? payload.value : Number(payload.value)
+  console.log('[ResponseEditorContent] updateStatus called:', {
+    newCode: code,
+    newText: payload.text,
+    oldCode: props.localResponse.status_code,
+    oldText: props.localResponse.status_text
+  })
 
-// Update status text
-function updateStatusText(text: string) {
-  const updated = new models.MethodResponse({ ...props.localResponse, status_text: text })
+  const updated = new models.MethodResponse({
+    ...props.localResponse,
+    status_code: code,
+    status_text: payload.text
+  })
+
+  console.log('[ResponseEditorContent] Emitting update:localResponse with status_code:', updated.status_code, 'status_text:', updated.status_text)
   emit('update:localResponse', updated)
 }
 
@@ -204,6 +214,14 @@ function updateHeaderValidations(headers: models.HeaderValidation[]) {
   })
   emit('update:localResponse', updated)
 }
+
+// Watch for status code changes in localResponse
+watch(() => props.localResponse.status_code, (newVal, oldVal) => {
+  console.log('[ResponseEditorContent] props.localResponse.status_code changed:', {
+    from: oldVal,
+    to: newVal
+  })
+})
 </script>
 
 <template>
@@ -218,8 +236,11 @@ function updateHeaderValidations(headers: models.HeaderValidation[]) {
           @input="updatePathPattern(($event.target as HTMLInputElement).value)"
           type="text"
           placeholder="/* or ^/api/v[0-9]+/"
-          class="w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-sm text-white font-mono
-                 focus:outline-none focus:border-blue-500"
+          :disabled="isSystemEndpoint"
+          :class="[
+            'w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-sm text-white font-mono focus:outline-none focus:border-blue-500',
+            isSystemEndpoint ? 'opacity-50 cursor-not-allowed' : ''
+          ]"
         />
       </div>
 
@@ -230,12 +251,14 @@ function updateHeaderValidations(headers: models.HeaderValidation[]) {
           <button
             v-for="method in HTTP_METHODS"
             :key="method"
-            @click="toggleMethod(method)"
+            @click="!isSystemEndpoint && toggleMethod(method)"
+            :disabled="isSystemEndpoint"
             :class="[
               'px-2 py-0.5 rounded text-xs font-medium transition-colors',
               localResponse.methods.includes(method)
                 ? getMethodColor(method) + ' text-white'
-                : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                : 'bg-gray-700 text-gray-400 hover:bg-gray-600',
+              isSystemEndpoint ? 'opacity-50 cursor-not-allowed' : ''
             ]"
           >
             {{ method }}
@@ -245,12 +268,12 @@ function updateHeaderValidations(headers: models.HeaderValidation[]) {
 
       <!-- Global CORS -->
       <div class="space-y-1">
-        <label class="flex items-center gap-2 cursor-pointer" :class="{ 'opacity-50 cursor-not-allowed': handlesOptions }">
+        <label class="flex items-center gap-2 cursor-pointer" :class="{ 'opacity-50 cursor-not-allowed': handlesOptions || isSystemEndpoint }">
           <input
             :checked="useGlobalCORS"
             @change="emit('update:useGlobalCORS', ($event.target as HTMLInputElement).checked); emit('applyChanges')"
             type="checkbox"
-            :disabled="handlesOptions"
+            :disabled="handlesOptions || isSystemEndpoint"
             class="w-3.5 h-3.5 rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
           />
           <span class="text-xs font-medium text-gray-400">Use Global CORS</span>
@@ -424,8 +447,7 @@ result.vars.action = json.action || 'default';"
           :model-value="localResponse.status_code"
           :model-text="localResponse.status_text"
           :options="statusCodeOptions"
-          @update:model-value="updateStatusCode(Number($event))"
-          @update:model-text="updateStatusText($event)"
+          @update="updateStatus"
         />
       </div>
 
@@ -438,8 +460,11 @@ result.vars.action = json.action || 'default';"
           type="number"
           min="0"
           max="60000"
-          class="w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-xs text-white
-                 focus:outline-none focus:border-blue-500"
+          :disabled="isSystemEndpoint"
+          :class="[
+            'w-full px-2 py-1.5 bg-gray-900 border border-gray-600 rounded text-xs text-white focus:outline-none focus:border-blue-500',
+            isSystemEndpoint ? 'opacity-50 cursor-not-allowed' : ''
+          ]"
         />
       </div>
 

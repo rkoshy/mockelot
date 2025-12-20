@@ -31,11 +31,13 @@ type ResponseHandler struct {
 	corsProcessor     *CORSProcessor
 	proxyHandler      *ProxyHandler
 	containerHandler  *ContainerHandler
+	overlayHandler    *OverlayHandler
 	regexCache        map[string]*regexp.Regexp // Cache for compiled regexes
 	regexCacheMutex   sync.RWMutex              // Mutex for regex cache
 }
 
 func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptErrorLogger ScriptErrorLogger, proxyHandler *ProxyHandler, containerHandler *ContainerHandler) *ResponseHandler {
+	overlayHandler := NewOverlayHandler(proxyHandler)
 	return &ResponseHandler{
 		config:            config,
 		requestLogger:     logger,
@@ -43,6 +45,7 @@ func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptEr
 		corsProcessor:     NewCORSProcessor(&config.CORS),
 		proxyHandler:      proxyHandler,
 		containerHandler:  containerHandler,
+		overlayHandler:    overlayHandler,
 		regexCache:        make(map[string]*regexp.Regexp),
 	}
 }
@@ -85,6 +88,7 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 
 	h.configMutex.RLock()
 	requestPath := r.URL.Path
+	requestDomain := extractDomain(r) // Extract domain from Host header
 
 	// Step 1: Find matching endpoint by prefix and apply path translation
 	var matchedEndpoint *models.Endpoint
@@ -97,6 +101,11 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 		for i := range h.config.Endpoints {
 			endpoint := &h.config.Endpoints[i]
 			if !endpoint.IsEnabled() {
+				continue
+			}
+
+			// Check domain filter first (before path matching)
+			if !h.matchesDomain(endpoint, requestDomain) {
 				continue
 			}
 
@@ -120,7 +129,12 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 			} else {
 				// Exact or prefix matching (with trailing slash)
 				// This prevents /test2 from matching prefix /test
-				prefixMatches = requestPath == endpoint.PathPrefix || strings.HasPrefix(requestPath, endpoint.PathPrefix+"/")
+				// Special case: if PathPrefix is "/", match all paths
+				if endpoint.PathPrefix == "/" {
+					prefixMatches = strings.HasPrefix(requestPath, "/")
+				} else {
+					prefixMatches = requestPath == endpoint.PathPrefix || strings.HasPrefix(requestPath, endpoint.PathPrefix+"/")
+				}
 			}
 
 			if prefixMatches {
@@ -175,9 +189,22 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 
-		// If no endpoint matched, return 404
+		// If no endpoint matched, check for overlay mode before returning 404
 		if matchedEndpoint == nil {
+			// Check if overlay mode should be used for this domain
+			domainTakeover := h.config.DomainTakeover
 			h.configMutex.RUnlock()
+
+			if h.overlayHandler != nil && h.overlayHandler.shouldUseOverlay(requestDomain, domainTakeover) {
+				// Use overlay mode - proxy to real server
+				if err := h.overlayHandler.handleOverlay(w, r, requestDomain); err != nil {
+					log.Printf("Overlay mode error: %v", err)
+					http.Error(w, "Overlay mode failed", http.StatusBadGateway)
+				}
+				return
+			}
+
+			// No endpoint and no overlay - return 404
 			http.Error(w, "No endpoint configured for this path", http.StatusNotFound)
 			return
 		}
@@ -206,6 +233,12 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 		h.configMutex.RUnlock()
 		h.handleCORSPreflight(w, r)
 		return
+	}
+
+	// Determine endpoint ID for logging (empty string if legacy fallback)
+	endpointID := ""
+	if matchedEndpoint != nil {
+		endpointID = matchedEndpoint.ID
 	}
 
 	// Step 2: Find matching response within the endpoint's items using translated path
@@ -243,8 +276,16 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 					// Run request body validation if configured
 					validationResult := ValidateRequest(resp.RequestValidation, string(bodyBytes), tempContext)
 					if !validationResult.Valid {
-						// Validation failed - skip this response and try next
+						// Validation failed - log and continue to next response
 						log.Printf("Validation failed for %s %s (translated: %s): %s", r.Method, r.URL.Path, translatedPath, validationResult.Error)
+
+						// Log validation failure (no HTTP response sent)
+						requestLog := buildRequestLog(r, bodyBytes, endpointID)
+						requestLog.ValidationFailed = true
+						requestLog.ClientResponse.StatusCode = nil // No HTTP response
+						requestLog.ClientResponse.Body = validationResult.Error
+						h.requestLogger.LogRequest(requestLog)
+
 						continue
 					}
 
@@ -290,8 +331,16 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 						// Run request body validation if configured
 						validationResult := ValidateRequest(resp.RequestValidation, string(bodyBytes), tempContext)
 						if !validationResult.Valid {
-							// Validation failed - skip this response and try next
+							// Validation failed - log and continue to next response
 							log.Printf("Validation failed for %s %s (translated: %s): %s", r.Method, r.URL.Path, translatedPath, validationResult.Error)
+
+							// Log validation failure (no HTTP response sent)
+							requestLog := buildRequestLog(r, bodyBytes, endpointID)
+							requestLog.ValidationFailed = true
+							requestLog.ClientResponse.StatusCode = nil // No HTTP response
+							requestLog.ClientResponse.Body = validationResult.Error
+							h.requestLogger.LogRequest(requestLog)
+
 							continue
 						}
 
@@ -343,8 +392,16 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 					// Run request body validation if configured
 					validationResult := ValidateRequest(resp.RequestValidation, string(bodyBytes), tempContext)
 					if !validationResult.Valid {
-						// Validation failed - skip this response and try next
+						// Validation failed - log and continue to next response
 						log.Printf("Validation failed for %s %s (translated: %s): %s", r.Method, r.URL.Path, translatedPath, validationResult.Error)
+
+						// Log validation failure (no HTTP response sent)
+						requestLog := buildRequestLog(r, bodyBytes, endpointID)
+						requestLog.ValidationFailed = true
+						requestLog.ClientResponse.StatusCode = nil // No HTTP response
+						requestLog.ClientResponse.Body = validationResult.Error
+						h.requestLogger.LogRequest(requestLog)
+
 						continue
 					}
 
@@ -376,12 +433,6 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 		queryParamsCopy[key] = valuesCopy
 	}
 
-	// Determine endpoint ID for logging (empty string if legacy fallback)
-	endpointID := ""
-	if matchedEndpoint != nil {
-		endpointID = matchedEndpoint.ID
-	}
-
 	if matchedResponse == nil {
 		http.Error(w, "No matching response configuration", http.StatusNotFound)
 		return
@@ -399,9 +450,23 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 	startTime := time.Now()
 
 	// Process response based on mode
-	finalBody, finalHeaders, finalStatus, finalDelay := h.processResponse(
+	finalBody, finalHeaders, finalStatus, finalDelay, responseErr := h.processResponse(
 		matchedResponse, r, bodyBytes, pathParams, extractedVars,
 	)
+
+	// Check for response generation error
+	if responseErr != nil {
+		// Log response failure (no HTTP response sent)
+		requestLog := buildRequestLog(r, bodyBytes, endpointID)
+		requestLog.ResponseFailed = true
+		requestLog.ClientResponse.StatusCode = nil // No HTTP response
+		requestLog.ClientResponse.Body = responseErr.Error()
+		h.requestLogger.LogRequest(requestLog)
+
+		// TODO: Jump to Rejections endpoint (future implementation)
+		http.Error(w, "Response generation failed", http.StatusInternalServerError)
+		return
+	}
 
 	// Implement response delay
 	if finalDelay > 0 {
@@ -466,7 +531,7 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 	requestLog.ClientRequest.UserAgent = r.UserAgent()
 
 	// Populate client response
-	requestLog.ClientResponse.StatusCode = finalStatus
+	requestLog.ClientResponse.StatusCode = &finalStatus
 	requestLog.ClientResponse.StatusText = statusText
 	requestLog.ClientResponse.Headers = finalRespHeaders
 	requestLog.ClientResponse.Body = finalBody
@@ -526,8 +591,16 @@ func (h *ResponseHandler) handleMockRequest(w http.ResponseWriter, r *http.Reque
 					// Run request body validation if configured
 					validationResult := ValidateRequest(resp.RequestValidation, string(bodyBytes), tempContext)
 					if !validationResult.Valid {
-						// Validation failed - skip this response and try next
+						// Validation failed - log and continue to next response
 						log.Printf("Validation failed for %s %s (translated: %s): %s", r.Method, r.URL.Path, translatedPath, validationResult.Error)
+
+						// Log validation failure (no HTTP response sent)
+						requestLog := buildRequestLog(r, bodyBytes, endpoint.ID)
+						requestLog.ValidationFailed = true
+						requestLog.ClientResponse.StatusCode = nil // No HTTP response
+						requestLog.ClientResponse.Body = validationResult.Error
+						h.requestLogger.LogRequest(requestLog)
+
 						continue
 					}
 
@@ -573,8 +646,16 @@ func (h *ResponseHandler) handleMockRequest(w http.ResponseWriter, r *http.Reque
 						// Run request body validation if configured
 						validationResult := ValidateRequest(resp.RequestValidation, string(bodyBytes), tempContext)
 						if !validationResult.Valid {
-							// Validation failed - skip this response and try next
+							// Validation failed - log and continue to next response
 							log.Printf("Validation failed for %s %s (translated: %s): %s", r.Method, r.URL.Path, translatedPath, validationResult.Error)
+
+							// Log validation failure (no HTTP response sent)
+							requestLog := buildRequestLog(r, bodyBytes, endpoint.ID)
+							requestLog.ValidationFailed = true
+							requestLog.ClientResponse.StatusCode = nil // No HTTP response
+							requestLog.ClientResponse.Body = validationResult.Error
+							h.requestLogger.LogRequest(requestLog)
+
 							continue
 						}
 
@@ -632,9 +713,23 @@ func (h *ResponseHandler) handleMockRequest(w http.ResponseWriter, r *http.Reque
 	startTime := time.Now()
 
 	// Process response based on mode
-	finalBody, finalHeaders, finalStatus, finalDelay := h.processResponse(
+	finalBody, finalHeaders, finalStatus, finalDelay, responseErr := h.processResponse(
 		matchedResponse, r, bodyBytes, pathParams, extractedVars,
 	)
+
+	// Check for response generation error
+	if responseErr != nil {
+		// Log response failure (no HTTP response sent)
+		requestLog := buildRequestLog(r, bodyBytes, endpoint.ID)
+		requestLog.ResponseFailed = true
+		requestLog.ClientResponse.StatusCode = nil // No HTTP response
+		requestLog.ClientResponse.Body = responseErr.Error()
+		h.requestLogger.LogRequest(requestLog)
+
+		// TODO: Jump to Rejections endpoint (future implementation)
+		http.Error(w, "Response generation failed", http.StatusInternalServerError)
+		return
+	}
 
 	// Implement response delay
 	if finalDelay > 0 {
@@ -699,7 +794,7 @@ func (h *ResponseHandler) handleMockRequest(w http.ResponseWriter, r *http.Reque
 	requestLog.ClientRequest.UserAgent = r.UserAgent()
 
 	// Populate client response
-	requestLog.ClientResponse.StatusCode = finalStatus
+	requestLog.ClientResponse.StatusCode = &finalStatus
 	requestLog.ClientResponse.StatusText = statusText
 	requestLog.ClientResponse.Headers = finalRespHeaders
 	requestLog.ClientResponse.Body = finalBody
@@ -739,6 +834,52 @@ func (h *ResponseHandler) handleContainerRequest(w http.ResponseWriter, r *http.
 	h.containerHandler.ServeHTTP(w, r, endpoint, translatedPath)
 }
 
+// buildRequestLog creates a RequestLog with common fields populated
+func buildRequestLog(r *http.Request, bodyBytes []byte, endpointID string) models.RequestLog {
+	// Deep copy headers
+	headersCopy := make(map[string][]string, len(r.Header))
+	for key, values := range r.Header {
+		valuesCopy := make([]string, len(values))
+		copy(valuesCopy, values)
+		headersCopy[key] = valuesCopy
+	}
+
+	// Deep copy query params
+	queryParamsCopy := make(map[string][]string, len(r.URL.Query()))
+	for key, values := range r.URL.Query() {
+		valuesCopy := make([]string, len(values))
+		copy(valuesCopy, values)
+		queryParamsCopy[key] = valuesCopy
+	}
+
+	// Build full client URL (scheme://host:port/path?query)
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	fullURL := scheme + "://" + r.Host + r.URL.RequestURI()
+
+	// Create base log
+	requestLog := models.RequestLog{
+		ID:         uuid.New().String(),
+		Timestamp:  time.Now().Format(time.RFC3339),
+		EndpointID: endpointID,
+	}
+
+	// Populate client request
+	requestLog.ClientRequest.Method = r.Method
+	requestLog.ClientRequest.FullURL = fullURL
+	requestLog.ClientRequest.Path = r.URL.Path
+	requestLog.ClientRequest.QueryParams = queryParamsCopy
+	requestLog.ClientRequest.Headers = headersCopy
+	requestLog.ClientRequest.Body = string(bodyBytes)
+	requestLog.ClientRequest.Protocol = r.Proto
+	requestLog.ClientRequest.SourceIP = r.RemoteAddr
+	requestLog.ClientRequest.UserAgent = r.UserAgent()
+
+	return requestLog
+}
+
 // processResponse processes the response based on the response mode
 func (h *ResponseHandler) processResponse(
 	resp *models.MethodResponse,
@@ -746,7 +887,7 @@ func (h *ResponseHandler) processResponse(
 	bodyBytes []byte,
 	pathParams map[string]string,
 	extractedVars map[string]interface{},
-) (body string, headers map[string]string, status int, delay int) {
+) (body string, headers map[string]string, status int, delay int, err error) {
 	// Default values from the response configuration
 	body = resp.Body
 	headers = resp.Headers
@@ -771,21 +912,24 @@ func (h *ResponseHandler) processResponse(
 		reqContext.Vars = extractedVars
 
 		// Process body as template
-		processedBody, err := ProcessTemplate(resp.Body, reqContext)
-		if err != nil {
-			log.Printf("Template processing error: %v", err)
-			// Fall back to static body on error
-		} else {
-			body = processedBody
+		processedBody, templateErr := ProcessTemplate(resp.Body, reqContext)
+		if templateErr != nil {
+			log.Printf("Template processing error: %v", templateErr)
+			// Return error for response failure tracking
+			err = templateErr
+			return
 		}
+		body = processedBody
 
 		// Also process headers as templates
-		processedHeaders, err := ProcessTemplateHeaders(resp.Headers, reqContext)
-		if err != nil {
-			log.Printf("Template header processing error: %v", err)
-		} else {
-			headers = processedHeaders
+		processedHeaders, headerErr := ProcessTemplateHeaders(resp.Headers, reqContext)
+		if headerErr != nil {
+			log.Printf("Template header processing error: %v", headerErr)
+			// Return error for response failure tracking
+			err = headerErr
+			return
 		}
+		headers = processedHeaders
 
 	case models.ResponseModeScript:
 		// Build request context with extracted vars
@@ -793,20 +937,21 @@ func (h *ResponseHandler) processResponse(
 		reqContext.Vars = extractedVars
 
 		// Execute script
-		scriptResp, err := ProcessScript(resp.ScriptBody, reqContext, resp)
-		if err != nil {
-			log.Printf("Script execution error: %v", err)
+		scriptResp, scriptErr := ProcessScript(resp.ScriptBody, reqContext, resp)
+		if scriptErr != nil {
+			log.Printf("Script execution error: %v", scriptErr)
 			// Log error to frontend
 			if h.scriptErrorLogger != nil && resp.ID != "" {
-				h.scriptErrorLogger.LogScriptError(resp.ID, r.URL.Path, r.Method, err.Error())
+				h.scriptErrorLogger.LogScriptError(resp.ID, r.URL.Path, r.Method, scriptErr.Error())
 			}
-			// Fall back to static response on error
-		} else {
-			body = scriptResp.Body
-			headers = scriptResp.Headers
-			status = scriptResp.Status
-			delay = scriptResp.Delay
+			// Return error for response failure tracking
+			err = scriptErr
+			return
 		}
+		body = scriptResp.Body
+		headers = scriptResp.Headers
+		status = scriptResp.Status
+		delay = scriptResp.Delay
 
 	default:
 		// Static mode - use values as-is (already set above)
@@ -970,4 +1115,73 @@ func (h *ResponseHandler) findGroupForResponse(response *models.MethodResponse) 
 	}
 
 	return nil
+}
+
+// extractDomain extracts the domain name from the request's Host header
+// Removes port if present (e.g., "example.com:8080" -> "example.com")
+func extractDomain(r *http.Request) string {
+	host := r.Host
+	// Remove port if present
+	if colonIndex := strings.Index(host, ":"); colonIndex != -1 {
+		host = host[:colonIndex]
+	}
+	return host
+}
+
+// matchesDomain checks if the request domain matches the endpoint's domain filter
+func (h *ResponseHandler) matchesDomain(endpoint *models.Endpoint, domain string) bool {
+	// If no domain filter, match any domain
+	if endpoint.DomainFilter == nil {
+		return true
+	}
+
+	// Get domain takeover configuration from config
+	h.configMutex.RLock()
+	domainTakeover := h.config.DomainTakeover
+	h.configMutex.RUnlock()
+
+	switch endpoint.DomainFilter.Mode {
+	case models.DomainFilterModeAny:
+		// Match any domain
+		return true
+
+	case models.DomainFilterModeAll:
+		// Match if domain is in any enabled takeover pattern
+		if domainTakeover == nil {
+			return false
+		}
+		for _, domainConfig := range domainTakeover.Domains {
+			if !domainConfig.Enabled {
+				continue
+			}
+			// Compile and check regex pattern
+			re, err := h.compileRegex(domainConfig.Pattern)
+			if err != nil {
+				log.Printf("Invalid domain pattern %s: %v", domainConfig.Pattern, err)
+				continue
+			}
+			if re.MatchString(domain) {
+				return true
+			}
+		}
+		return false
+
+	case models.DomainFilterModeSpecific:
+		// Match if domain matches any selected pattern
+		for _, pattern := range endpoint.DomainFilter.Patterns {
+			re, err := h.compileRegex(pattern)
+			if err != nil {
+				log.Printf("Invalid domain pattern %s: %v", pattern, err)
+				continue
+			}
+			if re.MatchString(domain) {
+				return true
+			}
+		}
+		return false
+
+	default:
+		// Unknown mode, default to match
+		return true
+	}
 }
