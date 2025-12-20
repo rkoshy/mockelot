@@ -100,6 +100,13 @@ const validationScript = computed({
 // Active tab for editor content
 const activeTab = ref<'request' | 'response'>('request')
 
+// Force response tab for system endpoints (like Rejections)
+watch(() => serverStore.currentEndpoint?.is_system, (isSystem) => {
+  if (isSystem) {
+    activeTab.value = 'response'
+  }
+}, { immediate: true })
+
 // Slide-in panel state
 const showEditorPanel = ref(false)
 
@@ -255,10 +262,32 @@ function resetChanges() {
   localResponse.value = new models.MethodResponse({ ...props.response })
 }
 
-// Sync with props changes
-watch(() => props.response, (newVal) => {
-  localResponse.value = new models.MethodResponse({ ...newVal })
+// Sync with props changes only when not dirty (prevents overwriting user edits)
+watch(() => props.response, (newVal, oldVal) => {
+  console.log('[ResponseRuleCard] props.response watcher fired:', {
+    isDirty: isDirty.value,
+    willSync: !isDirty.value,
+    newStatusCode: newVal.status_code,
+    oldStatusCode: oldVal?.status_code,
+    localStatusCode: localResponse.value.status_code
+  })
+  // Only sync if we don't have unsaved changes
+  if (!isDirty.value) {
+    console.log('[ResponseRuleCard] Syncing localResponse from props')
+    localResponse.value = new models.MethodResponse({ ...newVal })
+  } else {
+    console.log('[ResponseRuleCard] Skipping sync - changes are dirty')
+  }
 }, { deep: true })
+
+// Watch localResponse status_code changes
+watch(() => localResponse.value.status_code, (newVal, oldVal) => {
+  console.log('[ResponseRuleCard] localResponse.status_code changed:', {
+    from: oldVal,
+    to: newVal,
+    isDirty: isDirty.value
+  })
+})
 
 // Method badge colors
 function getMethodColor(method: string): string {
@@ -273,8 +302,22 @@ function getMethodColor(method: string): string {
   return colors[method] || 'bg-gray-600'
 }
 
+// Handle local response updates from ResponseEditorContent
+function handleLocalResponseUpdate(updatedResponse: models.MethodResponse) {
+  console.log('[ResponseRuleCard] handleLocalResponseUpdate called:', {
+    newStatusCode: updatedResponse.status_code,
+    oldStatusCode: localResponse.value.status_code
+  })
+  localResponse.value = updatedResponse
+}
+
 // Apply changes
 function applyChanges() {
+  console.log('[ResponseRuleCard] applyChanges called:', {
+    status_code: localResponse.value.status_code,
+    status_text: localResponse.value.status_text,
+    isDirty: isDirty.value
+  })
   emit('update', localResponse.value)
 }
 
@@ -460,7 +503,9 @@ onUnmounted(() => {
       <div class="flex items-center border-b border-gray-700">
         <!-- Tabs -->
         <div class="flex flex-1">
+          <!-- Request tab - hidden for system endpoints -->
           <button
+            v-if="!serverStore.currentEndpoint?.is_system"
             @click="activeTab = 'request'"
             :class="[
               'px-4 py-2 text-sm font-medium transition-colors',
@@ -513,7 +558,8 @@ onUnmounted(() => {
           :handles-options="handlesOptions"
           :use-global-c-o-r-s="useGlobalCORS"
           :status-code-options="statusCodeOptions"
-          @update:local-response="localResponse = $event"
+          :is-system-endpoint="serverStore.currentEndpoint?.is_system || false"
+          @update:local-response="handleLocalResponseUpdate"
           @update:current-mode="currentMode = $event"
           @update:validation-mode="validationMode = $event"
           @update:validation-match-type="validationMatchType = $event"

@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, provide } from 'vue'
 import { useServerStore } from '../../stores/server'
-import { SaveConfig, LoadConfig, SetHTTPSConfig, SetCertMode, SetCORSConfig, SetHTTP2Enabled, StartContainers, PollEvents } from '../../../wailsjs/go/main/App'
+import { SaveCurrentConfig, SaveConfig, LoadConfig, SetHTTPSConfig, SetCertMode, SetCORSConfig, SetSOCKS5Config, SetHTTP2Enabled, StartContainers, PollEvents } from '../../../wailsjs/go/main/App'
 import { models } from '../../../wailsjs/go/models'
 import ConfirmDialog from '../dialogs/ConfirmDialog.vue'
 import ServerConfigDialog from '../dialogs/ServerConfigDialog.vue'
@@ -325,7 +325,15 @@ async function handleProgressCancel() {
   pendingProgressEvents.value = [] // Clear any pending events
 }
 
-async function handleSaveConfig() {
+async function handleSaveCurrentConfig() {
+  try {
+    await SaveCurrentConfig()
+  } catch (error) {
+    errorMessage.value = String(error)
+  }
+}
+
+async function handleSaveConfigAs() {
   try {
     await SaveConfig()
   } catch (error) {
@@ -387,6 +395,7 @@ async function handleServerConfigApply() {
     const httpTabRef = serverConfigDialogRef.value?.httpTab
     const httpsTabRef = serverConfigDialogRef.value?.httpsTab
     const corsTabRef = serverConfigDialogRef.value?.corsTab
+    const socks5TabRef = serverConfigDialogRef.value?.socks5Tab
 
     // Update HTTP port
     if (httpTabRef?.getPort) {
@@ -424,6 +433,19 @@ async function handleServerConfigApply() {
       await SetCORSConfig(corsConfigModel)
     }
 
+    // Update SOCKS5 configuration
+    if (socks5TabRef?.getConfig) {
+      const socks5Config = socks5TabRef.getConfig()
+      // Convert to models - provide defaults if null
+      const socks5ConfigModel = socks5Config.socks5_config ?
+        new models.SOCKS5Config(socks5Config.socks5_config) :
+        new models.SOCKS5Config({ enabled: false, port: 1080, authentication: false, username: '', password: '' })
+      const domainTakeoverModel = socks5Config.domain_takeover ?
+        new models.DomainTakeoverConfig(socks5Config.domain_takeover) :
+        new models.DomainTakeoverConfig({ domains: [] })
+      await SetSOCKS5Config(socks5ConfigModel, domainTakeoverModel)
+    }
+
     // Update HTTP/2 setting
     await SetHTTP2Enabled(http2Enabled)
 
@@ -453,22 +475,34 @@ function handleServerConfigClose() {
 
       <!-- Load/Save Config Icons -->
       <div class="flex items-center gap-1 ml-4">
+        <!-- Load Config - Folder Icon -->
         <button
           @click="handleLoadConfig"
           class="p-2 bg-gray-700 hover:bg-gray-600 rounded text-gray-300 hover:text-white transition-colors"
           title="Load Configuration"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
           </svg>
         </button>
+        <!-- Save Config - Floppy Disk Icon -->
         <button
-          @click="handleSaveConfig"
+          @click="handleSaveCurrentConfig"
           class="p-2 bg-gray-700 hover:bg-gray-600 rounded text-gray-300 hover:text-white transition-colors"
-          title="Save Configuration"
+          title="Save Configuration (Ctrl+S)"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+          </svg>
+        </button>
+        <!-- Save As Config - Duplicate Icon -->
+        <button
+          @click="handleSaveConfigAs"
+          class="p-2 bg-gray-700 hover:bg-gray-600 rounded text-gray-300 hover:text-white transition-colors"
+          title="Save Configuration As"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
           </svg>
         </button>
       </div>
@@ -479,8 +513,14 @@ function handleServerConfigClose() {
       <!-- Import OpenAPI Icon -->
       <button
         @click="handleImportOpenAPI"
-        class="p-2 bg-gray-700 hover:bg-gray-600 rounded text-gray-300 hover:text-white transition-colors ml-4"
-        title="Import OpenAPI Specification"
+        :disabled="serverStore.currentEndpoint?.is_system"
+        :class="[
+          'p-2 rounded transition-colors ml-4',
+          serverStore.currentEndpoint?.is_system
+            ? 'bg-gray-800 text-gray-600 cursor-not-allowed'
+            : 'bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white'
+        ]"
+        :title="serverStore.currentEndpoint?.is_system ? 'Cannot import OpenAPI when system endpoint is selected' : 'Import OpenAPI Specification'"
       >
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 0L2.524 6v12L12 24l9.476-6V6L12 0zm0 2.5l7.476 4.75v9.5L12 21.5l-7.476-4.75v-9.5L12 2.5z"/>

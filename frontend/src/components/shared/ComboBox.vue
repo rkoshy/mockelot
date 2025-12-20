@@ -15,8 +15,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'update:modelValue', value: string | number): void
-  (e: 'update:modelText', value: string): void
+  (e: 'update', payload: { value: string | number; text: string }): void
 }>()
 
 const isOpen = ref(false)
@@ -87,8 +86,12 @@ function closeDropdown() {
 }
 
 function selectOption(option: ComboBoxOption) {
-  emit('update:modelValue', option.value)
-  emit('update:modelText', '')
+  console.log('[ComboBox] selectOption called:', {
+    selectedValue: option.value,
+    selectedLabel: option.label,
+    previousValue: props.modelValue
+  })
+  emit('update', { value: option.value, text: '' })
   closeDropdown()
 }
 
@@ -107,8 +110,7 @@ function handleInputBlur() {
     if (searchText.value.trim()) {
       const parsed = parseCustomInput(searchText.value)
       if (parsed) {
-        emit('update:modelValue', parsed.code)
-        emit('update:modelText', parsed.text)
+        emit('update', { value: parsed.code, text: parsed.text })
       }
     }
     closeDropdown()
@@ -120,8 +122,7 @@ function handleKeyDown(e: KeyboardEvent) {
     e.preventDefault()
     const parsed = parseCustomInput(searchText.value)
     if (parsed) {
-      emit('update:modelValue', parsed.code)
-      emit('update:modelText', parsed.text)
+      emit('update', { value: parsed.code, text: parsed.text })
       closeDropdown()
     } else if (filteredOptions.value.length === 1) {
       // Select the only filtered option
@@ -137,6 +138,24 @@ function handleClickOutside(event: MouseEvent) {
     closeDropdown()
   }
 }
+
+// Watch for modelValue changes
+watch(() => props.modelValue, (newVal, oldVal) => {
+  console.log('[ComboBox] modelValue changed:', {
+    from: oldVal,
+    to: newVal,
+    displayText: displayText.value
+  })
+})
+
+// Watch for displayText changes
+watch(displayText, (newVal, oldVal) => {
+  console.log('[ComboBox] displayText recomputed:', {
+    from: oldVal,
+    to: newVal,
+    modelValue: props.modelValue
+  })
+})
 
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
