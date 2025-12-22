@@ -1,0 +1,44 @@
+responses:
+  - id: error-test-response
+    path_pattern: /test-error
+    methods:
+      - GET
+    status_code: 200
+    status_text: OK
+    headers:
+      Content-Type: application/json
+    response_mode: script
+    script_body: |
+      // This script has an intentional error - calling an undefined function
+      const data = generateNonExistentData();
+      response.body = JSON.stringify(data);
+endpoints:
+  - id: test-error-endpoint
+    name: Error Test
+    path_prefix: /api
+    translation_mode: none
+    type: mock
+    items:
+      - type: response
+        response:
+          id: error-test-response-2
+          path_pattern: /another-error
+          methods:
+            - GET
+            - POST
+          status_code: 200
+          status_text: OK
+          headers:
+            Content-Type: application/json
+          response_mode: script
+          script_body: |
+            // Another intentional error - syntax error
+            response.body = "test
+            // Missing closing quote above
+cors:
+  enabled: true
+  mode: headers
+  header_expressions:
+    - name: Access-Control-Allow-Origin
+      expression: request.origin || "*"
+  options_default_status: 200

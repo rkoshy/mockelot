@@ -37,14 +37,15 @@ func NewServerConfigManager(customPath string) *ServerConfigManager {
 	}
 }
 
-// Load loads server configuration from disk
-func (scm *ServerConfigManager) Load() (*models.ServerConfig, error) {
+// Load loads server configuration from disk (for migration from old format)
+// Returns UserConfig containing old server settings
+func (scm *ServerConfigManager) Load() (*models.UserConfig, error) {
 	scm.mutex.RLock()
 	defer scm.mutex.RUnlock()
 
 	// If config file doesn't exist, return default configuration
 	if _, err := os.Stat(scm.configPath); os.IsNotExist(err) {
-		return &models.ServerConfig{
+		return &models.UserConfig{
 			Port:      8080,
 			HTTPSPort: 8443,
 			CertMode:  models.CertModeAuto,
@@ -57,7 +58,7 @@ func (scm *ServerConfigManager) Load() (*models.ServerConfig, error) {
 	}
 	defer file.Close()
 
-	var config models.ServerConfig
+	var config models.UserConfig
 	decoder := yaml.NewDecoder(file)
 	if err := decoder.Decode(&config); err != nil {
 		return nil, fmt.Errorf("could not decode server config: %v", err)
@@ -74,8 +75,8 @@ func (scm *ServerConfigManager) Load() (*models.ServerConfig, error) {
 	return &config, nil
 }
 
-// Save saves server configuration to disk
-func (scm *ServerConfigManager) Save(config *models.ServerConfig) error {
+// Save saves server configuration to disk (deprecated - no longer used)
+func (scm *ServerConfigManager) Save(config *models.UserConfig) error {
 	scm.mutex.Lock()
 	defer scm.mutex.Unlock()
 
@@ -109,6 +110,6 @@ func (scm *ServerConfigManager) Save(config *models.ServerConfig) error {
 		return fmt.Errorf("could not replace server config file: %v", err)
 	}
 
-	log.Println("Server configuration saved successfully to", scm.configPath)
+	// Removed verbose logging - this happens too frequently (e.g., on endpoint selection)
 	return nil
 }

@@ -1,0 +1,54 @@
+responses:
+  - id: 52c7cb26-65be-409d-8bd1-a60737314215
+    path_pattern: /*
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+      - PATCH
+    status_code: 200
+    status_text: OK
+endpoints:
+  - id: 31bf503f-22e1-4b36-8135-5ad860703683
+    name: nginx
+    path_prefix: /
+    translation_mode: none
+    type: container
+    container_config:
+      image_name: nginx:latest
+      container_port: 80
+      pull_on_startup: true
+      restart_policy: always
+      environment:
+        - name: DYNPKG_RELEASE
+          value: 1~trixie
+        - name: NGINX_VERSION
+          value: 1.29.4
+        - name: NJS_RELEASE
+          value: 1~trixie
+        - name: NJS_VERSION
+          value: 0.9.4
+        - name: PATH
+          value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        - name: PKG_RELEASE
+          value: 1~trixie
+      restart_on_server_start: true
+      health_check_enabled: false
+      health_check_interval: 30
+      health_check_path: /health
+cors:
+  enabled: true
+  mode: headers
+  header_expressions:
+    - name: Access-Control-Allow-Origin
+      expression: request.origin || "*"
+    - name: Access-Control-Allow-Methods
+      expression: '"GET, POST, PUT, DELETE, OPTIONS, PATCH"'
+    - name: Access-Control-Allow-Headers
+      expression: '"Content-Type, Authorization"'
+    - name: Access-Control-Max-Age
+      expression: '"3600"'
+  options_default_status: 200
+last_modified: 2025-12-13T07:54:31.05667731-05:00

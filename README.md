@@ -108,6 +108,29 @@ See every request that hits your server:
 
 Export logs as JSON or CSV for analysis.
 
+### SOCKS5 Proxy for Multi-Domain Testing
+
+Route browser traffic through Mockelot without modifying DNS settings:
+
+```
+Browser → SOCKS5 Proxy (localhost:1080) → Mockelot → Smart Routing
+```
+
+**Key Features:**
+- **Domain-Based Routing** - Intercept specific domains (e.g., `api.example.com`)
+- **Selective Mocking** - Mock some endpoints, pass others through to real server
+- **Overlay Mode** - Automatic passthrough when no endpoint matches
+- **No DNS Changes** - Configure browser proxy instead of `/etc/hosts`
+- **Multi-Domain Support** - Test multiple domains simultaneously
+
+**Perfect for:**
+- Frontend development against multiple APIs
+- Testing microservices with mocked dependencies
+- Partial mocking (some endpoints mocked, others real)
+- Multi-tenant application testing
+
+See the **[SOCKS5 Guide](docs/SOCKS5-GUIDE.md)** for complete setup and usage.
+
 ## Installation
 
 ### Download Binary
@@ -210,6 +233,7 @@ Comprehensive guides for all features:
 - **[Mock Endpoint Guide](docs/MOCK-GUIDE.md)** - Deep dive into mock endpoints, response modes, and validation
 - **[Proxy Endpoint Guide](docs/PROXY-GUIDE.md)** - Reverse proxy configuration, header manipulation, and body transformation
 - **[Container Endpoint Guide](docs/CONTAINER-GUIDE.md)** - Docker/Podman container management and configuration
+- **[SOCKS5 Proxy Guide](docs/SOCKS5-GUIDE.md)** - SOCKS5 proxy setup, domain-based routing, and overlay mode
 - **[OpenAPI Import Guide](docs/OPENAPI_IMPORT.md)** - Import OpenAPI/Swagger specifications to generate mock endpoints
 
 ## Configuration

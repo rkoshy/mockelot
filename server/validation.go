@@ -29,7 +29,11 @@ func ValidateRequest(validation *models.RequestValidation, body string, reqConte
 
 	// Validate body first
 	bodyResult := &ValidationResult{Valid: true, Vars: make(map[string]interface{})}
-	if validation.Mode != "" && validation.Mode != models.ValidationModeNone {
+
+	// Skip body validation for GET requests (GET doesn't support request body)
+	skipBodyValidation := reqContext != nil && reqContext.Method == "GET"
+
+	if !skipBodyValidation && validation.Mode != "" && validation.Mode != models.ValidationModeNone {
 		switch validation.Mode {
 		case models.ValidationModeStatic:
 			bodyResult = validateStatic(validation, body)

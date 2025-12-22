@@ -3,10 +3,11 @@ import { ref, watch } from 'vue'
 import HTTPTab from './HTTPTab.vue'
 import HTTPSTab from './HTTPSTab.vue'
 import CORSTab from './CORSTab.vue'
+import SOCKS5Tab from './SOCKS5Tab.vue'
 
 const props = defineProps<{
   show: boolean
-  initialTab?: 'http' | 'https' | 'cors'
+  initialTab?: 'http' | 'https' | 'cors' | 'socks5'
 }>()
 
 const emit = defineEmits<{
@@ -14,7 +15,7 @@ const emit = defineEmits<{
   apply: []
 }>()
 
-type TabType = 'http' | 'https' | 'cors'
+type TabType = 'http' | 'https' | 'cors' | 'socks5'
 
 const currentTab = ref<TabType>(props.initialTab || 'http')
 const isValid = ref(true)
@@ -23,12 +24,14 @@ const isValid = ref(true)
 const httpTab = ref<InstanceType<typeof HTTPTab> | null>(null)
 const httpsTab = ref<InstanceType<typeof HTTPSTab> | null>(null)
 const corsTab = ref<InstanceType<typeof CORSTab> | null>(null)
+const socks5Tab = ref<InstanceType<typeof SOCKS5Tab> | null>(null)
 
 // Expose refs for parent access
 defineExpose({
   httpTab,
   httpsTab,
-  corsTab
+  corsTab,
+  socks5Tab
 })
 
 // Switch tab when initialTab prop changes
@@ -124,6 +127,17 @@ watch(() => props.show, (newVal) => {
             >
               CORS
             </button>
+            <button
+              @click="setTab('socks5')"
+              :class="[
+                'px-4 py-3 text-sm font-medium border-b-2 transition-colors',
+                currentTab === 'socks5'
+                  ? 'border-blue-500 text-blue-500'
+                  : 'border-transparent text-gray-400 hover:text-gray-300'
+              ]"
+            >
+              SOCKS5
+            </button>
           </div>
 
           <!-- Tab Content -->
@@ -141,6 +155,11 @@ watch(() => props.show, (newVal) => {
             <CORSTab
               ref="corsTab"
               v-show="currentTab === 'cors'"
+              @validation-change="handleValidationChange"
+            />
+            <SOCKS5Tab
+              ref="socks5Tab"
+              v-show="currentTab === 'socks5'"
               @validation-change="handleValidationChange"
             />
           </div>

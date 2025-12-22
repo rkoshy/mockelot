@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, provide } from 'vue'
 import { useServerStore } from '../../stores/server'
-import { SaveCurrentConfig, SaveConfig, LoadConfig, SetHTTPSConfig, SetCertMode, SetCORSConfig, SetSOCKS5Config, SetHTTP2Enabled, StartContainers, PollEvents } from '../../../wailsjs/go/main/App'
+import { SaveCurrentConfig, SaveConfig, LoadConfig, StartContainers, PollEvents } from '../../../wailsjs/go/main/App'
 import { models } from '../../../wailsjs/go/models'
 import ConfirmDialog from '../dialogs/ConfirmDialog.vue'
 import ServerConfigDialog from '../dialogs/ServerConfigDialog.vue'
@@ -341,7 +341,11 @@ async function handleSaveConfigAs() {
   }
 }
 
-function handleLoadConfig() {
+async function handleLoadConfig() {
+  // Check for unsaved changes before loading
+  const canProceed = await serverStore.checkUnsavedChanges()
+  if (!canProceed) return
+
   showLoadDialog.value = true
 }
 
@@ -387,73 +391,12 @@ function openServerConfig(tab: 'http' | 'https' = 'http') {
   showServerConfigDialog.value = true
 }
 
+// DEPRECATED: Server config dialog replaced with Server tab in main panel
+// This function is no longer called (gear icon removed)
 async function handleServerConfigApply() {
   showServerConfigDialog.value = false
-
-  try {
-    // Get configuration from dialog components
-    const httpTabRef = serverConfigDialogRef.value?.httpTab
-    const httpsTabRef = serverConfigDialogRef.value?.httpsTab
-    const corsTabRef = serverConfigDialogRef.value?.corsTab
-    const socks5TabRef = serverConfigDialogRef.value?.socks5Tab
-
-    // Update HTTP port
-    if (httpTabRef?.getPort) {
-      const newPort = httpTabRef.getPort()
-      if (newPort !== portInput.value) {
-        portInput.value = newPort
-      }
-    }
-
-    // Get HTTP redirect setting from HTTP tab
-    const httpRedirect = httpTabRef?.getRedirect ? httpTabRef.getRedirect() : false
-
-    // Get HTTP/2 setting from HTTP tab
-    const http2Enabled = httpTabRef?.getHTTP2Enabled ? httpTabRef.getHTTP2Enabled() : false
-
-    // Update HTTPS configuration
-    if (httpsTabRef?.getConfig) {
-      const httpsConfig = httpsTabRef.getConfig()
-      await SetHTTPSConfig(
-        httpsConfig.enabled,
-        httpsConfig.port,
-        httpRedirect  // Now from HTTP tab instead of HTTPS tab
-      )
-      await SetCertMode(
-        httpsConfig.certMode,
-        httpsConfig.certPaths,
-        httpsConfig.certNames || []
-      )
-    }
-
-    // Update CORS configuration
-    if (corsTabRef?.getConfig) {
-      const corsConfig = corsTabRef.getConfig()
-      const corsConfigModel = new models.CORSConfig(corsConfig)
-      await SetCORSConfig(corsConfigModel)
-    }
-
-    // Update SOCKS5 configuration
-    if (socks5TabRef?.getConfig) {
-      const socks5Config = socks5TabRef.getConfig()
-      // Convert to models - provide defaults if null
-      const socks5ConfigModel = socks5Config.socks5_config ?
-        new models.SOCKS5Config(socks5Config.socks5_config) :
-        new models.SOCKS5Config({ enabled: false, port: 1080, authentication: false, username: '', password: '' })
-      const domainTakeoverModel = socks5Config.domain_takeover ?
-        new models.DomainTakeoverConfig(socks5Config.domain_takeover) :
-        new models.DomainTakeoverConfig({ domains: [] })
-      await SetSOCKS5Config(socks5ConfigModel, domainTakeoverModel)
-    }
-
-    // Update HTTP/2 setting
-    await SetHTTP2Enabled(http2Enabled)
-
-    // Refresh config from backend to get updated values
-    await serverStore.refreshConfig()
-  } catch (error) {
-    errorMessage.value = String(error)
-  }
+  // Server settings are now managed through the Server tab
+  // which uses UpdateServerSettings() instead of individual SetXXX() functions
 }
 
 function handleServerConfigClose() {
@@ -473,6 +416,14 @@ function handleServerConfigClose() {
       </div>
       <h1 class="text-lg font-semibold text-white">Mockelot</h1>
 
+      <!-- Filename and Dirty Indicator (NEW) -->
+      <div class="flex items-center gap-2 ml-4 text-gray-300">
+        <span class="text-sm">{{ serverStore.getFileName() }}</span>
+        <span v-if="serverStore.isDirty" class="text-yellow-400 text-lg" title="Unsaved changes">
+          ●
+        </span>
+      </div>
+
       <!-- Load/Save Config Icons -->
       <div class="flex items-center gap-1 ml-4">
         <!-- Load Config - Folder Icon -->
@@ -488,11 +439,19 @@ function handleServerConfigClose() {
         <!-- Save Config - Floppy Disk Icon -->
         <button
           @click="handleSaveCurrentConfig"
-          class="p-2 bg-gray-700 hover:bg-gray-600 rounded text-gray-300 hover:text-white transition-colors"
+          :disabled="!serverStore.isDirty"
+          :class="[
+            'p-2 rounded transition-colors',
+            serverStore.isDirty
+              ? 'bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white cursor-pointer'
+              : 'bg-gray-800 text-gray-600 cursor-not-allowed'
+          ]"
           title="Save Configuration (Ctrl+S)"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h10v10H7V7z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 3h4v4h-4V3z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7a4 4 0 014-4h10a4 4 0 014 4v10a4 4 0 01-4 4H7a4 4 0 01-4-4V7z" />
           </svg>
         </button>
         <!-- Save As Config - Duplicate Icon -->
@@ -571,18 +530,6 @@ function handleServerConfigClose() {
         </svg>
       </button>
 
-      <!-- Server Configuration Gear Icon -->
-      <button
-        @click="openServerConfig('http')"
-        class="p-2 bg-gray-700 hover:bg-gray-600 rounded text-gray-300 hover:text-white transition-colors"
-        title="Server Configuration (HTTP, HTTPS)"
-      >
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-      </button>
-
       <!-- Event Log Toggle -->
       <button
         @click="showEventLog = !showEventLog"
@@ -600,6 +547,17 @@ function handleServerConfigClose() {
         </span>
       </button>
     </div>
+
+    <!-- Unsaved Changes Dialog -->
+    <ConfirmDialog
+      :show="serverStore.showUnsavedChangesDialog"
+      title="Unsaved Changes"
+      message="You have unsaved changes. Do you want to discard them and continue?"
+      primary-text="Discard"
+      cancel-text="Cancel"
+      @primary="() => serverStore.respondToUnsavedChanges(true)"
+      @cancel="() => serverStore.respondToUnsavedChanges(false)"
+    />
 
     <!-- Import OpenAPI Dialog -->
     <ConfirmDialog

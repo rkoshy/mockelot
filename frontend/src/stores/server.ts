@@ -16,7 +16,7 @@ import {
   RegenerateCA,
   DownloadCACert,
   GetCORSConfig,
-  SetCORSConfig,
+  UpdateServerSettings,
   ValidateCORSScript,
   ValidateCORSHeaderExpression,
   GetEndpoints,
@@ -65,6 +65,14 @@ export const useServerStore = defineStore('server', () => {
 
   // Script Error State
   const scriptErrors = ref<Map<string, any[]>>(new Map())
+
+  // Dirty State Tracking
+  const isDirty = ref(false)
+  const currentFilePath = ref<string>('')
+
+  // Unsaved Changes Dialog State
+  const showUnsavedChangesDialog = ref(false)
+  let unsavedChangesResolve: ((value: boolean) => void) | null = null
 
   // Getters
   const isRunning = computed(() => status.value.running)
@@ -402,8 +410,14 @@ export const useServerStore = defineStore('server', () => {
 
   async function saveCORSConfig(config: models.CORSConfig) {
     try {
-      await SetCORSConfig(config)
+      // Use UpdateServerSettings with just CORS field
+      const settings = new models.ServerSettings({
+        cors: config
+      })
+      await UpdateServerSettings(settings)
       corsConfig.value = config
+      // Mark as dirty since settings changed
+      markDirty()
     } catch (error) {
       console.error('Failed to save CORS config:', error)
       throw error
@@ -449,6 +463,40 @@ export const useServerStore = defineStore('server', () => {
     } catch (error) {
       console.error('Failed to restart container:', error)
       throw error
+    }
+  }
+
+  // Dirty State Actions
+  function markDirty() {
+    isDirty.value = true
+  }
+
+  function getFileName(): string {
+    if (!currentFilePath.value) return 'Untitled'
+    return currentFilePath.value.split('/').pop() || 'Untitled'
+  }
+
+  function getFilePath(): string {
+    return currentFilePath.value
+  }
+
+  async function checkUnsavedChanges(): Promise<boolean> {
+    if (!isDirty.value) {
+      return true  // No unsaved changes, proceed
+    }
+
+    // Show dialog and wait for user response
+    return new Promise<boolean>((resolve) => {
+      unsavedChangesResolve = resolve
+      showUnsavedChangesDialog.value = true
+    })
+  }
+
+  function respondToUnsavedChanges(proceed: boolean) {
+    showUnsavedChangesDialog.value = false
+    if (unsavedChangesResolve) {
+      unsavedChangesResolve(proceed)
+      unsavedChangesResolve = null
     }
   }
 
@@ -550,6 +598,9 @@ export const useServerStore = defineStore('server', () => {
     EventsOff('endpoint:selected')
     EventsOff('script:error')
     EventsOff('script:error:cleared')
+    EventsOff('config:dirty')
+    EventsOff('config:path')
+    EventsOff('config:port-changed')
     // NOTE: ctr:* events are handled via polling in HeaderBar.vue
 
     console.log('Setting up script:error event listener')
@@ -605,6 +656,22 @@ export const useServerStore = defineStore('server', () => {
       refreshItems()
     })
 
+    // Dirty state tracking events
+    EventsOn('config:dirty', (dirty: boolean) => {
+      isDirty.value = dirty
+    })
+
+    EventsOn('config:path', (path: string) => {
+      currentFilePath.value = path
+    })
+
+    EventsOn('config:port-changed', (ports: { http: number; https: number }) => {
+      if (config.value) {
+        if (ports.http) config.value.port = ports.http
+        if (ports.https) config.value.https_port = ports.https
+      }
+    })
+
     // NOTE: ctr:status, ctr:stats, and ctr:progress events are now handled via polling
     // in HeaderBar.vue, which updates the store directly
 
@@ -643,6 +710,9 @@ export const useServerStore = defineStore('server', () => {
     containerStatus,
     containerStats,
     scriptErrors,
+    isDirty,
+    currentFilePath,
+    showUnsavedChangesDialog,
     // Getters
     isRunning,
     port,
@@ -687,6 +757,12 @@ export const useServerStore = defineStore('server', () => {
     saveCORSConfig,
     validateCORSScript,
     validateCORSHeaderExpression,
+    // Dirty State Actions
+    markDirty,
+    getFileName,
+    getFilePath,
+    checkUnsavedChanges,
+    respondToUnsavedChanges,
     // Health Check Actions
     refreshEndpointHealth,
     testProxyConnection,

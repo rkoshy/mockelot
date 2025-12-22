@@ -60,6 +60,8 @@ type App struct {
 	config                 *models.AppConfig
 	serverConfigMgr        *config.ServerConfigManager
 	currentConfigPath      string                         // Path to the currently loaded/saved config file
+	savedConfig            *models.AppConfig              // Last saved state for dirty tracking
+	configMutex            sync.RWMutex                   // Protects config and savedConfig
 	requestLogs            []models.RequestLog
 	logMutex               sync.RWMutex
 	requestLogSummaryQueue []models.RequestLogSummary // Queue of request log summaries for frontend polling
@@ -126,13 +128,19 @@ func (a *App) startup(ctx context.Context) {
 	// No need for event sender goroutine
 	log.Println("[App.startup] Using polling-based event delivery")
 
-	// Load server configuration
+	// Load server configuration from old ~/.mockelot/server-config.yaml if it exists
+	// This provides migration path for users upgrading from old version
 	serverCfg, err := a.serverConfigMgr.Load()
 	if err != nil {
 		// Log error but continue with defaults
 		fmt.Printf("Failed to load server config, using defaults: %v\n", err)
 	} else {
+		// Found old server-config.yaml, migrate to AppConfig
+		log.Println("Migrating server settings from old server-config.yaml to AppConfig")
+		log.Println("These settings will be marked as unsaved - please save to your main config file")
+
 		// Apply server config to app config
+		a.configMutex.Lock()
 		a.config.Port = serverCfg.Port
 		a.config.HTTP2Enabled = serverCfg.HTTP2Enabled
 		a.config.HTTPSEnabled = serverCfg.HTTPSEnabled
@@ -142,8 +150,17 @@ func (a *App) startup(ctx context.Context) {
 		a.config.CertPaths = serverCfg.CertPaths
 		a.config.CertNames = serverCfg.CertNames
 		a.config.CORS = serverCfg.CORS
+		a.config.SOCKS5Config = serverCfg.SOCKS5Config
+		a.config.DomainTakeover = serverCfg.DomainTakeover
+		a.configMutex.Unlock()
+
 		a.status.Port = serverCfg.Port
 		// Note: SelectedEndpointId is loaded on-demand in GetSelectedEndpointId()
+
+		// Mark as dirty to encourage user to save migrated settings
+		// Don't set savedConfig - this keeps IsDirty() returning true
+		runtime.EventsEmit(ctx, "config:dirty", true)
+		runtime.EventsEmit(ctx, "config:migration-notice", "Server settings migrated from old server-config.yaml. Please save to preserve these settings.")
 	}
 }
 
@@ -246,8 +263,22 @@ func (a *App) StartServer(port int) error {
 		return fmt.Errorf("server is already running")
 	}
 
+	// Check if port is changing from current config
+	a.configMutex.Lock()
+	originalPort := a.config.Port
+	portChanged := (port != originalPort)
+
 	// Update config with the port
 	a.config.Port = port
+	a.configMutex.Unlock()
+
+	// If port changed, emit events to mark dirty
+	if portChanged {
+		runtime.EventsEmit(a.ctx, "config:port-changed", map[string]int{
+			"http": port,
+		})
+		runtime.EventsEmit(a.ctx, "config:dirty", true)
+	}
 
 	a.server = server.NewHTTPServer(a.config, a, a, a, a.containerHandler, a.proxyHandler)
 
@@ -1640,25 +1671,13 @@ func (a *App) GetSelectedEndpointId() string {
 
 // SetSelectedEndpointId sets the currently selected endpoint ID and saves to ServerConfig
 func (a *App) SetSelectedEndpointId(endpointId string) error {
-	// Auto-save to server config
-	serverCfg := &models.ServerConfig{
-		Port:               a.config.Port,
-		HTTP2Enabled:       a.config.HTTP2Enabled,
-		HTTPSEnabled:       a.config.HTTPSEnabled,
-		HTTPSPort:          a.config.HTTPSPort,
-		HTTPToHTTPSRedirect: a.config.HTTPToHTTPSRedirect,
-		CertMode:           a.config.CertMode,
-		CertPaths:          a.config.CertPaths,
-		CertNames:          a.config.CertNames,
-		CORS:               a.config.CORS,
-		SelectedEndpointId: endpointId,
-	}
-	if err := a.serverConfigMgr.Save(serverCfg); err != nil {
-		return fmt.Errorf("failed to save selected endpoint ID: %w", err)
-	}
+	a.configMutex.Lock()
+	a.config.SelectedEndpointId = endpointId
+	a.configMutex.Unlock()
 
-	// Emit event to frontend
+	// Emit events to frontend
 	runtime.EventsEmit(a.ctx, "endpoint:selected", endpointId)
+	runtime.EventsEmit(a.ctx, "config:dirty", true)
 
 	return nil
 }
@@ -1669,7 +1688,15 @@ func (a *App) SaveCurrentConfig() error {
 		return fmt.Errorf("no file currently loaded - use Save As instead")
 	}
 
-	return a.saveConfigToPath(a.currentConfigPath)
+	if err := a.saveConfigToPath(a.currentConfigPath); err != nil {
+		return err
+	}
+
+	// Mark as clean after successful save
+	runtime.EventsEmit(a.ctx, "config:dirty", false)
+	runtime.EventsEmit(a.ctx, "config:path", a.currentConfigPath)
+
+	return nil
 }
 
 // SaveConfig prompts user for a file with default name based on current file + timestamp
@@ -1707,21 +1734,49 @@ func (a *App) SaveConfig() error {
 		return err
 	}
 
+	// Update path and mark as clean
+	a.configMutex.Lock()
 	a.currentConfigPath = path
+	a.savedConfig = a.deepCopyConfig(a.config)
+	a.configMutex.Unlock()
+
+	// Emit events
+	runtime.EventsEmit(a.ctx, "config:saved", path)
+	runtime.EventsEmit(a.ctx, "config:dirty", false)
+	runtime.EventsEmit(a.ctx, "config:path", path)
+
 	a.AddRecentFile(path)
 	return nil
 }
 
 // saveConfigToPath saves the configuration to the specified path
 func (a *App) saveConfigToPath(path string) error {
-	// Create UserConfig with all endpoints, responses, CORS, and SOCKS5 settings
+	// Create UserConfig with all settings (server settings + user content)
 	userConfig := &models.UserConfig{
+		// User content
 		Responses:      a.config.Responses,
 		Items:          a.config.Items,
 		Endpoints:      a.config.Endpoints,
+
+		// Server settings (now included in UserConfig)
+		Port:                   a.config.Port,
+		HTTP2Enabled:           a.config.HTTP2Enabled,
+		HTTPSEnabled:           a.config.HTTPSEnabled,
+		HTTPSPort:              a.config.HTTPSPort,
+		HTTPToHTTPSRedirect:    a.config.HTTPToHTTPSRedirect,
+		CertMode:               a.config.CertMode,
+		CertPaths:              a.config.CertPaths,
+		CertNames:              a.config.CertNames,
+
+		// Shared settings
 		CORS:           a.config.CORS,
 		SOCKS5Config:   a.config.SOCKS5Config,
 		DomainTakeover: a.config.DomainTakeover,
+
+		// UI state
+		SelectedEndpointId: a.config.SelectedEndpointId,
+
+		// Metadata
 		LastModified:   time.Now(),
 	}
 
@@ -1790,19 +1845,18 @@ func (a *App) LoadConfig() (*models.AppConfig, error) {
 		}
 	}
 
-	// Update only the request processing rules, CORS, and SOCKS5 settings (preserve server settings)
-	a.config.Responses = userCfg.Responses
-	a.config.Items = userCfg.Items
-	a.config.CORS = userCfg.CORS
-	a.config.SOCKS5Config = userCfg.SOCKS5Config
-	a.config.DomainTakeover = userCfg.DomainTakeover
+	// Convert UserConfig to AppConfig
+	a.configMutex.Lock()
+	a.config = userConfigToAppConfig(&userCfg, a.config)
+	a.currentConfigPath = path
 
-	// Load endpoints if present in config (will replace all existing endpoints)
-	if len(userCfg.Endpoints) > 0 {
-		a.config.Endpoints = userCfg.Endpoints
+	// Mark as clean (just loaded)
+	a.savedConfig = a.deepCopyConfig(a.config)
+	a.configMutex.Unlock()
 
-		// If there's no selected endpoint or the selected endpoint doesn't exist anymore,
-		// select the first endpoint
+	// If there's no selected endpoint or the selected endpoint doesn't exist anymore,
+	// select the first endpoint
+	if len(a.config.Endpoints) > 0 {
 		selectedId := a.GetSelectedEndpointId()
 		validSelection := false
 		for _, endpoint := range a.config.Endpoints {
@@ -1812,12 +1866,9 @@ func (a *App) LoadConfig() (*models.AppConfig, error) {
 			}
 		}
 
-		if !validSelection && len(a.config.Endpoints) > 0 {
-			// Select first endpoint
-			err := a.SetSelectedEndpointId(a.config.Endpoints[0].ID)
-			if err != nil {
-				log.Printf("Warning: Failed to set selected endpoint: %v", err)
-			}
+		if !validSelection {
+			// Select first endpoint (don't call SetSelectedEndpointId as it marks dirty)
+			a.config.SelectedEndpointId = a.config.Endpoints[0].ID
 		}
 	}
 
@@ -1852,13 +1903,15 @@ func (a *App) LoadConfig() (*models.AppConfig, error) {
 		}
 	}
 
-	// Emit event to frontend
-	runtime.EventsEmit(a.ctx, "responses:updated", userCfg.Responses)
-	runtime.EventsEmit(a.ctx, "items:updated", userCfg.Items)
+	// Emit events to frontend
+	runtime.EventsEmit(a.ctx, "responses:updated", a.config.Responses)
+	runtime.EventsEmit(a.ctx, "items:updated", a.config.Items)
 	runtime.EventsEmit(a.ctx, "endpoints:updated", a.config.Endpoints)
+	runtime.EventsEmit(a.ctx, "config:loaded", a.config)
+	runtime.EventsEmit(a.ctx, "config:dirty", false)
+	runtime.EventsEmit(a.ctx, "config:path", path)
 
-	// Set current config path and add to recent files
-	a.currentConfigPath = path
+	// Add to recent files
 	a.AddRecentFile(path)
 
 	return a.config, nil
@@ -2077,19 +2130,18 @@ func (a *App) LoadConfigFromPath(path string) (*models.AppConfig, error) {
 		}
 	}
 
-	// Update only the request processing rules, CORS, and SOCKS5 settings (preserve server settings)
-	a.config.Responses = userCfg.Responses
-	a.config.Items = userCfg.Items
-	a.config.CORS = userCfg.CORS
-	a.config.SOCKS5Config = userCfg.SOCKS5Config
-	a.config.DomainTakeover = userCfg.DomainTakeover
+	// Convert UserConfig to AppConfig
+	a.configMutex.Lock()
+	a.config = userConfigToAppConfig(&userCfg, a.config)
+	a.currentConfigPath = path
 
-	// Load endpoints if present in config (will replace all existing endpoints)
-	if len(userCfg.Endpoints) > 0 {
-		a.config.Endpoints = userCfg.Endpoints
+	// Mark as clean (just loaded)
+	a.savedConfig = a.deepCopyConfig(a.config)
+	a.configMutex.Unlock()
 
-		// If there's no selected endpoint or the selected endpoint doesn't exist anymore,
-		// select the first endpoint
+	// If there's no selected endpoint or the selected endpoint doesn't exist anymore,
+	// select the first endpoint
+	if len(a.config.Endpoints) > 0 {
 		selectedId := a.GetSelectedEndpointId()
 		validSelection := false
 		for _, endpoint := range a.config.Endpoints {
@@ -2099,12 +2151,9 @@ func (a *App) LoadConfigFromPath(path string) (*models.AppConfig, error) {
 			}
 		}
 
-		if !validSelection && len(a.config.Endpoints) > 0 {
-			// Select first endpoint
-			err := a.SetSelectedEndpointId(a.config.Endpoints[0].ID)
-			if err != nil {
-				log.Printf("Warning: Failed to set selected endpoint: %v", err)
-			}
+		if !validSelection {
+			// Select first endpoint (don't call SetSelectedEndpointId as it marks dirty)
+			a.config.SelectedEndpointId = a.config.Endpoints[0].ID
 		}
 	}
 
@@ -2139,13 +2188,15 @@ func (a *App) LoadConfigFromPath(path string) (*models.AppConfig, error) {
 		}
 	}
 
-	// Emit event to frontend
-	runtime.EventsEmit(a.ctx, "responses:updated", userCfg.Responses)
-	runtime.EventsEmit(a.ctx, "items:updated", userCfg.Items)
+	// Emit events to frontend
+	runtime.EventsEmit(a.ctx, "responses:updated", a.config.Responses)
+	runtime.EventsEmit(a.ctx, "items:updated", a.config.Items)
 	runtime.EventsEmit(a.ctx, "endpoints:updated", a.config.Endpoints)
+	runtime.EventsEmit(a.ctx, "config:loaded", a.config)
+	runtime.EventsEmit(a.ctx, "config:dirty", false)
+	runtime.EventsEmit(a.ctx, "config:path", path)
 
-	// Set current config path and add to recent files
-	a.currentConfigPath = path
+	// Add to recent files
 	a.AddRecentFile(path)
 
 	return a.config, nil
@@ -2554,103 +2605,50 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-// SetHTTPSConfig updates HTTPS configuration
-func (a *App) SetHTTPSConfig(enabled bool, port int, redirect bool) error {
-	// Update config
-	a.config.HTTPSEnabled = enabled
-	a.config.HTTPSPort = port
-	a.config.HTTPToHTTPSRedirect = redirect
+// UpdateServerSettings updates server configuration fields
+// Does NOT save to disk - only updates in-memory config and emits events
+// Frontend should call MarkDirty() after this to mark config as dirty
+func (a *App) UpdateServerSettings(settings models.ServerSettings) error {
+	a.configMutex.Lock()
+	defer a.configMutex.Unlock()
 
-	// Auto-save server config
-	serverCfg := &models.ServerConfig{
-		Port:                a.config.Port,
-		HTTP2Enabled:        a.config.HTTP2Enabled,
-		HTTPSEnabled:        a.config.HTTPSEnabled,
-		HTTPSPort:           a.config.HTTPSPort,
-		HTTPToHTTPSRedirect: a.config.HTTPToHTTPSRedirect,
-		CertMode:            a.config.CertMode,
-		CertPaths:           a.config.CertPaths,
-		CertNames:           a.config.CertNames,
-		CORS:                a.config.CORS,
+	// Update AppConfig fields (only those provided - nil means don't update)
+	if settings.Port != nil {
+		a.config.Port = *settings.Port
 	}
-	if err := a.serverConfigMgr.Save(serverCfg); err != nil {
-		fmt.Printf("Warning: failed to save server config: %v\n", err)
+	if settings.HTTP2Enabled != nil {
+		a.config.HTTP2Enabled = *settings.HTTP2Enabled
 	}
-
-	// If server is running, apply changes
-	if a.server != nil && a.status.Running {
-		// Update server config
-		a.server.UpdateConfig(a.config)
-
-		// If HTTPS is now enabled and wasn't before, start HTTPS server
-		if enabled {
-			err := a.server.StartHTTPS()
-			if err != nil {
-				return fmt.Errorf("failed to start HTTPS server: %w", err)
-			}
-		} else {
-			// If HTTPS is now disabled, stop HTTPS server
-			err := a.server.StopHTTPS()
-			if err != nil {
-				return fmt.Errorf("failed to stop HTTPS server: %w", err)
-			}
-		}
-
-		// Restart HTTP server to apply redirect changes
-		err := a.server.StopHTTP()
-		if err != nil {
-			return fmt.Errorf("failed to stop HTTP server: %w", err)
-		}
-		err = a.server.StartHTTP()
-		if err != nil {
-			return fmt.Errorf("failed to restart HTTP server: %w", err)
-		}
+	if settings.HTTPSEnabled != nil {
+		a.config.HTTPSEnabled = *settings.HTTPSEnabled
+	}
+	if settings.HTTPSPort != nil {
+		a.config.HTTPSPort = *settings.HTTPSPort
+	}
+	if settings.HTTPToHTTPSRedirect != nil {
+		a.config.HTTPToHTTPSRedirect = *settings.HTTPToHTTPSRedirect
+	}
+	if settings.CertMode != nil {
+		a.config.CertMode = *settings.CertMode
+	}
+	if settings.CertPaths != nil {
+		a.config.CertPaths = *settings.CertPaths
+	}
+	if settings.CertNames != nil {
+		a.config.CertNames = settings.CertNames
+	}
+	if settings.CORS != nil {
+		a.config.CORS = *settings.CORS
+	}
+	if settings.SOCKS5Config != nil {
+		a.config.SOCKS5Config = settings.SOCKS5Config
+	}
+	if settings.DomainTakeover != nil {
+		a.config.DomainTakeover = settings.DomainTakeover
 	}
 
-	// Emit event to frontend
-	runtime.EventsEmit(a.ctx, "https:config-updated", nil)
-
-	return nil
-}
-
-// SetCertMode updates the certificate mode, paths, and custom cert names
-func (a *App) SetCertMode(mode string, certPaths models.CertPaths, certNames []string) error {
-	// Validate certificate mode
-	if mode != models.CertModeAuto && mode != models.CertModeCAProvided && mode != models.CertModeCertProvided {
-		return fmt.Errorf("invalid certificate mode: %s", mode)
-	}
-
-	// Update config
-	a.config.CertMode = mode
-	a.config.CertPaths = certPaths
-	a.config.CertNames = certNames
-
-	// Auto-save server config
-	serverCfg := &models.ServerConfig{
-		Port:                a.config.Port,
-		HTTP2Enabled:        a.config.HTTP2Enabled,
-		HTTPSEnabled:        a.config.HTTPSEnabled,
-		HTTPSPort:           a.config.HTTPSPort,
-		HTTPToHTTPSRedirect: a.config.HTTPToHTTPSRedirect,
-		CertMode:            a.config.CertMode,
-		CertPaths:           a.config.CertPaths,
-		CertNames:           a.config.CertNames,
-		CORS:                a.config.CORS,
-	}
-	if err := a.serverConfigMgr.Save(serverCfg); err != nil {
-		fmt.Printf("Warning: failed to save server config: %v\n", err)
-	}
-
-	// If server is running and HTTPS is enabled, restart HTTPS server
-	if a.server != nil && a.status.Running && a.config.HTTPSEnabled {
-		err := a.server.RestartHTTPS()
-		if err != nil {
-			return fmt.Errorf("failed to restart HTTPS server: %w", err)
-		}
-	}
-
-	// Emit event to frontend
-	runtime.EventsEmit(a.ctx, "cert:mode-updated", nil)
+	// Emit config updated event
+	runtime.EventsEmit(a.ctx, "config:updated", a.config)
 
 	return nil
 }
@@ -2676,39 +2674,6 @@ func (a *App) GetCORSConfig() *models.CORSConfig {
 	return &a.config.CORS
 }
 
-// SetCORSConfig updates the CORS configuration
-func (a *App) SetCORSConfig(corsConfig models.CORSConfig) error {
-	// Update config
-	a.config.CORS = corsConfig
-
-	// Auto-save server config
-	serverCfg := &models.ServerConfig{
-		Port:                a.config.Port,
-		HTTP2Enabled:        a.config.HTTP2Enabled,
-		HTTPSEnabled:        a.config.HTTPSEnabled,
-		HTTPSPort:           a.config.HTTPSPort,
-		HTTPToHTTPSRedirect: a.config.HTTPToHTTPSRedirect,
-		CertMode:            a.config.CertMode,
-		CertPaths:           a.config.CertPaths,
-		CertNames:           a.config.CertNames,
-		CORS:                a.config.CORS,
-	}
-	if err := a.serverConfigMgr.Save(serverCfg); err != nil {
-		fmt.Printf("Warning: failed to save server config: %v\n", err)
-	}
-
-	// If server is running, update CORS processor
-	if a.server != nil {
-		// The server's response handler will use the updated config
-		a.server.UpdateConfig(a.config)
-	}
-
-	// Emit event to frontend
-	runtime.EventsEmit(a.ctx, "cors:config-updated", nil)
-
-	return nil
-}
-
 // ValidateCORSScript validates a CORS script for syntax errors
 func (a *App) ValidateCORSScript(script string) error {
 	return server.ValidateCORSScript(script)
@@ -2726,88 +2691,6 @@ func (a *App) GetSOCKS5Config() SOCKS5ConfigResponse {
 		SOCKS5Config:    a.config.SOCKS5Config,
 		DomainTakeover: a.config.DomainTakeover,
 	}
-}
-
-// SetSOCKS5Config updates the SOCKS5 and domain takeover configuration
-func (a *App) SetSOCKS5Config(socks5Config *models.SOCKS5Config, domainTakeover *models.DomainTakeoverConfig) error {
-	// Update config
-	a.config.SOCKS5Config = socks5Config
-	a.config.DomainTakeover = domainTakeover
-
-	// Auto-save server config
-	serverCfg := &models.ServerConfig{
-		Port:                a.config.Port,
-		HTTP2Enabled:        a.config.HTTP2Enabled,
-		HTTPSEnabled:        a.config.HTTPSEnabled,
-		HTTPSPort:           a.config.HTTPSPort,
-		HTTPToHTTPSRedirect: a.config.HTTPToHTTPSRedirect,
-		CertMode:            a.config.CertMode,
-		CertPaths:           a.config.CertPaths,
-		CertNames:           a.config.CertNames,
-		CORS:                a.config.CORS,
-		SOCKS5Config:        a.config.SOCKS5Config,
-		DomainTakeover:     a.config.DomainTakeover,
-	}
-	if err := a.serverConfigMgr.Save(serverCfg); err != nil {
-		fmt.Printf("Warning: failed to save server config: %v\n", err)
-	}
-
-	// If server is running, restart it to apply SOCKS5 changes
-	if a.server != nil {
-		// Stop existing server
-		if err := a.StopServer(); err != nil {
-			return fmt.Errorf("failed to stop server: %w", err)
-		}
-		// Start server with new config
-		if err := a.StartServer(a.config.Port); err != nil {
-			return fmt.Errorf("failed to restart server: %w", err)
-		}
-	}
-
-	// Emit event to frontend
-	runtime.EventsEmit(a.ctx, "socks5:config-updated", nil)
-
-	return nil
-}
-
-// SetHTTP2Enabled enables or disables HTTP/2 support for both HTTP and HTTPS servers
-func (a *App) SetHTTP2Enabled(enabled bool) error {
-	// Update config
-	a.config.HTTP2Enabled = enabled
-
-	// Auto-save server config
-	serverCfg := &models.ServerConfig{
-		Port:                a.config.Port,
-		HTTP2Enabled:        a.config.HTTP2Enabled,
-		HTTPSEnabled:        a.config.HTTPSEnabled,
-		HTTPSPort:           a.config.HTTPSPort,
-		HTTPToHTTPSRedirect: a.config.HTTPToHTTPSRedirect,
-		CertMode:            a.config.CertMode,
-		CertPaths:           a.config.CertPaths,
-		CertNames:           a.config.CertNames,
-		CORS:                a.config.CORS,
-	}
-	if err := a.serverConfigMgr.Save(serverCfg); err != nil {
-		fmt.Printf("Warning: failed to save server config: %v\n", err)
-	}
-
-	// If server is running, restart both servers to apply HTTP/2 changes
-	if a.server != nil {
-		// Stop both servers
-		if err := a.server.Stop(); err != nil {
-			return fmt.Errorf("failed to stop servers: %w", err)
-		}
-
-		// Start both servers with new HTTP/2 setting
-		if err := a.server.Start(); err != nil {
-			return fmt.Errorf("failed to restart servers: %w", err)
-		}
-	}
-
-	// Emit event to frontend
-	runtime.EventsEmit(a.ctx, "http2:config-updated", nil)
-
-	return nil
 }
 
 // ValidateCORSHeaderExpression validates a CORS header expression for syntax errors
@@ -3010,4 +2893,286 @@ func (a *App) GetAllResponseIDsWithErrors() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// ================================================================================
+// Dirty State Tracking Methods
+// ================================================================================
+
+// IsDirty returns true if current config differs from saved config
+func (a *App) IsDirty() bool {
+	a.configMutex.RLock()
+	defer a.configMutex.RUnlock()
+
+	if a.savedConfig == nil {
+		return false // No saved state yet
+	}
+
+	// Deep comparison of configs (excluding LastModified)
+	return !a.configsEqual(a.config, a.savedConfig)
+}
+
+// configsEqual performs deep comparison of two AppConfigs
+func (a *App) configsEqual(c1, c2 *models.AppConfig) bool {
+	if c1 == nil || c2 == nil {
+		return c1 == c2
+	}
+
+	// Compare server settings
+	if c1.Port != c2.Port ||
+		c1.HTTP2Enabled != c2.HTTP2Enabled ||
+		c1.HTTPSEnabled != c2.HTTPSEnabled ||
+		c1.HTTPSPort != c2.HTTPSPort ||
+		c1.HTTPToHTTPSRedirect != c2.HTTPToHTTPSRedirect ||
+		c1.CertMode != c2.CertMode {
+		return false
+	}
+
+	// Compare cert paths/names
+	if !certPathsEqual(c1.CertPaths, c2.CertPaths) ||
+		!stringSlicesEqual(c1.CertNames, c2.CertNames) {
+		return false
+	}
+
+	// Compare CORS
+	if !corsConfigEqual(&c1.CORS, &c2.CORS) {
+		return false
+	}
+
+	// Compare SOCKS5
+	if !socks5ConfigEqual(c1.SOCKS5Config, c2.SOCKS5Config) {
+		return false
+	}
+
+	// Compare DomainTakeover
+	if !domainTakeoverEqual(c1.DomainTakeover, c2.DomainTakeover) {
+		return false
+	}
+
+	// Compare SelectedEndpointId
+	if c1.SelectedEndpointId != c2.SelectedEndpointId {
+		return false
+	}
+
+	// Compare user content (endpoints, responses, items)
+	if !endpointsEqual(c1.Endpoints, c2.Endpoints) ||
+		!responsesEqual(c1.Responses, c2.Responses) ||
+		!itemsEqual(c1.Items, c2.Items) {
+		return false
+	}
+
+	return true
+}
+
+// certPathsEqual compares two CertPaths structs for equality
+func certPathsEqual(c1, c2 models.CertPaths) bool {
+	return c1.CACertPath == c2.CACertPath &&
+		c1.CAKeyPath == c2.CAKeyPath &&
+		c1.ServerCertPath == c2.ServerCertPath &&
+		c1.ServerKeyPath == c2.ServerKeyPath &&
+		c1.ServerBundlePath == c2.ServerBundlePath
+}
+
+// stringSlicesEqual compares two string slices for equality
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// corsConfigEqual compares two CORS configs for equality
+func corsConfigEqual(c1, c2 *models.CORSConfig) bool {
+	if c1 == nil || c2 == nil {
+		return c1 == c2
+	}
+	return c1.Enabled == c2.Enabled &&
+		c1.Mode == c2.Mode &&
+		headersEqual(c1.HeaderExpressions, c2.HeaderExpressions) &&
+		c1.OptionsDefaultStatus == c2.OptionsDefaultStatus
+}
+
+// headersEqual compares two slices of CORSHeader for equality
+func headersEqual(h1, h2 []models.CORSHeader) bool {
+	if len(h1) != len(h2) {
+		return false
+	}
+	for i := range h1 {
+		if h1[i].Name != h2[i].Name || h1[i].Expression != h2[i].Expression {
+			return false
+		}
+	}
+	return true
+}
+
+// socks5ConfigEqual compares two SOCKS5 configs for equality
+func socks5ConfigEqual(s1, s2 *models.SOCKS5Config) bool {
+	if s1 == nil || s2 == nil {
+		return s1 == s2
+	}
+	return s1.Enabled == s2.Enabled &&
+		s1.Port == s2.Port &&
+		s1.Authentication == s2.Authentication &&
+		s1.Username == s2.Username &&
+		s1.Password == s2.Password
+}
+
+// domainTakeoverEqual compares two DomainTakeover configs for equality
+func domainTakeoverEqual(d1, d2 *models.DomainTakeoverConfig) bool {
+	if d1 == nil || d2 == nil {
+		return d1 == d2
+	}
+	// Compare domains using JSON deep equality
+	return jsonEqual(d1.Domains, d2.Domains)
+}
+
+// endpointsEqual compares two endpoint slices for equality
+func endpointsEqual(e1, e2 []models.Endpoint) bool {
+	if len(e1) != len(e2) {
+		return false
+	}
+	return jsonEqual(e1, e2)
+}
+
+// responsesEqual compares two response slices for equality
+func responsesEqual(r1, r2 []models.MethodResponse) bool {
+	if len(r1) != len(r2) {
+		return false
+	}
+	return jsonEqual(r1, r2)
+}
+
+// itemsEqual compares two item slices for equality
+func itemsEqual(i1, i2 []models.ResponseItem) bool {
+	if len(i1) != len(i2) {
+		return false
+	}
+	return jsonEqual(i1, i2)
+}
+
+// jsonEqual uses JSON marshaling for deep comparison
+func jsonEqual(a, b interface{}) bool {
+	aJSON, err1 := json.Marshal(a)
+	bJSON, err2 := json.Marshal(b)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return string(aJSON) == string(bJSON)
+}
+
+// MarkDirty marks the config as dirty (without updating savedConfig)
+// Called when user makes changes in Server tab
+func (a *App) MarkDirty() {
+	a.configMutex.Lock()
+	defer a.configMutex.Unlock()
+
+	// Don't update savedConfig - this makes IsDirty() return true
+	// savedConfig remains at last saved state
+
+	// Emit event to update UI
+	runtime.EventsEmit(a.ctx, "config:dirty", true)
+}
+
+// MarkClean updates savedConfig to current state
+// Called after successful save
+func (a *App) MarkClean() {
+	a.configMutex.Lock()
+	defer a.configMutex.Unlock()
+
+	// Deep copy current config to savedConfig
+	a.savedConfig = a.deepCopyConfig(a.config)
+
+	// Emit event to update UI
+	runtime.EventsEmit(a.ctx, "config:dirty", false)
+}
+
+// deepCopyConfig creates a deep copy of AppConfig
+func (a *App) deepCopyConfig(config *models.AppConfig) *models.AppConfig {
+	if config == nil {
+		return nil
+	}
+
+	// Use JSON marshaling for deep copy
+	data, err := json.Marshal(config)
+	if err != nil {
+		log.Printf("Error marshaling config for deep copy: %v", err)
+		return nil
+	}
+
+	var copy models.AppConfig
+	if err := json.Unmarshal(data, &copy); err != nil {
+		log.Printf("Error unmarshaling config for deep copy: %v", err)
+		return nil
+	}
+
+	return &copy
+}
+
+// GetCurrentConfigPath returns the current config file path
+func (a *App) GetCurrentConfigPath() string {
+	return a.currentConfigPath
+}
+
+// userConfigToAppConfig converts UserConfig to AppConfig
+// serverCfg is the current AppConfig - we preserve server settings from it
+func userConfigToAppConfig(userCfg *models.UserConfig, serverCfg *models.AppConfig) *models.AppConfig {
+	// Start with defaults for server settings
+	appCfg := &models.AppConfig{
+		Port:                8080,
+		HTTPSPort:           8443,
+		HTTP2Enabled:        false,
+		HTTPSEnabled:        false,
+		HTTPToHTTPSRedirect: false,
+		CertMode:            models.CertModeAuto,
+		CertPaths:           models.CertPaths{},
+		CertNames:           []string{},
+
+		// Copy user content from UserConfig
+		Responses:           userCfg.Responses,
+		Items:               userCfg.Items,
+		Endpoints:           userCfg.Endpoints,
+		CORS:                userCfg.CORS,
+		SOCKS5Config:        userCfg.SOCKS5Config,
+		DomainTakeover:      userCfg.DomainTakeover,
+		SelectedEndpointId:  userCfg.SelectedEndpointId,
+	}
+
+	// Server settings now come from UserConfig (unified format)
+	// Use values from UserConfig if present (non-zero), otherwise keep defaults
+	if userCfg.Port != 0 {
+		appCfg.Port = userCfg.Port
+	}
+	if userCfg.HTTPSPort != 0 {
+		appCfg.HTTPSPort = userCfg.HTTPSPort
+	}
+	appCfg.HTTP2Enabled = userCfg.HTTP2Enabled
+	appCfg.HTTPSEnabled = userCfg.HTTPSEnabled
+	appCfg.HTTPToHTTPSRedirect = userCfg.HTTPToHTTPSRedirect
+	if userCfg.CertMode != "" {
+		appCfg.CertMode = userCfg.CertMode
+	}
+	if len(userCfg.CertPaths.CACertPath) > 0 || len(userCfg.CertPaths.ServerCertPath) > 0 {
+		appCfg.CertPaths = userCfg.CertPaths
+	}
+	if len(userCfg.CertNames) > 0 {
+		appCfg.CertNames = userCfg.CertNames
+	}
+
+	// If we have an existing server config (for migration), preserve settings that aren't in the file
+	if serverCfg != nil {
+		// Only override if UserConfig has zero/empty values (backward compat)
+		if userCfg.Port == 0 {
+			appCfg.Port = serverCfg.Port
+		}
+		if userCfg.HTTPSPort == 0 {
+			appCfg.HTTPSPort = serverCfg.HTTPSPort
+		}
+	}
+
+	return appCfg
 }

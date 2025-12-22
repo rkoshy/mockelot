@@ -68,6 +68,13 @@ const (
 	HeaderModeExpression = "expression" // JS expression for dynamic value
 )
 
+// DomainFilterMode constants for endpoint domain filtering
+const (
+	DomainFilterModeAny      = "any"      // Match any domain (no filtering)
+	DomainFilterModeAll      = "all"      // Match all intercepted domains
+	DomainFilterModeSpecific = "specific" // Match specific selected domains
+)
+
 // HeaderValidation defines validation for a single request header
 type HeaderValidation struct {
 	Name       string `json:"name" yaml:"name"`                                 // Header name to validate
@@ -217,6 +224,13 @@ type EnvironmentVar struct {
 	Expression string `json:"expression,omitempty" yaml:"expression,omitempty"` // JS expression for dynamic value
 }
 
+// DomainFilter defines domain-based filtering for endpoints (SOCKS5 proxy)
+// Allows endpoints to be scoped to specific domains from the takeover list
+type DomainFilter struct {
+	Mode     string   `json:"mode" yaml:"mode"`           // "any", "all", "specific"
+	Patterns []string `json:"patterns,omitempty" yaml:"patterns,omitempty"` // For "specific" mode - selected domain patterns
+}
+
 // ContainerConfig contains Docker container configuration
 // A container is a special type of proxy where the backend is a dynamically-started container.
 // The ProxyConfig handles HTTP proxying (headers, status codes, health checks, etc.)
@@ -304,6 +318,11 @@ type Endpoint struct {
 	TranslatePattern string         `json:"translate_pattern,omitempty" yaml:"translate_pattern,omitempty"` // Regex pattern for translate mode
 	TranslateReplace string         `json:"translate_replace,omitempty" yaml:"translate_replace,omitempty"` // Replacement for translate mode
 	Enabled          *bool          `json:"enabled,omitempty" yaml:"enabled,omitempty"`                     // Whether endpoint is enabled (default: true)
+	IsSystem         bool           `json:"is_system,omitempty" yaml:"is_system,omitempty"`                 // System endpoint (cannot be deleted)
+	DisplayOrder     int            `json:"display_order,omitempty" yaml:"display_order,omitempty"`         // Order for request matching (lower = higher priority)
+
+	// Domain filtering (for SOCKS5 proxy)
+	DomainFilter *DomainFilter `json:"domain_filter,omitempty" yaml:"domain_filter,omitempty"` // Domain filter for SOCKS5 intercepted domains
 
 	// Endpoint type and type-specific configurations
 	Type            string           `json:"type" yaml:"type"`                                         // "mock", "proxy", "container"
@@ -347,38 +366,55 @@ type CertPaths struct {
 	ServerBundlePath string `json:"server_bundle_path,omitempty"`
 }
 
-// ServerConfig stores server-level settings (auto-saved to ~/.mockelot/server-config.yaml)
-type ServerConfig struct {
-	// HTTP Server
-	Port int `json:"port" yaml:"port"` // HTTP server port
-
-	// HTTP/2 Support
-	HTTP2Enabled bool `json:"http2_enabled,omitempty" yaml:"http2_enabled,omitempty"` // Whether HTTP/2 is enabled for both HTTP and HTTPS servers
-
-	// HTTPS Configuration
-	HTTPSEnabled        bool      `json:"https_enabled,omitempty" yaml:"https_enabled,omitempty"`                       // Whether HTTPS is enabled
-	HTTPSPort           int       `json:"https_port,omitempty" yaml:"https_port,omitempty"`                             // HTTPS server port
-	HTTPToHTTPSRedirect bool      `json:"http_to_https_redirect,omitempty" yaml:"http_to_https_redirect,omitempty"`     // Whether to redirect HTTP to HTTPS
-	CertMode            string    `json:"cert_mode,omitempty" yaml:"cert_mode,omitempty"`                               // Certificate mode: "auto", "ca-provided", "cert-provided"
-	CertPaths           CertPaths `json:"cert_paths,omitempty" yaml:"cert_paths,omitempty"`                             // Paths to user-provided certificates
-	CertNames           []string  `json:"cert_names,omitempty" yaml:"cert_names,omitempty"`                             // Custom DNS names and IP addresses for certificate (CN/SAN)
-
-	// CORS Configuration
-	CORS CORSConfig `json:"cors,omitempty" yaml:"cors,omitempty"` // Global CORS configuration
-
-	// UI State
-	SelectedEndpointId string `json:"selected_endpoint_id,omitempty" yaml:"selected_endpoint_id,omitempty"` // Currently selected endpoint in UI
-
-	LastModified time.Time `json:"last_modified,omitempty" yaml:"last_modified,omitempty"` // Last time configuration was modified
+// DomainConfig represents a single domain in the takeover list
+type DomainConfig struct {
+	ID          string `json:"id" yaml:"id"`                                     // Unique identifier
+	Pattern     string `json:"pattern" yaml:"pattern"`                           // Regex pattern (e.g., "api\\.example\\.com")
+	OverlayMode bool   `json:"overlay_mode" yaml:"overlay_mode"`                 // Pass through to real server if no endpoint matches
+	Enabled     bool   `json:"enabled" yaml:"enabled"`                           // Whether this domain is enabled
 }
 
-// UserConfig stores user-defined request processing rules (manual save/load)
+// DomainTakeoverConfig contains the list of domains to intercept via SOCKS5
+type DomainTakeoverConfig struct {
+	Domains []DomainConfig `json:"domains" yaml:"domains"` // List of intercepted domains
+}
+
+// SOCKS5Config contains SOCKS5 proxy server configuration
+type SOCKS5Config struct {
+	Enabled        bool   `json:"enabled" yaml:"enabled"`                           // Whether SOCKS5 proxy is enabled
+	Port           int    `json:"port" yaml:"port"`                                 // SOCKS5 server port (default: 1080)
+	Authentication bool   `json:"authentication" yaml:"authentication"`             // Whether authentication is required
+	Username       string `json:"username,omitempty" yaml:"username,omitempty"`     // Username for authentication
+	Password       string `json:"password,omitempty" yaml:"password,omitempty"`     // Password for authentication
+}
+
+// UserConfig stores all configuration (server settings + user content) in a single file
 type UserConfig struct {
-	Responses    []MethodResponse `json:"responses,omitempty" yaml:"responses,omitempty"` // Legacy: flat response list (for backward compatibility)
-	Items        []ResponseItem   `json:"items,omitempty" yaml:"items,omitempty"`         // New: mixed list of responses and groups (legacy app-level)
-	Endpoints    []Endpoint       `json:"endpoints,omitempty" yaml:"endpoints,omitempty"` // Current: all endpoints (mock, proxy, container)
-	CORS         CORSConfig       `json:"cors,omitempty" yaml:"cors,omitempty"`           // Global CORS configuration
-	LastModified time.Time        `json:"last_modified,omitempty" yaml:"last_modified,omitempty"` // Last time configuration was modified
+	// User Content
+	Responses      []MethodResponse        `json:"responses,omitempty" yaml:"responses,omitempty"` // Legacy: flat response list (for backward compatibility)
+	Items          []ResponseItem          `json:"items,omitempty" yaml:"items,omitempty"`         // New: mixed list of responses and groups (legacy app-level)
+	Endpoints      []Endpoint              `json:"endpoints,omitempty" yaml:"endpoints,omitempty"` // Current: all endpoints (mock, proxy, container)
+
+	// Server Settings (moved from ServerConfig)
+	Port                   int       `json:"port,omitempty" yaml:"port,omitempty"`                                         // HTTP server port
+	HTTP2Enabled           bool      `json:"http2_enabled,omitempty" yaml:"http2_enabled,omitempty"`                       // HTTP/2 support
+	HTTPSEnabled           bool      `json:"https_enabled,omitempty" yaml:"https_enabled,omitempty"`                       // HTTPS enabled
+	HTTPSPort              int       `json:"https_port,omitempty" yaml:"https_port,omitempty"`                             // HTTPS server port
+	HTTPToHTTPSRedirect    bool      `json:"http_to_https_redirect,omitempty" yaml:"http_to_https_redirect,omitempty"`     // HTTP to HTTPS redirect
+	CertMode               string    `json:"cert_mode,omitempty" yaml:"cert_mode,omitempty"`                               // Certificate mode
+	CertPaths              CertPaths `json:"cert_paths,omitempty" yaml:"cert_paths,omitempty"`                             // Certificate paths
+	CertNames              []string  `json:"cert_names,omitempty" yaml:"cert_names,omitempty"`                             // Certificate names
+
+	// Shared Settings
+	CORS           CORSConfig              `json:"cors,omitempty" yaml:"cors,omitempty"`           // Global CORS configuration
+	SOCKS5Config   *SOCKS5Config           `json:"socks5_config,omitempty" yaml:"socks5_config,omitempty"` // SOCKS5 proxy configuration
+	DomainTakeover *DomainTakeoverConfig   `json:"domain_takeover,omitempty" yaml:"domain_takeover,omitempty"` // Domain takeover configuration
+
+	// UI State
+	SelectedEndpointId string `json:"selected_endpoint_id,omitempty" yaml:"selected_endpoint_id,omitempty"` // Selected endpoint
+
+	// Metadata
+	LastModified   time.Time               `json:"last_modified,omitempty" yaml:"last_modified,omitempty"` // Last time configuration was modified
 }
 
 // GetAllResponses returns all enabled responses in priority order (flattened from items and legacy responses)
@@ -431,8 +467,32 @@ type AppConfig struct {
 	// CORS Configuration
 	CORS CORSConfig `json:"cors,omitempty" yaml:"cors,omitempty"` // Global CORS configuration
 
+	// SOCKS5 Proxy Configuration
+	SOCKS5Config     *SOCKS5Config           `json:"socks5_config,omitempty" yaml:"socks5_config,omitempty"`           // SOCKS5 proxy server settings
+	DomainTakeover   *DomainTakeoverConfig   `json:"domain_takeover,omitempty" yaml:"domain_takeover,omitempty"`       // Domain interception configuration
+
 	// Container Configuration
 	ContainerLogLineLimit int `json:"container_log_line_limit,omitempty" yaml:"container_log_line_limit,omitempty"` // Max number of log lines to retrieve (default 5000)
+
+	// Selected Endpoint
+	SelectedEndpointId string `json:"selected_endpoint_id,omitempty" yaml:"selected_endpoint_id,omitempty"` // Currently selected endpoint ID
+}
+
+// ServerSettings contains optional server configuration updates
+// All fields are pointers to distinguish between "not provided" (nil) and "set to zero/false" (non-nil)
+// Exception: slices and structs that are naturally optional (CertPaths, CertNames, CORS)
+type ServerSettings struct {
+	Port                   *int                   `json:"port,omitempty"`
+	HTTP2Enabled           *bool                  `json:"http2_enabled,omitempty"`
+	HTTPSEnabled           *bool                  `json:"https_enabled,omitempty"`
+	HTTPSPort              *int                   `json:"https_port,omitempty"`
+	HTTPToHTTPSRedirect    *bool                  `json:"http_to_https_redirect,omitempty"`
+	CertMode               *string                `json:"cert_mode,omitempty"`
+	CertPaths              *CertPaths             `json:"cert_paths,omitempty"`       // Pointer to distinguish "not provided" from "empty struct"
+	CertNames              []string               `json:"cert_names,omitempty"`       // Slice can be nil to mean "not provided"
+	CORS                   *CORSConfig            `json:"cors,omitempty"`             // Pointer to distinguish "not provided" from "empty struct"
+	SOCKS5Config           *SOCKS5Config          `json:"socks5_config,omitempty"`
+	DomainTakeover         *DomainTakeoverConfig  `json:"domain_takeover,omitempty"`
 }
 
 // GetAllResponses returns all enabled responses in priority order (flattened from items and legacy responses)
@@ -464,19 +524,21 @@ func (c *AppConfig) GetAllResponses() []MethodResponse {
 // RequestLogSummary represents a lightweight summary of a request for efficient UI display
 // Full details can be fetched on-demand using GetRequestLogDetails(id)
 type RequestLogSummary struct {
-	ID             string `json:"id"`                    // Unique request identifier
-	Timestamp      string `json:"timestamp"`             // Time request was received (ISO8601/RFC3339 format)
-	EndpointID     string `json:"endpoint_id,omitempty"` // ID of endpoint that handled this request
-	Method         string `json:"method"`                // HTTP method
-	Path           string `json:"path"`                  // Request path
-	SourceIP       string `json:"source_ip"`             // Client IP address
-	ClientStatus   int    `json:"client_status"`         // Client response status code
-	BackendStatus  int    `json:"backend_status"`        // Backend response status code (0 if no backend)
-	ClientRTT      *int64 `json:"client_rtt,omitempty"`  // Client round-trip time (ms), nil if not measured
-	BackendRTT     *int64 `json:"backend_rtt,omitempty"` // Backend round-trip time (ms), nil if no backend
-	HasBackend     bool   `json:"has_backend"`           // Whether this request involved a backend call
-	ClientBodySize int    `json:"client_body_size"`      // Size of client request body in bytes
-	Pending        bool   `json:"pending"`               // Whether this request is still in progress (no response yet)
+	ID               string `json:"id"`                              // Unique request identifier
+	Timestamp        string `json:"timestamp"`                       // Time request was received (ISO8601/RFC3339 format)
+	EndpointID       string `json:"endpoint_id,omitempty"`           // ID of endpoint that handled this request
+	Method           string `json:"method"`                          // HTTP method
+	Path             string `json:"path"`                            // Request path
+	SourceIP         string `json:"source_ip"`                       // Client IP address
+	ClientStatus     *int   `json:"client_status,omitempty"`         // Client response status code (nil if no response sent)
+	BackendStatus    *int   `json:"backend_status,omitempty"`        // Backend response status code (nil if no backend)
+	ClientRTT        *int64 `json:"client_rtt,omitempty"`            // Client round-trip time (ms), nil if not measured
+	BackendRTT       *int64 `json:"backend_rtt,omitempty"`           // Backend round-trip time (ms), nil if no backend
+	HasBackend       bool   `json:"has_backend"`                     // Whether this request involved a backend call
+	ClientBodySize   int    `json:"client_body_size"`                // Size of client request body in bytes
+	Pending          bool   `json:"pending"`                         // Whether this request is still in progress (no response yet)
+	ValidationFailed bool   `json:"validation_failed,omitempty"`     // (V) badge - request matched path but failed validation
+	ResponseFailed   bool   `json:"response_failed,omitempty"`       // (R) badge - response generation failed (script error, etc.)
 }
 
 // RequestLog represents a detailed log of an incoming HTTP request and response
@@ -485,6 +547,10 @@ type RequestLog struct {
 	ID         string `json:"id"`                    // Unique request identifier
 	Timestamp  string `json:"timestamp"`             // Time request was received (ISO8601/RFC3339 format)
 	EndpointID string `json:"endpoint_id,omitempty"` // ID of endpoint that handled this request
+
+	// Failure indicators
+	ValidationFailed bool `json:"validation_failed,omitempty"` // (V) badge - request matched path but failed validation
+	ResponseFailed   bool `json:"response_failed,omitempty"`   // (R) badge - response generation failed (script error, etc.)
 
 	// Client side: Client → Server
 	ClientRequest struct {
@@ -501,7 +567,7 @@ type RequestLog struct {
 
 	// Client side: Server → Client
 	ClientResponse struct {
-		StatusCode int                 `json:"status_code"`              // Response status code sent to client
+		StatusCode *int                `json:"status_code,omitempty"`    // Response status code sent to client (nil if no response sent)
 		StatusText string              `json:"status_text,omitempty"`    // Status text (e.g., "OK", "Not Found")
 		Headers    map[string][]string `json:"headers,omitempty"`        // Response headers sent to client
 		Body       string              `json:"body,omitempty"`           // Response body sent to client
@@ -521,7 +587,7 @@ type RequestLog struct {
 
 	// Backend side: Backend → Server (only for proxy/container endpoints)
 	BackendResponse *struct {
-		StatusCode int                 `json:"status_code"`           // Backend response status code
+		StatusCode *int                `json:"status_code,omitempty"` // Backend response status code (nil if not measured)
 		StatusText string              `json:"status_text,omitempty"` // Backend status text
 		Headers    map[string][]string `json:"headers,omitempty"`     // Headers received from backend
 		Body       string              `json:"body,omitempty"`        // Body received from backend

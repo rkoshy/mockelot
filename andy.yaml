@@ -1,0 +1,95 @@
+responses:
+  - id: c1a2c6b2-9cd0-4275-8eac-5f53973a7074
+    path_pattern: /*
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+      - PATCH
+    status_code: 200
+    status_text: OK
+endpoints:
+  - id: 899567c9-4716-4946-a28f-5f3cdc2fcf55
+    name: Dashboard
+    path_prefix: /test
+    translation_mode: none
+    type: mock
+    items:
+      - type: response
+        response:
+          id: 40d1e262-3ba9-4ffb-9704-249e1bacb7c2
+          path_pattern: /*
+          methods:
+            - GET
+            - POST
+          status_code: 200
+          status_text: OK
+          headers:
+            Content-Type: application/json
+          response_mode: script
+          script_body: "const AGENT_NAMES = [\n    'Dawn Harrod', 'Josephine Lonon', 'Vanessa St.Louis', 'Tonya McNair',\n    'Kecia McDonald', 'Sidonia Mitchell', 'Tammie Grier', 'Erika Frazier',\n    'Gloria Smith', 'Andrea Fuller', 'Barbara Berry', 'LaShonda Manuel',\n    'Candice Brown', 'Meldoney Webb', 'Brittany Whaley', 'Monica Garth',\n    'Tyra Bullock', 'Adreanna Tharpe', 'Sharhonda Sheffield', 'Arie Hunt',\n    'Shirley Sampson', 'Jennie Jernigan', 'Leticia Richardson', 'Angela Peterson',\n    'Candace Walker', 'Khiana Banks', 'Constance Watson', 'Lisa Junior',\n    'Cynthia Amann', 'Darneshia Williams', 'Candis Tanner', 'Nicole Wright',\n    'Shatoria Davis', 'Melicia Hayes', 'Jaquetta Horsley', 'Martin Aquino',\n    'Angela Thomaston', 'Rhonda Jelks', 'Noemi Espinoza', 'Jacquelyn Sublett',\n    'Cassandra Threatts', 'Shandra Brown', 'Deforia Andrews', 'YaNika Whipple',\n    'LaQondra Williams', 'April Ewings-White', 'Kendal Roberts', 'Tyunia Stewart',\n    'LaVashius Jones', 'Jasmine Hunter', 'Dekesha Thompson', 'Rebeca Mercado',\n    'Nichole Catron', 'Natasha James'\n];\n\nfunction randomInt(min, max) {\n    return Math.floor(Math.random() * (max - min + 1)) + min;\n}\n\nfunction randomFloat(min, max, decimals = 2) {\n    const multiplier = Math.pow(10, decimals);\n    const value = Math.random() * (max - min) + min;\n    return Math.round(value * multiplier) / multiplier;\n}\n\nfunction generateAgentRecord(agentName, dateTime) {\n    const svc = randomInt(1, 70);\n    const aht = randomFloat(0, 1400);\n    \n    return {\n        DateTime: dateTime,\n        Agent: agentName,\n        SVC: svc,\n        SVCIT: Math.random() > 0.9 ? null : svc,\n        SVCOT: Math.random() > 0.95 ? randomInt(0, 5) : null,\n        ASA: randomFloat(0, 900),\n        AHT: aht,\n        ATT: aht > 0 ? randomFloat(aht * 0.95, aht) : 0,\n        AOHT: Math.random() > 0.7 ? null : randomFloat(0, 500),\n        AWUT: randomFloat(0, 10)\n    };\n}\n\nfunction generateMockData() {\n    const dateTime = new Date();\n    return AGENT_NAMES.map(name => generateAgentRecord(name, dateTime));\n}\n\nresponse.headers[\"Content-Type\"] = \"application/json\";\nresponse.body = JSON.stringify(generateMockData(), null, 2);"
+          request_validation:
+            mode: script
+            match_type: contains
+          use_global_cors: true
+  - id: system-rejections
+    name: Rejections
+    path_prefix: /
+    translation_mode: none
+    enabled: true
+    is_system: true
+    display_order: 999999
+    type: mock
+    items:
+      - type: response
+        response:
+          id: reject-request
+          enabled: true
+          path_pattern: /*
+          methods:
+            - GET
+            - POST
+            - PUT
+            - PATCH
+            - DELETE
+            - HEAD
+            - OPTIONS
+          status_code: 404
+          status_text: Not Found
+          headers:
+            Content-Type: text/plain
+          body: No matching endpoint found
+port: 8080
+https_enabled: true
+https_port: 8443
+http_to_https_redirect: true
+cert_mode: auto
+cert_names:
+  - local.platform28.com
+cors:
+  enabled: true
+  mode: headers
+  header_expressions:
+    - name: Access-Control-Allow-Origin
+      expression: request.origin || "*"
+    - name: Access-Control-Allow-Methods
+      expression: '"GET, POST, PUT, DELETE, OPTIONS, PATCH"'
+    - name: Access-Control-Allow-Headers
+      expression: '"Content-Type, Authorization"'
+    - name: Access-Control-Max-Age
+      expression: '"3600"'
+  options_default_status: 200
+socks5_config:
+  enabled: true
+  port: 1080
+  authentication: false
+domain_takeover:
+  domains:
+    - id: domain-1766371416578-scbcy6ntt
+      pattern: apps.platform28.com
+      overlay_mode: true
+      enabled: true
+selected_endpoint_id: 899567c9-4716-4946-a28f-5f3cdc2fcf55
+last_modified: 2025-12-21T21:44:08.48370023-05:00

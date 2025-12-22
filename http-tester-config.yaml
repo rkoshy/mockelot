@@ -1,0 +1,257 @@
+responses:
+  - id: 05216939-9451-43a0-9928-97af1ef63c25
+    path_pattern: /*
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+      - PATCH
+    status_code: 200
+    status_text: OK
+endpoints:
+  - id: a3e6f416-b320-4054-9134-6892d9e7f0ff
+    name: Configuration Files
+    path_prefix: ^/[^/]*_conf
+    translation_mode: none
+    enabled: true
+    type: mock
+    items:
+      - type: response
+        response:
+          id: a1172a4a-ce11-4080-83d0-3d31c78f711e
+          path_pattern: /authenticator_conf/config.json
+          methods:
+            - GET
+          status_code: 200
+          status_text: OK
+          body: |-
+            {
+              "SMS_CODE_SEND_TIMER": [
+                30,
+                60,
+                90
+              ],
+              "SMS_CODE_LENGTH": 7,
+              "REST_URL": "https://services.lab.platform28.com",
+              "AUTH": "/auth",
+              "TARGET_ORIGIN": [
+                "https://apps.lab.platform28.com",
+                "https://on.lab.platform28.com",
+                "https://greymatter.lab.platform28.com",
+                "https://local.platform28.com:8443",
+                "https://local.platform28.com"
+              ]
+            }
+          response_mode: static
+          request_validation:
+            mode: none
+            match_type: contains
+          use_global_cors: true
+      - type: response
+        response:
+          id: 41ae2f82-94c0-41ed-bc97-5dc4d14ab260
+          path_pattern: /cloud-admin_conf/config.json
+          methods:
+            - GET
+            - POST
+          status_code: 200
+          status_text: OK
+          headers:
+            Content-Type: application/json
+          body: |-
+            {
+              "v2ServicesUrl": "https://services.lab.platform28.com",
+              "v1ServicesUrl": "https://api.lab.platform28.com/g2vapi/v1",
+              "reportingApiUrl": "https://api.lab.platform28.com/g2vapi/v1/reporting",
+              "coreApiUrl": "https://api.lab.platform28.com/g2vapi/v1/core",
+              "authApiUrl": "https://api.lab.platform28.com/g2vapi/v1/auth",
+              "pingTimeout": 60
+            }
+  - id: d5a85335-dfbd-47a0-9ff1-d1ecc55f3040
+    name: Authenticator
+    path_prefix: ^/authenticator.*
+    translation_mode: none
+    enabled: false
+    type: proxy
+    proxy_config:
+      backend_url: https://apps.lab.platform28.com/
+      timeout_seconds: 30
+      inbound_headers:
+        - name: Connection
+          mode: drop
+        - name: Keep-Alive
+          mode: drop
+        - name: Proxy-Authenticate
+          mode: drop
+        - name: Proxy-Authorization
+          mode: drop
+        - name: Te
+          mode: drop
+        - name: Trailers
+          mode: drop
+        - name: Transfer-Encoding
+          mode: drop
+        - name: Upgrade
+          mode: drop
+        - name: X-Forwarded-For
+          mode: expression
+          expression: request.remoteAddr
+        - name: X-Forwarded-Host
+          mode: expression
+          expression: request.host
+        - name: X-Forwarded-Proto
+          mode: expression
+          expression: request.scheme
+      status_passthrough: true
+      health_check_enabled: false
+      health_check_interval: 30
+      health_check_path: /
+  - id: 9e4d94a6-1291-47fc-8986-53676d300bb7
+    name: jokes
+    path_prefix: /jokes
+    translation_mode: none
+    enabled: true
+    type: container
+    container_config:
+      proxy_config:
+        backend_url: ""
+        timeout_seconds: 0
+        status_passthrough: false
+        health_check_enabled: false
+        health_check_interval: 0
+      image_name: yesinteractive/dadjokes:latest
+      container_port: 8100
+      pull_on_startup: false
+  - id: 196f6012-e7c4-491a-9c19-be1d0702d2d2
+    name: Cloud Admin
+    path_prefix: ^/cloud-admin.*
+    translation_mode: none
+    enabled: true
+    type: proxy
+    proxy_config:
+      backend_url: https://apps.lab.platform28.com/
+      timeout_seconds: 30
+      status_passthrough: true
+      health_check_enabled: false
+      health_check_interval: 30
+      health_check_path: /
+    container_config:
+      proxy_config:
+        backend_url: ""
+        timeout_seconds: 0
+        status_passthrough: false
+        health_check_enabled: false
+        health_check_interval: 0
+      image_name: yesinteractive/dadjokes:latest
+      container_port: 8100
+      pull_on_startup: true
+  - id: 442dd0d1-9f44-4fae-b04b-f134ef6b4a62
+    name: Authenticator (Container)
+    path_prefix: ^/authenticator.*
+    translation_mode: none
+    enabled: true
+    type: container
+    proxy_config:
+      backend_url: https://apps.lab.platform28.com/
+      timeout_seconds: 30
+      inbound_headers:
+        - name: Connection
+          mode: drop
+        - name: Keep-Alive
+          mode: drop
+        - name: Proxy-Authenticate
+          mode: drop
+        - name: Proxy-Authorization
+          mode: drop
+        - name: Te
+          mode: drop
+        - name: Trailers
+          mode: drop
+        - name: Transfer-Encoding
+          mode: drop
+        - name: Upgrade
+          mode: drop
+        - name: X-Forwarded-For
+          mode: expression
+          expression: request.remoteAddr
+        - name: X-Forwarded-Host
+          mode: expression
+          expression: request.host
+        - name: X-Forwarded-Proto
+          mode: expression
+          expression: request.scheme
+      status_passthrough: true
+      health_check_enabled: false
+      health_check_interval: 30
+      health_check_path: /
+    container_config:
+      proxy_config:
+        backend_url: ""
+        timeout_seconds: 30
+        inbound_headers:
+          - name: Connection
+            mode: drop
+          - name: Keep-Alive
+            mode: drop
+          - name: Proxy-Authenticate
+            mode: drop
+          - name: Proxy-Authorization
+            mode: drop
+          - name: Te
+            mode: drop
+          - name: Trailers
+            mode: drop
+          - name: Transfer-Encoding
+            mode: drop
+          - name: Upgrade
+            mode: drop
+          - name: Host
+            mode: expression
+            expression: '"127.0.0.1:" + request.hostPort'
+          - name: X-Forwarded-For
+            mode: expression
+            expression: request.remoteAddr
+          - name: X-Forwarded-Host
+            mode: expression
+            expression: request.host
+          - name: X-Forwarded-Proto
+            mode: expression
+            expression: request.scheme
+        status_passthrough: false
+        health_check_enabled: false
+        health_check_interval: 30
+        health_check_path: /
+      image_name: docker-registry.ito-aue2.p28.cloud/authenticator:itd-0.1.247
+      container_port: 80
+      pull_on_startup: true
+      restart_policy: always
+      environment:
+        - name: DYNPKG_RELEASE
+          value: "2"
+        - name: NGINX_VERSION
+          value: 1.27.1
+        - name: NJS_RELEASE
+          value: "1"
+        - name: NJS_VERSION
+          value: 0.8.5
+        - name: PATH
+          value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        - name: PKG_RELEASE
+          value: "1"
+      restart_on_server_start: true
+cors:
+  enabled: true
+  mode: headers
+  header_expressions:
+    - name: Access-Control-Allow-Origin
+      expression: request.origin || "*"
+    - name: Access-Control-Allow-Methods
+      expression: '"GET, POST, PUT, DELETE, OPTIONS, PATCH"'
+    - name: Access-Control-Allow-Headers
+      expression: '"Content-Type, Authorization"'
+    - name: Access-Control-Max-Age
+      expression: '"3600"'
+  options_default_status: 200
+last_modified: 2025-12-15T21:59:27.293767228-05:00

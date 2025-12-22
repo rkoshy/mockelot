@@ -45,6 +45,8 @@ export function GetContainerStats(arg1:string):Promise<models.ContainerStats>;
 
 export function GetContainerStatus(arg1:string):Promise<models.ContainerStatus>;
 
+export function GetCurrentConfigPath():Promise<string>;
+
 export function GetDefaultCertNames():Promise<Array<string>>;
 
 export function GetDefaultContainerHeaders():Promise<Array<models.HeaderManipulation>>;
@@ -65,6 +67,8 @@ export function GetRequestLogs():Promise<Array<models.RequestLogSummary>>;
 
 export function GetResponses():Promise<Array<models.MethodResponse>>;
 
+export function GetSOCKS5Config():Promise<main.SOCKS5ConfigResponse>;
+
 export function GetScriptErrors(arg1:string):Promise<Array<main.ScriptErrorLog>>;
 
 export function GetSelectedEndpointId():Promise<string>;
@@ -75,6 +79,8 @@ export function ImportOpenAPISpecWithDialog(arg1:boolean):Promise<models.AppConf
 
 export function InstallCACertSystem():Promise<void>;
 
+export function IsDirty():Promise<boolean>;
+
 export function LoadConfig():Promise<models.AppConfig>;
 
 export function LoadConfigFromPath(arg1:string):Promise<models.AppConfig>;
@@ -82,6 +88,10 @@ export function LoadConfigFromPath(arg1:string):Promise<models.AppConfig>;
 export function LogRequest(arg1:models.RequestLog):Promise<void>;
 
 export function LogScriptError(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
+export function MarkClean():Promise<void>;
+
+export function MarkDirty():Promise<void>;
 
 export function PollEvents():Promise<Array<main.Event>>;
 
@@ -99,17 +109,11 @@ export function RestartContainer(arg1:string):Promise<void>;
 
 export function SaveConfig():Promise<void>;
 
+export function SaveCurrentConfig():Promise<void>;
+
 export function SelectCertFile(arg1:string):Promise<string>;
 
 export function SendEvent(arg1:string,arg2:any):Promise<void>;
-
-export function SetCORSConfig(arg1:models.CORSConfig):Promise<void>;
-
-export function SetCertMode(arg1:string,arg2:models.CertPaths,arg3:Array<string>):Promise<void>;
-
-export function SetHTTP2Enabled(arg1:boolean):Promise<void>;
-
-export function SetHTTPSConfig(arg1:boolean,arg2:number,arg3:boolean):Promise<void>;
 
 export function SetItems(arg1:Array<models.ResponseItem>):Promise<void>;
 
@@ -138,6 +142,8 @@ export function UpdateRequestLog(arg1:models.RequestLog):Promise<void>;
 export function UpdateResponse(arg1:models.MethodResponse):Promise<void>;
 
 export function UpdateResponseByID(arg1:models.MethodResponse):Promise<void>;
+
+export function UpdateServerSettings(arg1:models.ServerSettings):Promise<void>;
 
 export function ValidateAndInspectDockerImage(arg1:string):Promise<models.DockerImageInfo>;
 

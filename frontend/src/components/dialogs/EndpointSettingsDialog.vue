@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { models } from '../../../wailsjs/go/models'
 import { useServerStore } from '../../stores/server'
 import ProxyConfigPanel from './ProxyConfigPanel.vue'
@@ -13,6 +13,12 @@ const translationModeOptions = [
   { value: 'none', label: 'None - Use path as-is' },
   { value: 'strip', label: 'Strip - Remove prefix before matching' },
   { value: 'translate', label: 'Translate - Regex match/replace' }
+]
+
+// Domain filter mode options
+const domainFilterModeOptions = [
+  { value: 'any', label: 'Any Domain', description: 'Match requests from any domain (default)' },
+  { value: 'specific', label: 'Specific Domains', description: 'Only match requests from specified domains' }
 ]
 
 const props = defineProps<{
@@ -36,6 +42,21 @@ const proxyConfig = ref<models.ProxyConfig | null>(null)
 const containerConfig = ref<models.ContainerConfig | null>(null)
 const activeTab = ref<'general' | 'proxy' | 'container'>('general')
 
+// Domain filter
+const domainFilterMode = ref<string>('any')
+const domainFilterPatterns = ref<string[]>([])
+
+// Computed property to bind textarea to patterns array
+const domainPatternsText = computed({
+  get: () => domainFilterPatterns.value.join('\n'),
+  set: (value: string) => {
+    domainFilterPatterns.value = value
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
+  }
+})
+
 // Load endpoint data when dialog opens
 watch(() => props.show, (newVal) => {
   if (newVal && props.endpoint) {
@@ -55,6 +76,15 @@ watch(() => props.show, (newVal) => {
     // Load container config if this is a container endpoint
     if (props.endpoint.type === 'container' && props.endpoint.container_config) {
       containerConfig.value = props.endpoint.container_config
+    }
+
+    // Load domain filter
+    if (props.endpoint.domain_filter) {
+      domainFilterMode.value = props.endpoint.domain_filter.mode || 'any'
+      domainFilterPatterns.value = props.endpoint.domain_filter.patterns || []
+    } else {
+      domainFilterMode.value = 'any'
+      domainFilterPatterns.value = []
     }
 
     window.addEventListener('keydown', handleKeydown)
@@ -84,6 +114,12 @@ function handleSave() {
     return
   }
 
+  // Create domain filter if mode is not 'any'
+  const domainFilter = domainFilterMode.value !== 'any' ? new models.DomainFilter({
+    mode: domainFilterMode.value,
+    patterns: domainFilterMode.value === 'specific' ? domainFilterPatterns.value : []
+  }) : undefined
+
   const updatedEndpoint = new models.Endpoint({
     id: props.endpoint.id,
     name: name.value.trim(),
@@ -95,7 +131,8 @@ function handleSave() {
     type: props.endpoint.type,
     items: props.endpoint.items,
     proxy_config: proxyConfig.value || undefined,
-    container_config: containerConfig.value || undefined
+    container_config: containerConfig.value || undefined,
+    domain_filter: domainFilter
   })
 
   emit('save', updatedEndpoint)
@@ -196,6 +233,36 @@ function handleKeydown(e: KeyboardEvent) {
                 />
               </div>
 
+              <!-- Domain Filter -->
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-2">
+                  Domain Filter
+                </label>
+                <CustomSelect
+                  v-model="domainFilterMode"
+                  :options="domainFilterModeOptions"
+                />
+                <p class="mt-1 text-xs text-gray-400">
+                  {{ domainFilterModeOptions.find(o => o.value === domainFilterMode)?.description }}
+                </p>
+              </div>
+
+              <!-- Domain patterns input (only for 'specific' mode) -->
+              <div v-if="domainFilterMode === 'specific'">
+                <label class="block text-sm font-medium text-gray-300 mb-2">
+                  Domain Patterns
+                </label>
+                <textarea
+                  v-model="domainPatternsText"
+                  rows="4"
+                  placeholder="Enter domain patterns, one per line:&#10;api.example.com&#10;*.staging.example.com&#10;api-*.example.com"
+                  class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                />
+                <p class="mt-1 text-xs text-gray-400">
+                  Supports exact matches and wildcards (*). Example: *.example.com matches api.example.com, www.example.com, etc.
+                </p>
+              </div>
+
               <!-- Path Prefix -->
               <div>
                 <label class="block text-sm font-medium text-gray-300 mb-2">
@@ -273,6 +340,7 @@ function handleKeydown(e: KeyboardEvent) {
                   </template>
                 </p>
               </div>
+
             </div>
 
             <!-- Proxy Settings Tab -->
@@ -307,11 +375,22 @@ function handleKeydown(e: KeyboardEvent) {
           <!-- Footer -->
           <div class="px-6 py-4 border-t border-gray-700 flex justify-between flex-shrink-0">
             <button
+              v-if="!endpoint?.is_system"
               @click="handleDelete"
               class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded transition-colors"
             >
               Delete Endpoint
             </button>
+            <div
+              v-else
+              class="px-4 py-2 text-yellow-400 text-sm flex items-center gap-2"
+              title="System endpoints cannot be deleted"
+            >
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd" />
+              </svg>
+              System Endpoint
+            </div>
             <div class="flex gap-3">
               <button
                 @click="handleCancel"
