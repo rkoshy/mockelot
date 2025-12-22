@@ -1,0 +1,109 @@
+{
+  "endpoints": [
+    {
+      "id": "test-api-users",
+      "name": "Test API - Users Endpoint",
+      "path_prefix": "/api/users",
+      "type": "mock",
+      "enabled": true,
+      "domain_filter": {
+        "mode": "specific",
+        "patterns": ["api\\.test\\.local"]
+      },
+      "responses": [
+        {
+          "id": "users-list",
+          "method": "GET",
+          "enabled": true,
+          "status_code": 200,
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "response_mode": "static",
+          "static_body": "{\"users\": [{\"id\": 1, \"name\": \"Alice\"}, {\"id\": 2, \"name\": \"Bob\"}]}"
+        }
+      ]
+    },
+    {
+      "id": "test-any-domain",
+      "name": "Any Domain Endpoint",
+      "path_prefix": "/health",
+      "type": "mock",
+      "enabled": true,
+      "domain_filter": {
+        "mode": "any"
+      },
+      "responses": [
+        {
+          "id": "health-check",
+          "method": "GET",
+          "enabled": true,
+          "status_code": 200,
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "response_mode": "static",
+          "static_body": "{\"status\": \"healthy\"}"
+        }
+      ]
+    },
+    {
+      "id": "test-all-intercepted",
+      "name": "All Intercepted Domains Endpoint",
+      "path_prefix": "/test",
+      "type": "mock",
+      "enabled": true,
+      "domain_filter": {
+        "mode": "all"
+      },
+      "responses": [
+        {
+          "id": "test-response",
+          "method": "GET",
+          "enabled": true,
+          "status_code": 200,
+          "headers": {
+            "Content-Type": "text/plain"
+          },
+          "response_mode": "static",
+          "static_body": "This endpoint matches all intercepted domains"
+        }
+      ]
+    }
+  ],
+  "server_config": {
+    "port": 8080,
+    "https_enabled": true,
+    "https_port": 8443,
+    "cert_names": ["api.test.local", "app.test.local", "passthrough.test.local"],
+    "socks5_config": {
+      "enabled": true,
+      "port": 1080,
+      "authentication": false,
+      "username": "",
+      "password": ""
+    },
+    "domain_takeover": {
+      "domains": [
+        {
+          "id": "domain-api-test",
+          "pattern": "api\\.test\\.local",
+          "overlay_mode": false,
+          "enabled": true
+        },
+        {
+          "id": "domain-app-test",
+          "pattern": "app\\.test\\.local",
+          "overlay_mode": false,
+          "enabled": true
+        },
+        {
+          "id": "domain-passthrough",
+          "pattern": "passthrough\\.test\\.local",
+          "overlay_mode": true,
+          "enabled": true
+        }
+      ]
+    }
+  }
+}

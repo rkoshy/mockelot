@@ -26,15 +26,18 @@ const props = withDefaults(defineProps<{
   autoOpenScriptEditor?: boolean
   scriptError?: ScriptErrorInfo | null
   isGoToErrorMode?: boolean
+  isSystemEndpoint?: boolean
 }>(), {
   autoOpenScriptEditor: false,
   scriptError: null,
-  isGoToErrorMode: false
+  isGoToErrorMode: false,
+  isSystemEndpoint: false
 })
 
 const emit = defineEmits<{
   close: []
   save: [response: models.MethodResponse]
+  delete: []
   scriptModalClosed: []
 }>()
 
@@ -93,7 +96,8 @@ watch(() => editorContentRef.value?.showScriptEditor, (newVal, oldVal) => {
 // Reset state when dialog opens
 watch(() => props.visible, (newVal) => {
   if (newVal) {
-    activeTab.value = 'request'
+    // Default to response tab for system endpoints (like Rejections)
+    activeTab.value = props.isSystemEndpoint ? 'response' : 'request'
     panelResponse.value = new models.MethodResponse({ ...props.localResponse })
     panelCurrentMode.value = props.currentMode
     panelValidationMode.value = props.validationMode
@@ -231,7 +235,9 @@ watch(() => props.visible, (show) => {
 
           <!-- Tab Navigation -->
           <div class="flex border-b border-gray-700 flex-shrink-0">
+            <!-- Hide Request tab for system endpoints (like Rejections) -->
             <button
+              v-if="!isSystemEndpoint"
               @click="activeTab = 'request'"
               :class="[
                 'px-4 py-2 text-sm font-medium transition-colors',
@@ -287,38 +293,52 @@ watch(() => props.visible, (show) => {
           </div>
 
           <!-- Footer -->
-          <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-700 flex-shrink-0">
+          <div class="flex items-center justify-between px-6 py-4 border-t border-gray-700 flex-shrink-0">
+            <!-- Delete button - left side -->
             <button
-              @click="handleCancel"
-              class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors"
+              @click="emit('delete')"
+              class="p-2 text-red-400 hover:text-red-300 hover:bg-red-900/20 rounded transition-colors"
+              title="Delete this response"
             >
-              Cancel
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
             </button>
-            <button
-              @click="handleReset"
-              :disabled="!isDirty"
-              :class="[
-                'px-4 py-2 rounded transition-colors',
-                isDirty
-                  ? 'bg-gray-700 hover:bg-gray-600 text-white'
-                  : 'bg-gray-800 text-gray-600 cursor-not-allowed'
-              ]"
-              title="Reset to original values"
-            >
-              Reset
-            </button>
-            <button
-              @click="handleSave"
-              :disabled="!isDirty"
-              :class="[
-                'px-4 py-2 rounded transition-colors',
-                isDirty
-                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                  : 'bg-blue-900 text-blue-700 cursor-not-allowed'
-              ]"
-            >
-              Save
-            </button>
+
+            <!-- Primary actions - right side -->
+            <div class="flex items-center gap-3">
+              <button
+                @click="handleCancel"
+                class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                @click="handleReset"
+                :disabled="!isDirty"
+                :class="[
+                  'px-4 py-2 rounded transition-colors',
+                  isDirty
+                    ? 'bg-gray-700 hover:bg-gray-600 text-white'
+                    : 'bg-gray-800 text-gray-600 cursor-not-allowed'
+                ]"
+                title="Reset to original values"
+              >
+                Reset
+              </button>
+              <button
+                @click="handleSave"
+                :disabled="!isDirty"
+                :class="[
+                  'px-4 py-2 rounded transition-colors',
+                  isDirty
+                    ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                    : 'bg-blue-900 text-blue-700 cursor-not-allowed'
+                ]"
+              >
+                Save
+              </button>
+            </div>
           </div>
         </div>
       </div>

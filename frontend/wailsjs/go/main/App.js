@@ -86,6 +86,10 @@ export function GetContainerStatus(arg1) {
   return window['go']['main']['App']['GetContainerStatus'](arg1);
 }
 
+export function GetCurrentConfigPath() {
+  return window['go']['main']['App']['GetCurrentConfigPath']();
+}
+
 export function GetDefaultCertNames() {
   return window['go']['main']['App']['GetDefaultCertNames']();
 }
@@ -126,6 +130,10 @@ export function GetResponses() {
   return window['go']['main']['App']['GetResponses']();
 }
 
+export function GetSOCKS5Config() {
+  return window['go']['main']['App']['GetSOCKS5Config']();
+}
+
 export function GetScriptErrors(arg1) {
   return window['go']['main']['App']['GetScriptErrors'](arg1);
 }
@@ -146,6 +154,10 @@ export function InstallCACertSystem() {
   return window['go']['main']['App']['InstallCACertSystem']();
 }
 
+export function IsDirty() {
+  return window['go']['main']['App']['IsDirty']();
+}
+
 export function LoadConfig() {
   return window['go']['main']['App']['LoadConfig']();
 }
@@ -160,6 +172,14 @@ export function LogRequest(arg1) {
 
 export function LogScriptError(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['LogScriptError'](arg1, arg2, arg3, arg4);
+}
+
+export function MarkClean() {
+  return window['go']['main']['App']['MarkClean']();
+}
+
+export function MarkDirty() {
+  return window['go']['main']['App']['MarkDirty']();
 }
 
 export function PollEvents() {
@@ -194,28 +214,16 @@ export function SaveConfig() {
   return window['go']['main']['App']['SaveConfig']();
 }
 
+export function SaveCurrentConfig() {
+  return window['go']['main']['App']['SaveCurrentConfig']();
+}
+
 export function SelectCertFile(arg1) {
   return window['go']['main']['App']['SelectCertFile'](arg1);
 }
 
 export function SendEvent(arg1, arg2) {
   return window['go']['main']['App']['SendEvent'](arg1, arg2);
-}
-
-export function SetCORSConfig(arg1) {
-  return window['go']['main']['App']['SetCORSConfig'](arg1);
-}
-
-export function SetCertMode(arg1, arg2, arg3) {
-  return window['go']['main']['App']['SetCertMode'](arg1, arg2, arg3);
-}
-
-export function SetHTTP2Enabled(arg1) {
-  return window['go']['main']['App']['SetHTTP2Enabled'](arg1);
-}
-
-export function SetHTTPSConfig(arg1, arg2, arg3) {
-  return window['go']['main']['App']['SetHTTPSConfig'](arg1, arg2, arg3);
 }
 
 export function SetItems(arg1) {
@@ -272,6 +280,10 @@ export function UpdateResponse(arg1) {
 
 export function UpdateResponseByID(arg1) {
   return window['go']['main']['App']['UpdateResponseByID'](arg1);
+}
+
+export function UpdateServerSettings(arg1) {
+  return window['go']['main']['App']['UpdateServerSettings'](arg1);
 }
 
 export function ValidateAndInspectDockerImage(arg1) {

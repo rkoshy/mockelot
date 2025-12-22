@@ -1,24 +1,12 @@
 <script lang="ts" setup>
-import { ref, watch, computed, onUnmounted } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { models } from '../../types/models'
 import {
-  HTTP_METHODS,
   STATUS_CODES,
-  RESPONSE_MODES,
-  RESPONSE_MODE_LABELS,
-  VALIDATION_MODES,
-  VALIDATION_MODE_LABELS,
-  VALIDATION_MATCH_TYPES,
-  VALIDATION_MATCH_TYPE_LABELS,
   type ResponseMode,
   type ValidationMode,
   type ValidationMatchType
 } from '../../types/models'
-import BodyEditorModal from '../shared/BodyEditorModal.vue'
-import ContentTypeSelector from '../shared/ContentTypeSelector.vue'
-import ComboBox from '../shared/ComboBox.vue'
-import ScriptEditorModal from '../shared/ScriptEditorModal.vue'
-import ResponseEditorContent from './ResponseEditorContent.vue'
 import ResponseEditorPanel from './ResponseEditorPanel.vue'
 import ScriptErrorLogDialog, { type ScriptErrorInfo } from './ScriptErrorLogDialog.vue'
 import { useServerStore } from '../../stores/server'
@@ -32,12 +20,10 @@ const statusCodeOptions = computed(() =>
 
 const props = defineProps<{
   response: models.MethodResponse
-  isExpanded: boolean
   index: number
 }>()
 
 const emit = defineEmits<{
-  (e: 'toggle'): void
   (e: 'update', response: models.MethodResponse): void
   (e: 'delete'): void
   (e: 'dragstart', event: DragEvent): void
@@ -97,16 +83,6 @@ const validationScript = computed({
   }
 })
 
-// Active tab for editor content
-const activeTab = ref<'request' | 'response'>('request')
-
-// Force response tab for system endpoints (like Rejections)
-watch(() => serverStore.currentEndpoint?.is_system, (isSystem) => {
-  if (isSystem) {
-    activeTab.value = 'response'
-  }
-}, { immediate: true })
-
 // Slide-in panel state
 const showEditorPanel = ref(false)
 
@@ -121,34 +97,21 @@ const currentScriptError = ref<ScriptErrorInfo | null>(null)
 
 // "Go To Error" mode - tracks if we need to restore state
 const isGoToErrorMode = ref(false)
-const savedStateBeforeGoToError = ref<{
-  wasExpanded: boolean
-  activeTabBefore: 'request' | 'response'
-  panelWasOpen: boolean
-} | null>(null)
+const savedPanelState = ref<boolean>(false)
 
 // Handle "Go To Error" from error dialog
 function handleGoToError(error: ScriptErrorInfo) {
   // Close error dialog
   showErrorDialog.value = false
 
-  // Save current state for restoration
-  savedStateBeforeGoToError.value = {
-    wasExpanded: props.isExpanded,
-    activeTabBefore: activeTab.value,
-    panelWasOpen: showEditorPanel.value
-  }
+  // Save current panel state for restoration
+  savedPanelState.value = showEditorPanel.value
 
   // Store error info to pass to editor
   currentScriptError.value = error
 
   // Enter "Go To Error" mode
   isGoToErrorMode.value = true
-
-  // Expand card if it wasn't already (so user sees context)
-  if (!props.isExpanded) {
-    emit('toggle')
-  }
 
   // Open the full editor panel with auto-launch of script editor
   autoOpenScriptEditor.value = true
@@ -157,26 +120,18 @@ function handleGoToError(error: ScriptErrorInfo) {
 
 // Restore state after "Go To Error" modal closes
 function restoreStateAfterGoToError() {
-  if (!isGoToErrorMode.value || !savedStateBeforeGoToError.value) {
+  if (!isGoToErrorMode.value) {
     return
   }
 
-  const saved = savedStateBeforeGoToError.value
-
-  // Close the panel
-  showEditorPanel.value = false
-
-  // Restore tab
-  activeTab.value = saved.activeTabBefore
-
-  // Restore expansion state
-  if (!saved.wasExpanded && props.isExpanded) {
-    emit('toggle')
+  // Close the panel if it wasn't open before
+  if (!savedPanelState.value) {
+    showEditorPanel.value = false
   }
 
   // Clear state
   isGoToErrorMode.value = false
-  savedStateBeforeGoToError.value = null
+  savedPanelState.value = false
   autoOpenScriptEditor.value = false
   currentScriptError.value = null
 }
@@ -362,46 +317,6 @@ function onDrop(e: DragEvent) {
   emit('drop', e)
 }
 
-// Keyboard shortcuts
-function handleKeydown(e: KeyboardEvent) {
-  // Ignore when typing in inputs or textareas
-  if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
-    return
-  }
-
-  if (e.key === 'e' || e.key === 'E') {
-    e.preventDefault()
-    emit('toggle')
-  } else if (e.ctrlKey && e.key === 'b') {
-    e.preventDefault()
-    // Context-aware: open body editor or script editor
-    if (currentMode.value === 'script') {
-      // Script mode - no body editor, this shortcut not applicable
-      return
-    }
-    // Open body editor (handled in ResponseEditorContent)
-  } else if (e.ctrlKey && e.key === 's') {
-    e.preventDefault()
-    // Open script editor (validation or response)
-    // Handled in ResponseEditorContent
-  } else if (e.ctrlKey && e.key === 'Enter') {
-    e.preventDefault()
-    applyChanges()
-  }
-}
-
-// Add/remove keyboard listener when card is expanded
-watch(() => props.isExpanded, (newVal) => {
-  if (newVal) {
-    document.addEventListener('keydown', handleKeydown)
-  } else {
-    document.removeEventListener('keydown', handleKeydown)
-  }
-})
-
-onUnmounted(() => {
-  document.removeEventListener('keydown', handleKeydown)
-})
 </script>
 
 <template>
@@ -410,18 +325,18 @@ onUnmounted(() => {
     class="rounded-lg border overflow-hidden transition-all"
     :class="[
       isEnabled ? 'bg-gray-800 border-gray-700' : 'bg-gray-900 border-gray-800 opacity-60',
-      { 'ring-2 ring-blue-500': isExpanded, 'opacity-50': isDragging }
+      { 'ring-2 ring-blue-500': showEditorPanel, 'opacity-50': isDragging }
     ]"
     @dragover.prevent="onDragOver"
     @drop="onDrop"
   >
-    <!-- Collapsed Header (always visible) - entire header is draggable -->
+    <!-- Card Header - entire header is draggable, click opens Full Editor -->
     <div
       class="px-3 py-2 cursor-grab active:cursor-grabbing hover:bg-gray-750 transition-colors select-none"
       draggable="true"
       @dragstart="onHandleDragStart"
       @dragend="onHandleDragEnd"
-      @click="emit('toggle')"
+      @click="showEditorPanel = true"
     >
       <!-- Top Row: Priority, Path, Status, Arrow -->
       <div class="flex items-center gap-2">
@@ -473,15 +388,15 @@ onUnmounted(() => {
           </span>
         </button>
 
-        <!-- Expand/Collapse Arrow -->
+        <!-- Edit Icon (opens Full Editor) -->
         <svg
-          class="w-4 h-4 text-gray-400 transition-transform flex-shrink-0"
-          :class="{ 'rotate-180': isExpanded }"
+          class="w-4 h-4 text-gray-400 flex-shrink-0"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
+          title="Click to edit"
         >
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
         </svg>
       </div>
 
@@ -494,125 +409,6 @@ onUnmounted(() => {
         >
           {{ method }}
         </span>
-      </div>
-    </div>
-
-    <!-- Expanded Content -->
-    <div v-if="isExpanded" class="border-t border-gray-700 flex flex-col">
-      <!-- Tab Navigation -->
-      <div class="flex items-center border-b border-gray-700">
-        <!-- Tabs -->
-        <div class="flex flex-1">
-          <!-- Request tab - hidden for system endpoints -->
-          <button
-            v-if="!serverStore.currentEndpoint?.is_system"
-            @click="activeTab = 'request'"
-            :class="[
-              'px-4 py-2 text-sm font-medium transition-colors',
-              activeTab === 'request'
-                ? 'text-blue-400 border-b-2 border-blue-400'
-                : 'text-gray-400 hover:text-gray-300'
-            ]"
-          >
-            Request
-          </button>
-          <button
-            @click="activeTab = 'response'"
-            :class="[
-              'px-4 py-2 text-sm font-medium transition-colors',
-              activeTab === 'response'
-                ? 'text-blue-400 border-b-2 border-blue-400'
-                : 'text-gray-400 hover:text-gray-300'
-            ]"
-          >
-            Response
-          </button>
-        </div>
-
-        <!-- Full Editor Button -->
-        <button
-          @click="showEditorPanel = true"
-          class="mr-3 px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded text-gray-300 transition-colors flex items-center gap-1"
-          title="Open in full editor panel"
-        >
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-          </svg>
-          Full Editor
-        </button>
-      </div>
-
-      <!-- Tab Content -->
-      <div class="p-4">
-        <ResponseEditorContent
-          :local-response="localResponse"
-          :active-tab="activeTab"
-          :current-mode="currentMode"
-          :validation-mode="validationMode"
-          :validation-match-type="validationMatchType"
-          :validation-pattern="validationPattern"
-          :validation-script="validationScript"
-          :content-type="contentType"
-          :has-body="hasBody"
-          :body-placeholder="bodyPlaceholder"
-          :handles-options="handlesOptions"
-          :use-global-c-o-r-s="useGlobalCORS"
-          :status-code-options="statusCodeOptions"
-          :is-system-endpoint="serverStore.currentEndpoint?.is_system || false"
-          @update:local-response="handleLocalResponseUpdate"
-          @update:current-mode="currentMode = $event"
-          @update:validation-mode="validationMode = $event"
-          @update:validation-match-type="validationMatchType = $event"
-          @update:validation-pattern="validationPattern = $event"
-          @update:validation-script="validationScript = $event"
-          @update:content-type="contentType = $event"
-          @update:use-global-c-o-r-s="useGlobalCORS = $event; applyChanges()"
-          @apply-changes="applyChanges"
-          @clear-body="clearBody"
-        />
-      </div>
-
-      <!-- Action Buttons -->
-      <div class="flex items-center justify-between gap-2 p-4 pt-0">
-        <!-- Destructive action - left -->
-        <button
-          @click="emit('delete')"
-          class="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-900/20 rounded transition-colors"
-          title="Delete this response"
-        >
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-          </svg>
-        </button>
-
-        <!-- Primary actions - right -->
-        <div class="flex gap-2">
-          <button
-            @click="resetChanges"
-            :disabled="!isDirty"
-            :class="[
-              'px-3 py-1.5 rounded text-sm font-medium transition-colors',
-              isDirty
-                ? 'bg-gray-700 hover:bg-gray-600 text-white'
-                : 'bg-gray-800 text-gray-600 cursor-not-allowed'
-            ]"
-            title="Reset to original values"
-          >
-            Reset
-          </button>
-          <button
-            @click="applyChanges"
-            :disabled="!isDirty"
-            :class="[
-              'px-3 py-1.5 rounded text-sm font-medium transition-colors',
-              isDirty
-                ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                : 'bg-blue-900 text-blue-700 cursor-not-allowed'
-            ]"
-          >
-            Save
-          </button>
-        </div>
       </div>
     </div>
 
@@ -633,8 +429,10 @@ onUnmounted(() => {
       :auto-open-script-editor="autoOpenScriptEditor"
       :script-error="currentScriptError"
       :is-go-to-error-mode="isGoToErrorMode"
+      :is-system-endpoint="serverStore.currentEndpoint?.is_system || false"
       @save="localResponse = $event; applyChanges(); showEditorPanel = false; autoOpenScriptEditor = false; currentScriptError = null; isGoToErrorMode = false"
       @close="isGoToErrorMode ? restoreStateAfterGoToError() : (showEditorPanel = false, autoOpenScriptEditor = false, currentScriptError = null)"
+      @delete="showEditorPanel = false; emit('delete')"
       @script-modal-closed="restoreStateAfterGoToError"
     />
 

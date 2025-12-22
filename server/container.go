@@ -749,7 +749,7 @@ func (c *ContainerHandler) logRequest(requestID string, endpoint *models.Endpoin
 		requestLog.ClientRequest.UserAgent = r.Header.Get("User-Agent")
 
 		// Populate client response
-		requestLog.ClientResponse.StatusCode = clientStatusCode
+		requestLog.ClientResponse.StatusCode = &clientStatusCode
 		requestLog.ClientResponse.StatusText = http.StatusText(clientStatusCode)
 		requestLog.ClientResponse.Headers = clientRespHeaders
 		requestLog.ClientResponse.Body = clientRespBody
@@ -775,14 +775,14 @@ func (c *ContainerHandler) logRequest(requestID string, endpoint *models.Endpoin
 
 		// Populate backend response (pointer struct)
 		requestLog.BackendResponse = &struct {
-			StatusCode int                 `json:"status_code"`
+			StatusCode *int                `json:"status_code,omitempty"`
 			StatusText string              `json:"status_text,omitempty"`
 			Headers    map[string][]string `json:"headers,omitempty"`
 			Body       string              `json:"body,omitempty"`
 			DelayMs    *int64              `json:"delay_ms,omitempty"`
 			RTTMs      *int64              `json:"rtt_ms,omitempty"`
 		}{
-			StatusCode: backendStatusCode,
+			StatusCode: &backendStatusCode,
 			StatusText: backendStatusText,
 			Headers:    backendRespHeaders,
 			Body:       backendRespBody,
@@ -850,7 +850,7 @@ func (c *ContainerHandler) logErrorRequest(endpoint *models.Endpoint, r *http.Re
 	requestLog.ClientRequest.UserAgent = r.Header.Get("User-Agent")
 
 	// Populate client response with error
-	requestLog.ClientResponse.StatusCode = statusCode
+	requestLog.ClientResponse.StatusCode = &statusCode
 	requestLog.ClientResponse.StatusText = http.StatusText(statusCode)
 	requestLog.ClientResponse.Headers = make(map[string][]string)
 	requestLog.ClientResponse.Body = errorMessage
@@ -886,7 +886,7 @@ func (c *ContainerHandler) logPendingRequest(requestID string, endpoint *models.
 		requestLog.ClientRequest.UserAgent = r.Header.Get("User-Agent")
 
 		// Client response is empty (pending)
-		requestLog.ClientResponse.StatusCode = 0
+		requestLog.ClientResponse.StatusCode = nil
 		requestLog.ClientResponse.StatusText = ""
 		requestLog.ClientResponse.Headers = nil
 		requestLog.ClientResponse.Body = ""

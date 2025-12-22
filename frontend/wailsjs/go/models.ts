@@ -14,6 +14,38 @@ export namespace main {
 	        this.data = source["data"];
 	    }
 	}
+	export class SOCKS5ConfigResponse {
+	    socks5_config?: models.SOCKS5Config;
+	    domain_takeover?: models.DomainTakeoverConfig;
+	
+	    static createFrom(source: any = {}) {
+	        return new SOCKS5ConfigResponse(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.socks5_config = this.convertValues(source["socks5_config"], models.SOCKS5Config);
+	        this.domain_takeover = this.convertValues(source["domain_takeover"], models.DomainTakeoverConfig);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ScriptErrorLog {
 	    // Go type: time
 	    timestamp: any;
@@ -74,6 +106,74 @@ export namespace main {
 
 export namespace models {
 	
+	export class DomainConfig {
+	    id: string;
+	    pattern: string;
+	    overlay_mode: boolean;
+	    enabled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new DomainConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.pattern = source["pattern"];
+	        this.overlay_mode = source["overlay_mode"];
+	        this.enabled = source["enabled"];
+	    }
+	}
+	export class DomainTakeoverConfig {
+	    domains: DomainConfig[];
+	
+	    static createFrom(source: any = {}) {
+	        return new DomainTakeoverConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.domains = this.convertValues(source["domains"], DomainConfig);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SOCKS5Config {
+	    enabled: boolean;
+	    port: number;
+	    authentication: boolean;
+	    username?: string;
+	    password?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SOCKS5Config(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.port = source["port"];
+	        this.authentication = source["authentication"];
+	        this.username = source["username"];
+	        this.password = source["password"];
+	    }
+	}
 	export class CORSHeader {
 	    name: string;
 	    expression: string;
@@ -308,6 +408,20 @@ export namespace models {
 		    return a;
 		}
 	}
+	export class DomainFilter {
+	    mode: string;
+	    patterns?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new DomainFilter(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mode = source["mode"];
+	        this.patterns = source["patterns"];
+	    }
+	}
 	export class Endpoint {
 	    id: string;
 	    name: string;
@@ -316,6 +430,9 @@ export namespace models {
 	    translate_pattern?: string;
 	    translate_replace?: string;
 	    enabled?: boolean;
+	    is_system?: boolean;
+	    display_order?: number;
+	    domain_filter?: DomainFilter;
 	    type: string;
 	    items?: ResponseItem[];
 	    proxy_config?: ProxyConfig;
@@ -334,6 +451,9 @@ export namespace models {
 	        this.translate_pattern = source["translate_pattern"];
 	        this.translate_replace = source["translate_replace"];
 	        this.enabled = source["enabled"];
+	        this.is_system = source["is_system"];
+	        this.display_order = source["display_order"];
+	        this.domain_filter = this.convertValues(source["domain_filter"], DomainFilter);
 	        this.type = source["type"];
 	        this.items = this.convertValues(source["items"], ResponseItem);
 	        this.proxy_config = this.convertValues(source["proxy_config"], ProxyConfig);
@@ -561,7 +681,10 @@ export namespace models {
 	    cert_paths?: CertPaths;
 	    cert_names?: string[];
 	    cors?: CORSConfig;
+	    socks5_config?: SOCKS5Config;
+	    domain_takeover?: DomainTakeoverConfig;
 	    container_log_line_limit?: number;
+	    selected_endpoint_id?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppConfig(source);
@@ -582,7 +705,10 @@ export namespace models {
 	        this.cert_paths = this.convertValues(source["cert_paths"], CertPaths);
 	        this.cert_names = source["cert_names"];
 	        this.cors = this.convertValues(source["cors"], CORSConfig);
+	        this.socks5_config = this.convertValues(source["socks5_config"], SOCKS5Config);
+	        this.domain_takeover = this.convertValues(source["domain_takeover"], DomainTakeoverConfig);
 	        this.container_log_line_limit = source["container_log_line_limit"];
+	        this.selected_endpoint_id = source["selected_endpoint_id"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -709,6 +835,9 @@ export namespace models {
 	
 	
 	
+	
+	
+	
 	export class HealthStatus {
 	    endpoint_id: string;
 	    healthy: boolean;
@@ -768,13 +897,15 @@ export namespace models {
 	    id: string;
 	    timestamp: string;
 	    endpoint_id?: string;
+	    validation_failed?: boolean;
+	    response_failed?: boolean;
 	    // Go type: struct { Method string "json:\"method\""; FullURL string "json:\"full_url\""; Path string "json:\"path\""; QueryParams map[string][]string "json:\"query_params,omitempty\""; Headers map[string][]string "json:\"headers,omitempty\""; Body string "json:\"body,omitempty\""; Protocol string "json:\"protocol,omitempty\""; SourceIP string "json:\"source_ip\""; UserAgent string "json:\"user_agent,omitempty\"" }
 	    client_request: any;
-	    // Go type: struct { StatusCode int "json:\"status_code\""; StatusText string "json:\"status_text,omitempty\""; Headers map[string][]string "json:\"headers,omitempty\""; Body string "json:\"body,omitempty\""; DelayMs *int64 "json:\"delay_ms,omitempty\""; RTTMs *int64 "json:\"rtt_ms,omitempty\"" }
+	    // Go type: struct { StatusCode *int "json:\"status_code,omitempty\""; StatusText string "json:\"status_text,omitempty\""; Headers map[string][]string "json:\"headers,omitempty\""; Body string "json:\"body,omitempty\""; DelayMs *int64 "json:\"delay_ms,omitempty\""; RTTMs *int64 "json:\"rtt_ms,omitempty\"" }
 	    client_response: any;
 	    // Go type: struct { Method string "json:\"method\""; FullURL string "json:\"full_url\""; Path string "json:\"path\""; QueryParams map[string][]string "json:\"query_params,omitempty\""; Headers map[string][]string "json:\"headers,omitempty\""; Body string "json:\"body,omitempty\"" }
 	    backend_request?: any;
-	    // Go type: struct { StatusCode int "json:\"status_code\""; StatusText string "json:\"status_text,omitempty\""; Headers map[string][]string "json:\"headers,omitempty\""; Body string "json:\"body,omitempty\""; DelayMs *int64 "json:\"delay_ms,omitempty\""; RTTMs *int64 "json:\"rtt_ms,omitempty\"" }
+	    // Go type: struct { StatusCode *int "json:\"status_code,omitempty\""; StatusText string "json:\"status_text,omitempty\""; Headers map[string][]string "json:\"headers,omitempty\""; Body string "json:\"body,omitempty\""; DelayMs *int64 "json:\"delay_ms,omitempty\""; RTTMs *int64 "json:\"rtt_ms,omitempty\"" }
 	    backend_response?: any;
 	
 	    static createFrom(source: any = {}) {
@@ -786,6 +917,8 @@ export namespace models {
 	        this.id = source["id"];
 	        this.timestamp = source["timestamp"];
 	        this.endpoint_id = source["endpoint_id"];
+	        this.validation_failed = source["validation_failed"];
+	        this.response_failed = source["response_failed"];
 	        this.client_request = this.convertValues(source["client_request"], Object);
 	        this.client_response = this.convertValues(source["client_response"], Object);
 	        this.backend_request = this.convertValues(source["backend_request"], Object);
@@ -817,13 +950,15 @@ export namespace models {
 	    method: string;
 	    path: string;
 	    source_ip: string;
-	    client_status: number;
-	    backend_status: number;
+	    client_status?: number;
+	    backend_status?: number;
 	    client_rtt?: number;
 	    backend_rtt?: number;
 	    has_backend: boolean;
 	    client_body_size: number;
 	    pending: boolean;
+	    validation_failed?: boolean;
+	    response_failed?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new RequestLogSummary(source);
@@ -844,11 +979,64 @@ export namespace models {
 	        this.has_backend = source["has_backend"];
 	        this.client_body_size = source["client_body_size"];
 	        this.pending = source["pending"];
+	        this.validation_failed = source["validation_failed"];
+	        this.response_failed = source["response_failed"];
 	    }
 	}
 	
 	
 	
+	
+	export class ServerSettings {
+	    port?: number;
+	    http2_enabled?: boolean;
+	    https_enabled?: boolean;
+	    https_port?: number;
+	    http_to_https_redirect?: boolean;
+	    cert_mode?: string;
+	    cert_paths?: CertPaths;
+	    cert_names?: string[];
+	    cors?: CORSConfig;
+	    socks5_config?: SOCKS5Config;
+	    domain_takeover?: DomainTakeoverConfig;
+	
+	    static createFrom(source: any = {}) {
+	        return new ServerSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.port = source["port"];
+	        this.http2_enabled = source["http2_enabled"];
+	        this.https_enabled = source["https_enabled"];
+	        this.https_port = source["https_port"];
+	        this.http_to_https_redirect = source["http_to_https_redirect"];
+	        this.cert_mode = source["cert_mode"];
+	        this.cert_paths = this.convertValues(source["cert_paths"], CertPaths);
+	        this.cert_names = source["cert_names"];
+	        this.cors = this.convertValues(source["cors"], CORSConfig);
+	        this.socks5_config = this.convertValues(source["socks5_config"], SOCKS5Config);
+	        this.domain_takeover = this.convertValues(source["domain_takeover"], DomainTakeoverConfig);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 
 }

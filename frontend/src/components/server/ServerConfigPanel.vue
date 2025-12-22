@@ -8,10 +8,14 @@ import EndpointSettingsDialog from '../dialogs/EndpointSettingsDialog.vue'
 import ConfirmDialog from '../dialogs/ConfirmDialog.vue'
 import ContainerConsoleDialog from '../dialogs/ContainerConsoleDialog.vue'
 import TrafficLogPanel from '../traffic/TrafficLogPanel.vue'
+import ServerTab from './tabs/ServerTab.vue'
 import { models } from '../../types/models'
 import { StartContainer, StopContainer, DeleteContainer } from '../../../wailsjs/go/main/App'
 
 const serverStore = useServerStore()
+
+// Track selected tab (server vs endpoint)
+const selectedTab = ref<'server' | string>('server')  // Default to Server tab
 
 // Inject event registration function from HeaderBar
 type EventCallback = (data: any) => void
@@ -101,6 +105,11 @@ function onDrop(index: number, event: DragEvent) {
 function onDragEnd() {
   draggedIndex.value = null
   dragOverIndex.value = null
+}
+
+function selectEndpoint(id: string) {
+  selectedTab.value = id
+  serverStore.selectEndpoint(id)
 }
 
 function getItemId(item: models.ResponseItem): string {
@@ -466,20 +475,34 @@ onUnmounted(() => {
 
 <template>
   <div class="h-full flex flex-col">
-    <!-- Endpoint Tabs -->
+    <!-- Horizontal Tab Bar -->
     <div class="flex items-stretch border-b border-gray-700 flex-shrink-0 bg-gray-800">
       <div class="flex-1 flex overflow-x-auto">
+        <!-- SERVER Tab (NEW) -->
+        <div
+          :class="[
+            'relative px-4 py-2 text-sm font-medium border-r border-gray-700 transition-colors flex items-center gap-1 min-w-[100px] cursor-pointer',
+            selectedTab === 'server'
+              ? 'bg-gray-900 text-white border-b-2 border-b-blue-500'
+              : 'text-gray-400 hover:text-gray-200 hover:bg-gray-750'
+          ]"
+          @click="selectedTab = 'server'"
+        >
+          <span class="font-semibold">Server</span>
+        </div>
+
+        <!-- Endpoint Tabs -->
         <div
           v-for="endpoint in serverStore.endpoints"
           :key="endpoint.id"
           :class="[
             'relative px-3 py-2 text-sm font-medium border-r border-gray-700 transition-colors flex flex-col items-start gap-1 min-w-[140px] group',
-            serverStore.selectedEndpointId === endpoint.id
+            selectedTab === endpoint.id
               ? 'bg-gray-900 text-white border-b-2'
               : 'text-gray-400 hover:text-gray-200 hover:bg-gray-750',
             endpoint.name === 'Rejections'
               ? 'border-b-2 border-b-red-600'
-              : serverStore.selectedEndpointId === endpoint.id
+              : selectedTab === endpoint.id
                 ? 'border-b-blue-500'
                 : '',
             endpoint.is_system
@@ -489,7 +512,7 @@ onUnmounted(() => {
         >
           <!-- Invisible clickable overlay covering entire tab -->
           <div
-            @click="serverStore.selectEndpoint(endpoint.id)"
+            @click="selectEndpoint(endpoint.id)"
             class="absolute inset-0 z-0"
             :title="`Switch to ${endpoint.name}`"
           ></div>
@@ -542,11 +565,16 @@ onUnmounted(() => {
             </span>
             <span v-if="!endpoint.enabled" class="text-[10px] opacity-50 flex-shrink-0">(off)</span>
 
-            <!-- Settings Gear Icon (only visible on current tab, hidden for system endpoints) - higher z-index and larger -->
+            <!-- Settings Gear Icon - always reserve space, only show on selected non-system tabs -->
             <button
-              v-if="serverStore.selectedEndpointId === endpoint.id && !endpoint.is_system"
+              v-if="!endpoint.is_system"
               @click.stop="openEndpointSettings(endpoint)"
-              class="ml-auto p-1 hover:bg-gray-700 rounded transition-colors flex-shrink-0 pointer-events-auto relative z-20"
+              :class="[
+                'ml-auto p-1 rounded transition-colors flex-shrink-0 pointer-events-auto relative z-20',
+                serverStore.selectedEndpointId === endpoint.id
+                  ? 'hover:bg-gray-700 opacity-100'
+                  : 'opacity-0 pointer-events-none'
+              ]"
               title="Endpoint Settings"
             >
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -554,6 +582,8 @@ onUnmounted(() => {
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
             </button>
+            <!-- Spacer for system endpoints to maintain consistent width -->
+            <div v-else class="ml-auto w-6 h-6 flex-shrink-0"></div>
           </div>
 
           <!-- Row 2: Path prefix and container image (if container) -->
@@ -630,14 +660,19 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Info Banner (Mock only) -->
-    <div v-if="serverStore.currentEndpoint?.type === 'mock'" class="px-3 py-2 bg-gray-800/50 border-b border-gray-700 flex-shrink-0">
-      <p class="text-xs text-gray-400">
-        Rules are checked in order. First matching rule wins. Drag to reorder. Use groups to organize related rules.
-      </p>
-    </div>
+    <!-- Server Tab Content (NEW) -->
+    <ServerTab v-if="selectedTab === 'server'" class="flex-1" />
 
-    <!-- Resizable Content Area -->
+    <!-- Endpoint Content -->
+    <template v-else>
+      <!-- Info Banner (Mock only) -->
+      <div v-if="serverStore.currentEndpoint?.type === 'mock'" class="px-3 py-2 bg-gray-800/50 border-b border-gray-700 flex-shrink-0">
+        <p class="text-xs text-gray-400">
+          Rules are checked in order. First matching rule wins. Drag to reorder. Use groups to organize related rules.
+        </p>
+      </div>
+
+      <!-- Resizable Content Area -->
     <div class="flex-1 flex flex-row min-h-0">
       <!-- Left Section: Mock Rules OR Proxy/Container Status -->
       <div
@@ -993,6 +1028,8 @@ onUnmounted(() => {
         <TrafficLogPanel />
       </div>
     </div>
+    </template>
+    <!-- End Endpoint Content -->
 
     <!-- Dialogs -->
     <AddEndpointDialog

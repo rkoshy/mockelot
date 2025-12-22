@@ -19,6 +19,7 @@ import (
 type HTTPServer struct {
 	httpServer        *http.Server
 	httpsServer       *http.Server
+	socks5Server      *SOCKS5Server
 	config            *models.AppConfig
 	configMutex       sync.RWMutex
 	requestLogger     RequestLogger
@@ -284,6 +285,21 @@ func (s *HTTPServer) Start() error {
 		}
 	}
 
+	// Start SOCKS5 proxy if enabled
+	s.configMutex.RLock()
+	socks5Config := s.config.SOCKS5Config
+	s.configMutex.RUnlock()
+
+	if socks5Config != nil && socks5Config.Enabled {
+		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler)
+		s.socks5Server = NewSOCKS5Server(socks5Config, responseHandler)
+		go func() {
+			if err := s.socks5Server.Start(); err != nil {
+				log.Printf("Failed to start SOCKS5 server: %v", err)
+			}
+		}()
+	}
+
 	// Start monitoring for any container endpoints in config
 	// This will detect and track any containers already running from previous sessions
 	s.EnsureContainerMonitoring()
@@ -432,6 +448,13 @@ func (s *HTTPServer) StartContainers() error {
 // Stop stops both HTTP and HTTPS servers
 func (s *HTTPServer) Stop() error {
 	var httpErr, httpsErr error
+
+	// Stop SOCKS5 server if running
+	if s.socks5Server != nil {
+		if err := s.socks5Server.Stop(); err != nil {
+			log.Printf("Error stopping SOCKS5 server: %v", err)
+		}
+	}
 
 	// Stop containers before stopping servers
 	if s.containerHandler != nil {

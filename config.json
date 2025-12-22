@@ -1,0 +1,125 @@
+responses:
+  - id: 05216939-9451-43a0-9928-97af1ef63c25
+    path_pattern: /*
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+      - PATCH
+    status_code: 200
+    status_text: OK
+endpoints:
+  - id: a3e6f416-b320-4054-9134-6892d9e7f0ff
+    name: Configuration Files
+    path_prefix: ^/[^/]*_conf
+    translation_mode: none
+    enabled: true
+    type: mock
+    items:
+      - type: response
+        response:
+          id: a1172a4a-ce11-4080-83d0-3d31c78f711e
+          path_pattern: /authenticator_conf/config.json
+          methods:
+            - GET
+          status_code: 200
+          status_text: OK
+          body: |-
+            {
+              "SMS_CODE_SEND_TIMER": [30, 60, 90],
+              "SMS_CODE_LENGTH": 7,
+              "REST_URL" : "https://services.lab.platform28.com",
+              "AUTH": "/auth",
+              "TARGET_ORIGIN": [ "https://apps.lab.platform28.com", "https://on.lab.platform28.com", "https://greymatter.lab.platform28.com", "https://local.platform28.com" ]
+            }
+      - type: response
+        response:
+          id: 41ae2f82-94c0-41ed-bc97-5dc4d14ab260
+          path_pattern: /cloud-admin_conf/config.json
+          methods:
+            - GET
+            - POST
+          status_code: 200
+          status_text: OK
+          body: |-
+            {
+              "v2ServicesUrl": "https://services.lab.platform28.com",
+              "v1ServicesUrl": "https://api.lab.platform28.com/g2vapi/v1",
+              "reportingApiUrl": "https://api.lab.platform28.com/g2vapi/v1/reporting",
+              "coreApiUrl": "https://api.lab.platform28.com/g2vapi/v1/core",
+              "authApiUrl": "https://api.lab.platform28.com/g2vapi/v1/auth",
+              "pingTimeout": 60
+            }
+  - id: d5a85335-dfbd-47a0-9ff1-d1ecc55f3040
+    name: Authenticator
+    path_prefix: ^/authenticator.*
+    translation_mode: none
+    enabled: true
+    type: proxy
+    proxy_config:
+      backend_url: https://apps.lab.platform28.com/
+      timeout_seconds: 30
+      inbound_headers:
+        - name: Host
+          mode: replace
+          value: apps.lab.platform28.com
+      status_passthrough: true
+      health_check_enabled: false
+      health_check_interval: 30
+      health_check_path: /
+    container_config:
+      image_name: yesinteractive/dadjokes:latest
+      container_port: 8100
+      pull_on_startup: true
+      health_check_enabled: false
+      health_check_interval: 30
+      health_check_path: /
+  - id: 9e4d94a6-1291-47fc-8986-53676d300bb7
+    name: jokes
+    path_prefix: /jokes
+    translation_mode: none
+    enabled: true
+    type: container
+    container_config:
+      image_name: yesinteractive/dadjokes:latest
+      container_port: 8100
+      pull_on_startup: false
+      health_check_enabled: false
+      health_check_interval: 30
+      health_check_path: /
+  - id: 196f6012-e7c4-491a-9c19-be1d0702d2d2
+    name: Cloud Admin
+    path_prefix: ^/cloud-admin.*
+    translation_mode: none
+    enabled: true
+    type: proxy
+    proxy_config:
+      backend_url: https://apps.lab.platform28.com/
+      timeout_seconds: 30
+      status_passthrough: true
+      health_check_enabled: false
+      health_check_interval: 30
+      health_check_path: /
+    container_config:
+      image_name: yesinteractive/dadjokes:latest
+      container_port: 8100
+      pull_on_startup: true
+      health_check_enabled: false
+      health_check_interval: 30
+      health_check_path: /
+cors:
+  enabled: true
+  mode: headers
+  header_expressions:
+    - name: Access-Control-Allow-Origin
+      expression: request.origin || "*"
+    - name: Access-Control-Allow-Methods
+      expression: '"GET, POST, PUT, DELETE, OPTIONS, PATCH"'
+    - name: Access-Control-Allow-Headers
+      expression: '"Content-Type, Authorization"'
+    - name: Access-Control-Max-Age
+      expression: '"3600"'
+  options_default_status: 200
+last_modified: 2025-12-12T18:57:04.783076643-05:00

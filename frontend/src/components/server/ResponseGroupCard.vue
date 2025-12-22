@@ -52,14 +52,6 @@ const useGlobalCORS = computed({
   }
 })
 
-// Expanded response index within group
-const expandedResponseIndex = ref<number | null>(null)
-
-// Toggle response expansion
-function toggleResponse(index: number) {
-  expandedResponseIndex.value = expandedResponseIndex.value === index ? null : index
-}
-
 // Update a response within the group
 function updateResponse(index: number, response: models.MethodResponse) {
   const responses = [...(props.group.responses || [])]
@@ -89,7 +81,6 @@ function addResponse() {
   responses.push(newResponse)
   const updated = new models.ResponseGroup({ ...props.group, responses })
   emit('update', updated)
-  expandedResponseIndex.value = responses.length - 1
 }
 
 // Start editing group name
@@ -138,17 +129,6 @@ function onResponseDrop(index: number, e: DragEvent) {
     responses.splice(index, 0, removed)
     const updated = new models.ResponseGroup({ ...props.group, responses })
     emit('update', updated)
-
-    // Update expanded index if needed
-    if (expandedResponseIndex.value === draggedResponseIndex) {
-      expandedResponseIndex.value = index
-    } else if (expandedResponseIndex.value !== null) {
-      if (draggedResponseIndex < expandedResponseIndex.value && index >= expandedResponseIndex.value) {
-        expandedResponseIndex.value--
-      } else if (draggedResponseIndex > expandedResponseIndex.value && index <= expandedResponseIndex.value) {
-        expandedResponseIndex.value++
-      }
-    }
   }
   draggedResponseIndex = null
 }
@@ -312,9 +292,7 @@ function onGroupDrop(e: DragEvent) {
         v-for="(response, idx) in group.responses"
         :key="response.id || idx"
         :response="response"
-        :is-expanded="expandedResponseIndex === idx"
         :index="idx"
-        @toggle="toggleResponse(idx)"
         @update="updateResponse(idx, $event)"
         @delete="deleteResponse(idx)"
         @dragstart="onResponseDragStart(idx, $event)"

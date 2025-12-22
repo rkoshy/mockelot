@@ -44,7 +44,8 @@ function getMethodColor(method: string): string {
   return colors[method] || 'text-gray-400'
 }
 
-function getStatusColor(code: number): string {
+function getStatusColor(code?: number): string {
+  if (code === undefined || code === null) return 'text-gray-400'
   if (code >= 200 && code < 300) return 'text-green-400'
   if (code >= 300 && code < 400) return 'text-yellow-400'
   if (code >= 400 && code < 500) return 'text-orange-400'
@@ -57,7 +58,41 @@ function formatStatus(log: models.RequestLogSummary): string {
   if (log.client_status === 0 || log.pending) {
     return 'pending'
   }
+  // If validation or response failed, there's no HTTP status
+  if (log.validation_failed || log.response_failed) {
+    return '-'
+  }
   return log.client_status?.toString() || 'N/A'
+}
+
+function getFailureBadgeText(log: models.RequestLogSummary): string | null {
+  if (log.validation_failed) {
+    return '(V)'
+  }
+  if (log.response_failed) {
+    return '(R)'
+  }
+  return null
+}
+
+function getFailureBadgeColor(log: models.RequestLogSummary): string {
+  if (log.validation_failed) {
+    return 'text-yellow-600'
+  }
+  if (log.response_failed) {
+    return 'text-red-600'
+  }
+  return ''
+}
+
+function getFailureBadgeTitle(log: models.RequestLogSummary): string {
+  if (log.validation_failed) {
+    return 'Validation Failed - Request did not match validation rules, no HTTP response sent'
+  }
+  if (log.response_failed) {
+    return 'Response Failed - Error generating response, jumped to Rejections endpoint'
+  }
+  return ''
 }
 
 function formatRTT(rtt: number | undefined): string {
@@ -164,6 +199,15 @@ function closeInspector() {
             <!-- Status Badge -->
             <span :class="['text-xs font-mono w-16 flex-shrink-0', getStatusColor(log.client_status || 0)]">
               {{ formatStatus(log) }}
+            </span>
+
+            <!-- Failure Badge -->
+            <span
+              v-if="getFailureBadgeText(log)"
+              :class="['text-xs font-mono font-bold flex-shrink-0', getFailureBadgeColor(log)]"
+              :title="getFailureBadgeTitle(log)"
+            >
+              {{ getFailureBadgeText(log) }}
             </span>
 
             <!-- RTT -->
