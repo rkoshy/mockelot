@@ -188,6 +188,35 @@ function handleCancelEndpointSettings() {
   showEndpointSettingsDialog.value = false
 }
 
+// Overlay endpoint helpers
+function isOverlayEndpoint(endpoint: models.Endpoint): boolean {
+  return endpoint.id?.startsWith('system-overlay-') || false
+}
+
+function getOverlayDisplayName(endpoint: models.Endpoint): string {
+  // Remove "Overlay: " prefix if present
+  if (endpoint.name?.startsWith('Overlay: ')) {
+    return endpoint.name.substring(9)
+  }
+  return endpoint.name || ''
+}
+
+// System endpoint helpers - show server info for SOCKS5 and Rejections
+function showsServerInfo(endpoint: models.Endpoint): boolean {
+  return endpoint.id === 'system-socks5-proxy' || endpoint.id === 'system-rejections'
+}
+
+function getServerURL(): string {
+  const config = serverStore.config
+  const status = serverStore.status
+  if (!config) {
+    return `http://localhost:${status.port}`
+  }
+  const protocol = config.https_enabled ? 'https://' : 'http://'
+  const port = config.https_enabled ? config.https_port : config.port
+  return `${protocol}localhost:${port}`
+}
+
 // Type badge helpers
 function typeBadgeClass(type: string): string {
   switch (type) {
@@ -519,19 +548,29 @@ onUnmounted(() => {
 
           <!-- Row 1: Name, Type, Status, Health, Settings -->
           <div class="flex items-center gap-1.5 w-full relative z-10 pointer-events-none">
-            <span class="font-semibold truncate flex-shrink">{{ endpoint.name }}</span>
+            <span class="font-semibold truncate flex-shrink">{{ isOverlayEndpoint(endpoint) ? getOverlayDisplayName(endpoint) : endpoint.name }}</span>
 
-            <!-- System Endpoint Badge -->
+            <!-- Overlay Endpoint Badge -->
             <span
-              v-if="endpoint.is_system"
+              v-if="isOverlayEndpoint(endpoint)"
+              class="px-1 py-0.5 text-[10px] rounded font-medium flex-shrink-0 bg-orange-900/50 text-orange-400 border border-orange-700"
+              title="Overlay endpoint - proxies unmatched requests to real backend"
+            >
+              OVRLAY
+            </span>
+
+            <!-- System Endpoint Badge (non-overlay) -->
+            <span
+              v-else-if="endpoint.is_system"
               class="px-1 py-0.5 text-[10px] rounded font-medium flex-shrink-0 bg-yellow-900/50 text-yellow-400 border border-yellow-700"
               title="System endpoint - cannot be deleted or reordered"
             >
               SYS
             </span>
 
-            <!-- Type Badge -->
+            <!-- Type Badge (non-overlay only) -->
             <span
+              v-if="!isOverlayEndpoint(endpoint)"
               :class="[
                 'px-1 py-0.5 text-[10px] rounded font-medium flex-shrink-0',
                 typeBadgeClass(endpoint.type || 'mock')
@@ -586,9 +625,14 @@ onUnmounted(() => {
             <div v-else class="ml-auto w-6 h-6 flex-shrink-0"></div>
           </div>
 
-          <!-- Row 2: Path prefix and container image (if container) -->
+          <!-- Row 2: Server URL for SOCKS5/Rejections, else Path prefix -->
           <div class="flex items-center gap-1.5 text-xs text-gray-500 w-full relative z-10 pointer-events-none">
-            <span class="font-mono truncate">{{ endpoint.path_prefix }}</span>
+            <!-- Show server URL for SOCKS5 and Rejections -->
+            <span v-if="showsServerInfo(endpoint)" class="font-mono truncate text-gray-400">
+              {{ getServerURL() }}
+            </span>
+            <!-- Show path prefix for all other endpoints -->
+            <span v-else class="font-mono truncate">{{ endpoint.path_prefix }}</span>
             <span v-if="endpoint.type === 'container' && endpoint.container_config?.image_name" class="truncate text-[10px]">
               • {{ endpoint.container_config.image_name.split(':')[0] }}
             </span>

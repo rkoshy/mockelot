@@ -601,6 +601,7 @@ export const useServerStore = defineStore('server', () => {
     EventsOff('config:dirty')
     EventsOff('config:path')
     EventsOff('config:port-changed')
+    EventsOff('config:loaded')
     // NOTE: ctr:* events are handled via polling in HeaderBar.vue
 
     console.log('Setting up script:error event listener')
@@ -670,6 +671,14 @@ export const useServerStore = defineStore('server', () => {
         if (ports.http) config.value.port = ports.http
         if (ports.https) config.value.https_port = ports.https
       }
+    })
+
+    // Config loaded event - refresh store when a file is loaded
+    EventsOn('config:loaded', async () => {
+      console.log('Config loaded, refreshing store...')
+      await refreshConfig()
+      await refreshEndpoints()
+      await refreshItems()
     })
 
     // NOTE: ctr:status, ctr:stats, and ctr:progress events are now handled via polling

@@ -48,22 +48,41 @@ const (
 
 // SOCKS5Server handles SOCKS5 proxy connections
 type SOCKS5Server struct {
-	config         *models.SOCKS5Config
-	listener       net.Listener
+	config          *models.SOCKS5Config
+	listener        net.Listener
 	responseHandler *ResponseHandler
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
-	running        bool
-	mu             sync.Mutex
+	tlsInterceptor  *TLSInterceptor             // TLS interception for HTTPS connections
+	domainTakeover  *models.DomainTakeoverConfig // Domain takeover config for intercept decisions
+	requestLogger   RequestLogger                // For logging SOCKS5 requests (observational)
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
+	running         bool
+	mu              sync.Mutex
 }
 
 // NewSOCKS5Server creates a new SOCKS5 server instance
-func NewSOCKS5Server(config *models.SOCKS5Config, handler *ResponseHandler) *SOCKS5Server {
+// Parameters:
+//   - config: SOCKS5 server configuration (port, auth, etc.)
+//   - handler: ResponseHandler for processing intercepted requests
+//   - certCache: Certificate cache for TLS interception (nil disables TLS interception)
+//   - domainTakeover: Domain takeover config to determine which domains to intercept
+//   - logger: RequestLogger for logging SOCKS5 requests (observational only)
+func NewSOCKS5Server(config *models.SOCKS5Config, handler *ResponseHandler, certCache *CertCache, domainTakeover *models.DomainTakeoverConfig, logger RequestLogger) *SOCKS5Server {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	var tlsInterceptor *TLSInterceptor
+	if certCache != nil {
+		tlsInterceptor = NewTLSInterceptor(certCache)
+		log.Println("SOCKS5 TLS interception enabled")
+	}
+
 	return &SOCKS5Server{
 		config:          config,
 		responseHandler: handler,
+		tlsInterceptor:  tlsInterceptor,
+		domainTakeover:  domainTakeover,
+		requestLogger:   logger,
 		ctx:             ctx,
 		cancel:          cancel,
 	}
@@ -414,9 +433,189 @@ func (s *SOCKS5Server) sendReply(conn net.Conn, rep byte) error {
 	return err
 }
 
-// handleTunnel processes HTTP requests through the SOCKS5 tunnel
+// shouldIntercept checks if a domain should be intercepted based on domain takeover config
+// Returns true if the domain matches any enabled domain in the takeover list
+func (s *SOCKS5Server) shouldIntercept(domain string) bool {
+	if s.domainTakeover == nil {
+		return false
+	}
+
+	for _, domainConfig := range s.domainTakeover.Domains {
+		if !domainConfig.Enabled {
+			continue
+		}
+
+		// Check if domain matches the pattern (exact match for now)
+		// TODO: Add wildcard/regex matching if needed
+		if domain == domainConfig.Pattern {
+			return true
+		}
+	}
+
+	return false
+}
+
+// handleTunnel processes HTTP/HTTPS requests through the SOCKS5 tunnel
+// For HTTPS (port 443):
+//   - If domain is in takeover list: TLS intercept → ResponseHandler
+//   - If domain NOT in takeover list: Pass-through to real server
 func (s *SOCKS5Server) handleTunnel(conn net.Conn, targetAddr string, targetPort uint16) {
-	// Read HTTP request from tunnel
+	isHTTPS := targetPort == 443
+
+	// For HTTPS connections, decide: intercept or pass-through
+	if isHTTPS {
+		if s.shouldIntercept(targetAddr) && s.tlsInterceptor != nil {
+			// Domain is in takeover list - TLS intercept and handle with ResponseHandler
+			s.handleInterceptedHTTPS(conn, targetAddr, targetPort)
+		} else {
+			// Domain NOT in takeover list - pass-through to real server
+			s.handlePassthrough(conn, targetAddr, targetPort)
+		}
+		return
+	}
+
+	// For HTTP connections, handle directly with ResponseHandler
+	s.handleHTTP(conn, targetAddr, targetPort)
+}
+
+// handleInterceptedHTTPS performs TLS interception for domains in the takeover list
+// Performs TLS handshake with client, then reads decrypted HTTP requests
+func (s *SOCKS5Server) handleInterceptedHTTPS(conn net.Conn, targetAddr string, targetPort uint16) {
+	// Perform TLS handshake with the client
+	tlsConn, err := s.tlsInterceptor.Intercept(conn, targetAddr)
+	if err != nil {
+		log.Printf("SOCKS5 TLS interception failed for %s: %v", targetAddr, err)
+		// Fall back to pass-through on TLS error
+		// Note: Connection may be in bad state, so this might fail
+		return
+	}
+	defer tlsConn.Close()
+
+	log.Printf("SOCKS5 TLS intercepted: %s:%d", targetAddr, targetPort)
+
+	// Log intercepted HTTPS connection (connection-level only)
+	// Individual HTTP requests are logged by the overlay endpoint handler
+	if s.requestLogger != nil {
+		requestLog := models.RequestLog{
+			ID:         fmt.Sprintf("%d", time.Now().UnixNano()),
+			Timestamp:  time.Now().Format(time.RFC3339),
+			EndpointID: "system-socks5-proxy",
+			SOCKS5Info: &models.SOCKS5RequestInfo{
+				TargetHost:    targetAddr,
+				TargetPort:    int(targetPort),
+				Protocol:      "HTTPS",
+				IsIntercepted: true,
+			},
+		}
+		requestLog.ClientRequest.Method = "CONNECT"
+		requestLog.ClientRequest.FullURL = fmt.Sprintf("https://%s:%d", targetAddr, targetPort)
+		requestLog.ClientRequest.Path = fmt.Sprintf("%s:%d", targetAddr, targetPort)
+		s.requestLogger.LogRequest(requestLog)
+	}
+
+	// Read HTTP requests from the TLS-wrapped connection
+	reader := bufio.NewReader(tlsConn)
+
+	for {
+		// Read HTTP request (now decrypted)
+		req, err := http.ReadRequest(reader)
+		if err != nil {
+			if err != io.EOF && !strings.Contains(err.Error(), "use of closed network connection") {
+				log.Printf("SOCKS5 read request error (intercepted): %v", err)
+			}
+			return
+		}
+
+		// Set request URL scheme and host
+		req.URL.Scheme = "https"
+		req.URL.Host = fmt.Sprintf("%s:%d", targetAddr, targetPort)
+
+		// Ensure Host header is set
+		if req.Host == "" {
+			req.Host = targetAddr
+		}
+
+		// Create a response recorder to capture the response
+		rec := newResponseRecorder()
+
+		// Pass request to ResponseHandler
+		s.responseHandler.HandleRequest(rec, req)
+
+		// Write response back through TLS tunnel
+		if err := s.writeResponse(tlsConn, rec); err != nil {
+			log.Printf("SOCKS5 write response error (intercepted): %v", err)
+			return
+		}
+
+		// Check if connection should be closed
+		if req.Header.Get("Connection") == "close" || rec.Header().Get("Connection") == "close" {
+			return
+		}
+	}
+}
+
+// handlePassthrough connects to the real server and forwards raw bytes
+// Used for domains NOT in the takeover list (Option A - pass-through mode)
+func (s *SOCKS5Server) handlePassthrough(conn net.Conn, targetAddr string, targetPort uint16) {
+	// Connect to the real destination
+	destAddr := fmt.Sprintf("%s:%d", targetAddr, targetPort)
+	destConn, err := net.DialTimeout("tcp", destAddr, 30*time.Second)
+	if err != nil {
+		log.Printf("SOCKS5 pass-through: failed to connect to %s: %v", destAddr, err)
+		return
+	}
+	defer destConn.Close()
+
+	log.Printf("SOCKS5 pass-through: %s (not in takeover list)", destAddr)
+
+	// Log pass-through connection (metadata only, no bodies)
+	if s.requestLogger != nil {
+		requestLog := models.RequestLog{
+			ID:         fmt.Sprintf("%d", time.Now().UnixNano()),
+			Timestamp:  time.Now().Format(time.RFC3339),
+			EndpointID: "system-socks5-proxy",
+			SOCKS5Info: &models.SOCKS5RequestInfo{
+				TargetHost:    targetAddr,
+				TargetPort:    int(targetPort),
+				Protocol:      "PASS-THROUGH",
+				IsIntercepted: false,
+			},
+		}
+		requestLog.ClientRequest.Method = "CONNECT"
+		requestLog.ClientRequest.FullURL = fmt.Sprintf("%s:%d", targetAddr, targetPort)
+		requestLog.ClientRequest.Path = fmt.Sprintf("%s:%d", targetAddr, targetPort)
+		s.requestLogger.LogRequest(requestLog)
+	}
+
+	// Set up bidirectional copy
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Client → Destination
+	go func() {
+		defer wg.Done()
+		io.Copy(destConn, conn)
+		// Signal EOF to destination
+		if tcpConn, ok := destConn.(*net.TCPConn); ok {
+			tcpConn.CloseWrite()
+		}
+	}()
+
+	// Destination → Client
+	go func() {
+		defer wg.Done()
+		io.Copy(conn, destConn)
+		// Signal EOF to client
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			tcpConn.CloseWrite()
+		}
+	}()
+
+	wg.Wait()
+}
+
+// handleHTTP processes HTTP (non-HTTPS) requests through the SOCKS5 tunnel
+func (s *SOCKS5Server) handleHTTP(conn net.Conn, targetAddr string, targetPort uint16) {
 	reader := bufio.NewReader(conn)
 
 	for {
@@ -430,11 +629,7 @@ func (s *SOCKS5Server) handleTunnel(conn net.Conn, targetAddr string, targetPort
 		}
 
 		// Set request URL scheme and host
-		if targetPort == 443 {
-			req.URL.Scheme = "https"
-		} else {
-			req.URL.Scheme = "http"
-		}
+		req.URL.Scheme = "http"
 		req.URL.Host = fmt.Sprintf("%s:%d", targetAddr, targetPort)
 
 		// Ensure Host header is set
@@ -447,6 +642,25 @@ func (s *SOCKS5Server) handleTunnel(conn net.Conn, targetAddr string, targetPort
 
 		// Pass request to ResponseHandler
 		s.responseHandler.HandleRequest(rec, req)
+
+		// Log HTTP request (plain HTTP through SOCKS5)
+		if s.requestLogger != nil {
+			requestLog := models.RequestLog{
+				ID:         fmt.Sprintf("%d", time.Now().UnixNano()),
+				Timestamp:  time.Now().Format(time.RFC3339),
+				EndpointID: "system-socks5-proxy",
+				SOCKS5Info: &models.SOCKS5RequestInfo{
+					TargetHost:    targetAddr,
+					TargetPort:    int(targetPort),
+					Protocol:      "HTTP",
+					IsIntercepted: false,
+				},
+			}
+			requestLog.ClientRequest.Method = req.Method
+			requestLog.ClientRequest.FullURL = req.URL.String()
+			requestLog.ClientRequest.Path = req.URL.Path
+			s.requestLogger.LogRequest(requestLog)
+		}
 
 		// Write response back through tunnel
 		if err := s.writeResponse(conn, rec); err != nil {
@@ -473,16 +687,38 @@ func (s *SOCKS5Server) writeResponse(conn net.Conn, rec *responseRecorder) error
 	statusText := http.StatusText(statusCode)
 	fmt.Fprintf(&buf, "HTTP/1.1 %d %s\r\n", statusCode, statusText)
 
-	// Write headers
+	// Get body bytes
+	bodyBytes := rec.body.Bytes()
+
+	// Write headers, but fix Transfer-Encoding and Content-Length issues
+	// The backend may have sent chunked encoding, but we've already read the full body,
+	// so we need to send Content-Length instead
+	hasContentLength := false
 	for key, values := range rec.Header() {
+		// Skip Transfer-Encoding since we're sending the full body
+		if strings.EqualFold(key, "Transfer-Encoding") {
+			continue
+		}
+		// Track if Content-Length is already set
+		if strings.EqualFold(key, "Content-Length") {
+			hasContentLength = true
+			// Update to actual body length (may differ due to transformations)
+			fmt.Fprintf(&buf, "Content-Length: %d\r\n", len(bodyBytes))
+			continue
+		}
 		for _, value := range values {
 			fmt.Fprintf(&buf, "%s: %s\r\n", key, value)
 		}
 	}
 
+	// Add Content-Length if not already present
+	if !hasContentLength && len(bodyBytes) > 0 {
+		fmt.Fprintf(&buf, "Content-Length: %d\r\n", len(bodyBytes))
+	}
+
 	// Write body
 	buf.WriteString("\r\n")
-	buf.Write(rec.body.Bytes())
+	buf.Write(bodyBytes)
 
 	// Write to connection
 	_, err := conn.Write(buf.Bytes())

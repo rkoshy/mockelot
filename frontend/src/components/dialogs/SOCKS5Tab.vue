@@ -12,6 +12,7 @@ const socks5Port = ref(1080)
 const socks5Auth = ref(false)
 const socks5Username = ref('')
 const socks5Password = ref('')
+const trackRequests = ref(false)
 
 // Domain Takeover Configuration
 const domains = ref<Array<{
@@ -58,6 +59,7 @@ async function loadSOCKS5Config() {
       socks5Auth.value = config.socks5_config.authentication || false
       socks5Username.value = config.socks5_config.username || ''
       socks5Password.value = config.socks5_config.password || ''
+      trackRequests.value = config.socks5_config.track_requests || false
     }
     if (config.domain_takeover && config.domain_takeover.domains) {
       domains.value = config.domain_takeover.domains.map((d: any) => ({
@@ -126,6 +128,7 @@ defineExpose({
       authentication: socks5Auth.value,
       username: socks5Username.value,
       password: socks5Password.value,
+      track_requests: trackRequests.value,
     },
     domain_takeover: {
       domains: domains.value.map(d => ({
@@ -235,6 +238,21 @@ defineExpose({
             Username and password are required when authentication is enabled
           </p>
         </div>
+      </div>
+
+      <!-- Track Requests -->
+      <div>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input
+            v-model="trackRequests"
+            type="checkbox"
+            class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500"
+          />
+          <span class="text-sm font-medium text-white">Track SOCKS5 Requests</span>
+        </label>
+        <p class="mt-1 text-xs text-gray-400 ml-6">
+          Log all SOCKS5 traffic in the Traffic Log panel (visible in SOCKS5 Proxy endpoint)
+        </p>
       </div>
 
       <!-- Domain Takeover List -->

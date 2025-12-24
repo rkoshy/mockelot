@@ -27,6 +27,7 @@ type HTTPServer struct {
 	httpStopChan      chan struct{}
 	httpsStopChan     chan struct{}
 	certManager       *CertificateManager
+	certCache         *CertCache // Certificate cache for SOCKS5 TLS interception
 	proxyHandler      *ProxyHandler
 	containerHandler  *ContainerHandler
 	startupCtx        context.Context    // Context for container startup
@@ -288,11 +289,37 @@ func (s *HTTPServer) Start() error {
 	// Start SOCKS5 proxy if enabled
 	s.configMutex.RLock()
 	socks5Config := s.config.SOCKS5Config
+	domainTakeover := s.config.DomainTakeover
+	certMode := s.config.CertMode
 	s.configMutex.RUnlock()
 
 	if socks5Config != nil && socks5Config.Enabled {
 		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler)
-		s.socks5Server = NewSOCKS5Server(socks5Config, responseHandler)
+
+		// Initialize certificate cache for TLS interception if HTTPS is enabled
+		// This allows SOCKS5 to intercept HTTPS connections for domains in the takeover list
+		if httpsEnabled && s.certManager != nil && (certMode == "" || certMode == models.CertModeAuto) {
+			// Load or generate CA certificate for signing domain certs
+			var caCert *x509.Certificate
+			var caKey *rsa.PrivateKey
+			var err error
+
+			if s.certManager.CAExists() {
+				caCert, caKey, err = s.certManager.LoadCA()
+			} else {
+				caCert, caKey, err = s.certManager.GenerateCA()
+			}
+
+			if err != nil {
+				log.Printf("Warning: Failed to load/generate CA for SOCKS5 TLS interception: %v", err)
+			} else {
+				// Create certificate cache with capacity for 100 domain certs
+				s.certCache = NewCertCache(s.certManager, caCert, caKey, 100)
+				log.Printf("SOCKS5 TLS interception enabled (certificate cache initialized)")
+			}
+		}
+
+		s.socks5Server = NewSOCKS5Server(socks5Config, responseHandler, s.certCache, domainTakeover, s.requestLogger)
 		go func() {
 			if err := s.socks5Server.Start(); err != nil {
 				log.Printf("Failed to start SOCKS5 server: %v", err)

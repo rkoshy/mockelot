@@ -386,6 +386,15 @@ type SOCKS5Config struct {
 	Authentication bool   `json:"authentication" yaml:"authentication"`             // Whether authentication is required
 	Username       string `json:"username,omitempty" yaml:"username,omitempty"`     // Username for authentication
 	Password       string `json:"password,omitempty" yaml:"password,omitempty"`     // Password for authentication
+	TrackRequests  bool   `json:"track_requests" yaml:"track_requests"`             // Whether to log SOCKS5 requests to a dedicated endpoint
+}
+
+// SOCKS5RequestInfo contains SOCKS5-specific request information for logging
+type SOCKS5RequestInfo struct {
+	TargetHost    string `json:"target_host"`              // Target host (domain or IP)
+	TargetPort    int    `json:"target_port"`              // Target port
+	Protocol      string `json:"protocol"`                 // "HTTP", "HTTPS", or "PASS-THROUGH"
+	IsIntercepted bool   `json:"is_intercepted"`           // true if domain was in takeover list and intercepted
 }
 
 // UserConfig stores all configuration (server settings + user content) in a single file
@@ -539,6 +548,8 @@ type RequestLogSummary struct {
 	Pending          bool   `json:"pending"`                         // Whether this request is still in progress (no response yet)
 	ValidationFailed bool   `json:"validation_failed,omitempty"`     // (V) badge - request matched path but failed validation
 	ResponseFailed   bool   `json:"response_failed,omitempty"`       // (R) badge - response generation failed (script error, etc.)
+	TargetHost       string `json:"target_host,omitempty"`           // For SOCKS5 logs: target host (domain or IP)
+	TargetPort       int    `json:"target_port,omitempty"`           // For SOCKS5 logs: target port
 }
 
 // RequestLog represents a detailed log of an incoming HTTP request and response
@@ -551,6 +562,9 @@ type RequestLog struct {
 	// Failure indicators
 	ValidationFailed bool `json:"validation_failed,omitempty"` // (V) badge - request matched path but failed validation
 	ResponseFailed   bool `json:"response_failed,omitempty"`   // (R) badge - response generation failed (script error, etc.)
+
+	// SOCKS5 proxy information (only set for SOCKS5 proxy endpoint logs)
+	SOCKS5Info *SOCKS5RequestInfo `json:"socks5_info,omitempty"`
 
 	// Client side: Client → Server
 	ClientRequest struct {

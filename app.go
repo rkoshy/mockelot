@@ -22,6 +22,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"gopkg.in/yaml.v3"
 	"mockelot/config"
+	"mockelot/export"
 	"mockelot/models"
 	"mockelot/openapi"
 	"mockelot/server"
@@ -114,7 +115,9 @@ func NewApp() *App {
 	// Ensure all endpoints have DisplayOrder set
 	app.ensureDisplayOrder()
 
-	// Ensure rejections endpoint exists
+	// Ensure system endpoints exist (order matters: overlay before SOCKS5 before rejections)
+	app.ensureDomainTakeoverEndpoints()
+	app.ensureSOCKS5ProxyEndpoint()
 	app.ensureRejectionsEndpoint()
 
 	return app
@@ -153,6 +156,9 @@ func (a *App) startup(ctx context.Context) {
 		a.config.SOCKS5Config = serverCfg.SOCKS5Config
 		a.config.DomainTakeover = serverCfg.DomainTakeover
 		a.configMutex.Unlock()
+
+		// Create synthetic overlay endpoints for the migrated domain config
+		a.ensureDomainTakeoverEndpoints()
 
 		a.status.Port = serverCfg.Port
 		// Note: SelectedEndpointId is loaded on-demand in GetSelectedEndpointId()
@@ -587,9 +593,22 @@ func (a *App) ReorderResponses(ids []string) error {
 
 // Endpoint Management Methods
 
-// GetEndpoints returns all endpoints
+// GetEndpoints returns all endpoints sorted by DisplayOrder
 func (a *App) GetEndpoints() []models.Endpoint {
-	return a.config.Endpoints
+	// Create a copy to avoid modifying original
+	endpoints := make([]models.Endpoint, len(a.config.Endpoints))
+	copy(endpoints, a.config.Endpoints)
+
+	// Sort by DisplayOrder (ascending: 0, 1, 2, ..., 999997, 999998, 999999)
+	for i := 0; i < len(endpoints); i++ {
+		for j := i + 1; j < len(endpoints); j++ {
+			if endpoints[j].DisplayOrder < endpoints[i].DisplayOrder {
+				endpoints[i], endpoints[j] = endpoints[j], endpoints[i]
+			}
+		}
+	}
+
+	return endpoints
 }
 
 // GetDefaultContainerHeaders returns the default inbound headers for container endpoints
@@ -618,12 +637,15 @@ func (a *App) AddEndpoint(name string, pathPrefix string, translationMode string
 		endpointType = models.EndpointTypeMock // Default to mock if invalid
 	}
 
+	// New endpoints are enabled by default
+	enabledTrue := true
 	endpoint := models.Endpoint{
 		ID:              uuid.New().String(),
 		Name:            name,
 		PathPrefix:      pathPrefix,
 		TranslationMode: translationMode,
 		Type:            endpointType,
+		Enabled:         &enabledTrue,
 	}
 
 	// Initialize type-specific configuration
@@ -708,12 +730,15 @@ func (a *App) AddEndpointWithConfig(config map[string]interface{}) (models.Endpo
 		endpointType = models.EndpointTypeMock
 	}
 
+	// New endpoints are enabled by default
+	enabledTrue := true
 	endpoint := models.Endpoint{
 		ID:              uuid.New().String(),
 		Name:            name,
 		PathPrefix:      pathPrefix,
 		TranslationMode: translationMode,
 		Type:            endpointType,
+		Enabled:         &enabledTrue,
 	}
 
 	// Initialize type-specific configuration from wizard data
@@ -923,6 +948,144 @@ func parseEnvironmentVars(data []interface{}) []models.EnvironmentVar {
 		}
 	}
 	return result
+}
+
+// ensureDomainTakeoverEndpoints creates/updates synthetic proxy endpoints for each domain in the takeover list.
+// These endpoints allow SOCKS5-intercepted domains to be proxied to their real backend while logging traffic.
+// IMPORTANT: Overlay endpoints must appear BEFORE the system-rejections endpoint in the array
+// because endpoint matching iterates in array order, not by DisplayOrder.
+func (a *App) ensureDomainTakeoverEndpoints() {
+	const overlayPrefix = "system-overlay-"
+	const socks5ProxyID = "system-socks5-proxy"
+	const rejectionsID = "system-rejections"
+	const overlayDisplayOrder = 999997 // Before SOCKS5 (999998) and Rejections (999999)
+
+	// Build map of expected overlay endpoints (keyed by ID)
+	expectedOverlays := make(map[string]models.Endpoint)
+
+	if a.config.DomainTakeover != nil {
+		for _, domain := range a.config.DomainTakeover.Domains {
+			if !domain.Enabled || !domain.OverlayMode {
+				continue
+			}
+
+			// Generate endpoint ID from domain pattern (sanitize for ID)
+			endpointID := overlayPrefix + sanitizeForID(domain.Pattern)
+
+			// Create overlay proxy endpoint
+			enabled := true
+			expectedOverlays[endpointID] = models.Endpoint{
+				ID:              endpointID,
+				Name:            "Overlay: " + domain.Pattern,
+				PathPrefix:      "/",
+				TranslationMode: models.TranslationModeNone,
+				Enabled:         &enabled,
+				IsSystem:        true,
+				DisplayOrder:    overlayDisplayOrder,
+				DomainFilter: &models.DomainFilter{
+					Mode:     "specific",
+					Patterns: []string{domain.Pattern},
+				},
+				Type: models.EndpointTypeProxy,
+				ProxyConfig: &models.ProxyConfig{
+					BackendURL:        "https://" + domain.Pattern,
+					TimeoutSeconds:    30,
+					StatusPassthrough: true,
+				},
+			}
+		}
+	}
+
+	// Rebuild endpoints array with correct ordering:
+	// 1. Non-system endpoints (user endpoints)
+	// 2. Overlay endpoints (system-overlay-*) - DisplayOrder 999997
+	// 3. SOCKS5 endpoint (system-socks5-proxy) - DisplayOrder 999998
+	// 4. Rejections endpoint (system-rejections) - DisplayOrder 999999
+	var userEndpoints []models.Endpoint
+	var socks5Endpoint *models.Endpoint
+	var rejectionsEndpoint *models.Endpoint
+
+	for i := range a.config.Endpoints {
+		endpoint := &a.config.Endpoints[i]
+
+		if endpoint.ID == rejectionsID {
+			// Save rejections for last
+			rejectionsEndpoint = endpoint
+		} else if endpoint.ID == socks5ProxyID {
+			// Save SOCKS5 endpoint
+			socks5Endpoint = endpoint
+		} else if strings.HasPrefix(endpoint.ID, overlayPrefix) {
+			// Skip old overlay endpoints - we'll add fresh ones
+			if _, expected := expectedOverlays[endpoint.ID]; !expected {
+				log.Printf("Removed stale overlay proxy endpoint: %s", endpoint.ID)
+			}
+		} else {
+			// Keep user endpoints
+			userEndpoints = append(userEndpoints, *endpoint)
+		}
+	}
+
+	// Build final array: user endpoints + overlay endpoints + SOCKS5 + rejections
+	a.config.Endpoints = userEndpoints
+
+	// Add overlay endpoints (DisplayOrder 999997)
+	for id, overlay := range expectedOverlays {
+		a.config.Endpoints = append(a.config.Endpoints, overlay)
+		log.Printf("Ensured overlay proxy endpoint for domain: %s", id)
+	}
+
+	// Add SOCKS5 endpoint (DisplayOrder 999998, if it exists)
+	if socks5Endpoint != nil {
+		a.config.Endpoints = append(a.config.Endpoints, *socks5Endpoint)
+	}
+
+	// Add rejections endpoint last (DisplayOrder 999999, if it exists)
+	if rejectionsEndpoint != nil {
+		a.config.Endpoints = append(a.config.Endpoints, *rejectionsEndpoint)
+	}
+}
+
+// sanitizeForID converts a domain pattern to a safe ID string
+func sanitizeForID(pattern string) string {
+	// Replace dots and special characters with dashes
+	result := strings.ReplaceAll(pattern, ".", "-")
+	result = strings.ReplaceAll(result, "*", "star")
+	result = strings.ReplaceAll(result, "\\", "")
+	result = strings.ReplaceAll(result, "/", "-")
+	return result
+}
+
+// ensureSOCKS5ProxyEndpoint creates the system "SOCKS5 Proxy" endpoint if it doesn't exist
+// This endpoint is display-only and aggregates all SOCKS5 proxy logs
+func (a *App) ensureSOCKS5ProxyEndpoint() {
+	const socks5ProxyID = "system-socks5-proxy"
+
+	// Check if SOCKS5 proxy endpoint already exists
+	for i := range a.config.Endpoints {
+		if a.config.Endpoints[i].ID == socks5ProxyID {
+			// Endpoint exists - ensure it has correct system properties
+			a.config.Endpoints[i].IsSystem = true
+			a.config.Endpoints[i].DisplayOrder = 999998 // After overlays (999997), before rejections (999999)
+			return
+		}
+	}
+
+	// Create SOCKS5 proxy endpoint (display-only, no request handling)
+	enabled := true
+	socks5ProxyEndpoint := models.Endpoint{
+		ID:           socks5ProxyID,
+		Name:         "SOCKS5 Proxy",
+		PathPrefix:   "/",
+		TranslationMode: models.TranslationModeNone,
+		Enabled:      &enabled,
+		IsSystem:     true,
+		DisplayOrder: 999998, // After overlays, before rejections
+		Type:         models.EndpointTypeMock,
+		Items:        []models.ResponseItem{}, // Empty - display-only, doesn't handle requests
+	}
+
+	// Add to endpoints list
+	a.config.Endpoints = append(a.config.Endpoints, socks5ProxyEndpoint)
 }
 
 // ensureRejectionsEndpoint creates the system "Rejections" endpoint if it doesn't exist
@@ -1875,7 +2038,9 @@ func (a *App) LoadConfig() (*models.AppConfig, error) {
 	// Ensure all endpoints have DisplayOrder set (for legacy configs)
 	a.ensureDisplayOrder()
 
-	// Ensure rejections endpoint exists
+	// Ensure system endpoints exist (order matters: overlay before SOCKS5 before rejections)
+	a.ensureDomainTakeoverEndpoints()
+	a.ensureSOCKS5ProxyEndpoint()
 	a.ensureRejectionsEndpoint()
 
 	// Update server if running
@@ -2160,7 +2325,9 @@ func (a *App) LoadConfigFromPath(path string) (*models.AppConfig, error) {
 	// Ensure all endpoints have DisplayOrder set (for legacy configs)
 	a.ensureDisplayOrder()
 
-	// Ensure rejections endpoint exists
+	// Ensure system endpoints exist (order matters: overlay before SOCKS5 before rejections)
+	a.ensureDomainTakeoverEndpoints()
+	a.ensureSOCKS5ProxyEndpoint()
 	a.ensureRejectionsEndpoint()
 
 	// Update server if running
@@ -2371,6 +2538,73 @@ func (a *App) ExportLogs(format string) error {
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(logs)
+}
+
+// ExportLogsAsHAR exports logs in HAR (HTTP Archive) format
+// endpointID filters logs by endpoint (empty string = all logs)
+// side can be "client" or "backend"
+func (a *App) ExportLogsAsHAR(endpointID string, side string) error {
+	a.logMutex.RLock()
+	var filteredLogs []models.RequestLog
+	if endpointID == "" {
+		filteredLogs = make([]models.RequestLog, len(a.requestLogs))
+		copy(filteredLogs, a.requestLogs)
+	} else {
+		for _, log := range a.requestLogs {
+			if log.EndpointID == endpointID {
+				filteredLogs = append(filteredLogs, log)
+			}
+		}
+	}
+	a.logMutex.RUnlock()
+
+	exporter := export.NewLogExporter("")
+	filePath, err := exporter.ExportToHAR(filteredLogs, side)
+	if err != nil {
+		return fmt.Errorf("failed to export HAR: %v", err)
+	}
+
+	log.Printf("Exported %d logs to HAR file: %s", len(filteredLogs), filePath)
+	return nil
+}
+
+// ExportLogsAsCurl exports logs as a shell script with curl commands
+// endpointID filters logs by endpoint (empty string = all logs)
+// side can be "client" or "backend"
+func (a *App) ExportLogsAsCurl(endpointID string, side string) error {
+	a.logMutex.RLock()
+	var filteredLogs []models.RequestLog
+	var endpointName string
+
+	if endpointID == "" {
+		filteredLogs = make([]models.RequestLog, len(a.requestLogs))
+		copy(filteredLogs, a.requestLogs)
+		endpointName = "All Endpoints"
+	} else {
+		// Find endpoint name
+		for i := range a.config.Endpoints {
+			if a.config.Endpoints[i].ID == endpointID {
+				endpointName = a.config.Endpoints[i].Name
+				break
+			}
+		}
+		// Filter logs
+		for _, log := range a.requestLogs {
+			if log.EndpointID == endpointID {
+				filteredLogs = append(filteredLogs, log)
+			}
+		}
+	}
+	a.logMutex.RUnlock()
+
+	exporter := export.NewLogExporter("")
+	filePath, err := exporter.ExportToCurl(filteredLogs, side, endpointName)
+	if err != nil {
+		return fmt.Errorf("failed to export curl script: %v", err)
+	}
+
+	log.Printf("Exported %d logs to curl script: %s", len(filteredLogs), filePath)
+	return nil
 }
 
 // HTTPS Certificate Management Methods
@@ -2645,6 +2879,10 @@ func (a *App) UpdateServerSettings(settings models.ServerSettings) error {
 	}
 	if settings.DomainTakeover != nil {
 		a.config.DomainTakeover = settings.DomainTakeover
+		// Recreate synthetic overlay endpoints for the new domain configuration
+		a.ensureDomainTakeoverEndpoints()
+		// Notify frontend about endpoint changes
+		runtime.EventsEmit(a.ctx, "endpoints:updated", a.config.Endpoints)
 	}
 
 	// Emit config updated event
