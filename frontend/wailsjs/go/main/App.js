@@ -58,6 +58,14 @@ export function ExportLogs(arg1) {
   return window['go']['main']['App']['ExportLogs'](arg1);
 }
 
+export function ExportLogsAsCurl(arg1, arg2) {
+  return window['go']['main']['App']['ExportLogsAsCurl'](arg1, arg2);
+}
+
+export function ExportLogsAsHAR(arg1, arg2) {
+  return window['go']['main']['App']['ExportLogsAsHAR'](arg1, arg2);
+}
+
 export function GetAllResponseIDsWithErrors() {
   return window['go']['main']['App']['GetAllResponseIDsWithErrors']();
 }

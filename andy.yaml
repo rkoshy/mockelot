@@ -34,6 +34,89 @@ endpoints:
             mode: script
             match_type: contains
           use_global_cors: true
+  - id: 3b815d29-bcba-4a66-9309-5f226611174e
+    name: OCW
+    path_prefix: ^/omnichannel-workspace*
+    translation_mode: none
+    enabled: true
+    display_order: 1
+    type: proxy
+    proxy_config:
+      backend_url: https://apps.lab.platform28.com/
+      timeout_seconds: 30
+      inbound_headers:
+        - name: Connection
+          mode: drop
+        - name: Keep-Alive
+          mode: drop
+        - name: Proxy-Authenticate
+          mode: drop
+        - name: Proxy-Authorization
+          mode: drop
+        - name: Te
+          mode: drop
+        - name: Trailers
+          mode: drop
+        - name: Transfer-Encoding
+          mode: drop
+        - name: Upgrade
+          mode: drop
+        - name: X-Forwarded-For
+          mode: expression
+          expression: request.remoteAddr
+        - name: X-Forwarded-Host
+          mode: expression
+          expression: request.host
+        - name: X-Forwarded-Proto
+          mode: expression
+          expression: request.scheme
+      status_passthrough: true
+      health_check_enabled: false
+      health_check_interval: 0
+  - id: system-overlay-apps-platform28-com
+    name: 'Overlay: apps.platform28.com'
+    path_prefix: /
+    translation_mode: none
+    enabled: true
+    is_system: true
+    display_order: 999997
+    domain_filter:
+      mode: specific
+      patterns:
+        - apps.platform28.com
+    type: proxy
+    proxy_config:
+      backend_url: https://apps.platform28.com
+      timeout_seconds: 30
+      status_passthrough: true
+      health_check_enabled: false
+      health_check_interval: 0
+  - id: system-overlay-on-platform28-com
+    name: 'Overlay: on.platform28.com'
+    path_prefix: /
+    translation_mode: none
+    enabled: true
+    is_system: true
+    display_order: 999997
+    domain_filter:
+      mode: specific
+      patterns:
+        - on.platform28.com
+    type: proxy
+    proxy_config:
+      backend_url: https://on.platform28.com
+      timeout_seconds: 30
+      status_passthrough: true
+      health_check_enabled: false
+      health_check_interval: 0
+  - id: system-socks5-proxy
+    name: SOCKS5 Proxy
+    path_prefix: /
+    translation_mode: none
+    enabled: true
+    is_system: true
+    display_order: 999998
+    type: mock
   - id: system-rejections
     name: Rejections
     path_prefix: /
@@ -56,11 +139,15 @@ endpoints:
             - DELETE
             - HEAD
             - OPTIONS
-          status_code: 404
-          status_text: Not Found
+          status_code: 407
           headers:
             Content-Type: text/plain
           body: No matching endpoint found
+          response_mode: static
+          request_validation:
+            mode: none
+            match_type: contains
+          use_global_cors: true
 port: 8080
 https_enabled: true
 https_port: 8443
@@ -85,11 +172,16 @@ socks5_config:
   enabled: true
   port: 1080
   authentication: false
+  track_requests: false
 domain_takeover:
   domains:
-    - id: domain-1766371416578-scbcy6ntt
+    - id: domain-1766398787841-jnposw0np
       pattern: apps.platform28.com
       overlay_mode: true
       enabled: true
-selected_endpoint_id: 899567c9-4716-4946-a28f-5f3cdc2fcf55
-last_modified: 2025-12-21T21:44:08.48370023-05:00
+    - id: domain-1766404068912-gwj2bibdw
+      pattern: on.platform28.com
+      overlay_mode: true
+      enabled: true
+selected_endpoint_id: 3b815d29-bcba-4a66-9309-5f226611174e
+last_modified: 2025-12-24T17:46:26.814624693-05:00

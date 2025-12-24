@@ -511,11 +511,17 @@ func (p *ProxyHandler) rewriteRedirectLocation(locationHeader, backendBaseURL, o
 	// If the original location was absolute, return absolute
 	// Otherwise return relative
 	if locationURL.Scheme != "" && locationURL.Host != "" {
-		// Return absolute URL with client's scheme and host
-		scheme := "http"
-		if r.TLS != nil {
+		// Determine the scheme to use for the client redirect
+		// Priority:
+		// 1. If backend explicitly redirects to HTTPS, preserve that (security upgrade)
+		// 2. If backend redirects to HTTP and client used HTTPS, preserve HTTPS
+		// 3. Otherwise use the backend's redirect scheme
+		scheme := locationURL.Scheme
+		if r.TLS != nil && scheme == "http" {
+			// Client used HTTPS, don't downgrade to HTTP
 			scheme = "https"
 		}
+		// Note: If client used HTTP but backend redirects to HTTPS, we honor the upgrade
 		return scheme + "://" + r.Host + newPath
 	}
 

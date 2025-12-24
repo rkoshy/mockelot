@@ -24,12 +24,11 @@ const filteredLogs = computed(() => {
 
 function formatTimestamp(timestamp: string): string {
   const date = new Date(timestamp)
-  return date.toLocaleTimeString('en-US', {
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  })
+  const hours = date.getHours().toString().padStart(2, '0')
+  const minutes = date.getMinutes().toString().padStart(2, '0')
+  const seconds = date.getSeconds().toString().padStart(2, '0')
+  const ms = date.getMilliseconds().toString().padStart(3, '0')
+  return `${hours}:${minutes}:${seconds}.${ms}`
 }
 
 function getMethodColor(method: string): string {
@@ -187,7 +186,7 @@ function closeInspector() {
         >
           <div class="flex items-center gap-3">
             <!-- Time -->
-            <span class="text-xs text-gray-500 font-mono w-16 flex-shrink-0">
+            <span class="text-xs text-gray-500 font-mono w-24 flex-shrink-0">
               {{ formatTimestamp(log.timestamp) }}
             </span>
 
@@ -215,9 +214,14 @@ function closeInspector() {
               {{ formatRTT(log.client_rtt) }}
             </span>
 
-            <!-- Path -->
+            <!-- Path / SOCKS5 Target -->
             <span class="text-sm text-gray-300 truncate flex-1 font-mono">
-              {{ log.path || 'N/A' }}
+              <span v-if="log.target_host">
+                {{ log.target_host }}:{{ log.target_port }}
+              </span>
+              <span v-else>
+                {{ log.path || 'N/A' }}
+              </span>
             </span>
 
             <!-- Source IP -->

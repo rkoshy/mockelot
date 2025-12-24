@@ -160,6 +160,7 @@ export namespace models {
 	    authentication: boolean;
 	    username?: string;
 	    password?: string;
+	    track_requests: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new SOCKS5Config(source);
@@ -172,6 +173,7 @@ export namespace models {
 	        this.authentication = source["authentication"];
 	        this.username = source["username"];
 	        this.password = source["password"];
+	        this.track_requests = source["track_requests"];
 	    }
 	}
 	export class CORSHeader {
@@ -893,12 +895,31 @@ export namespace models {
 		    return a;
 		}
 	}
+	export class SOCKS5RequestInfo {
+	    target_host: string;
+	    target_port: number;
+	    protocol: string;
+	    is_intercepted: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SOCKS5RequestInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.target_host = source["target_host"];
+	        this.target_port = source["target_port"];
+	        this.protocol = source["protocol"];
+	        this.is_intercepted = source["is_intercepted"];
+	    }
+	}
 	export class RequestLog {
 	    id: string;
 	    timestamp: string;
 	    endpoint_id?: string;
 	    validation_failed?: boolean;
 	    response_failed?: boolean;
+	    socks5_info?: SOCKS5RequestInfo;
 	    // Go type: struct { Method string "json:\"method\""; FullURL string "json:\"full_url\""; Path string "json:\"path\""; QueryParams map[string][]string "json:\"query_params,omitempty\""; Headers map[string][]string "json:\"headers,omitempty\""; Body string "json:\"body,omitempty\""; Protocol string "json:\"protocol,omitempty\""; SourceIP string "json:\"source_ip\""; UserAgent string "json:\"user_agent,omitempty\"" }
 	    client_request: any;
 	    // Go type: struct { StatusCode *int "json:\"status_code,omitempty\""; StatusText string "json:\"status_text,omitempty\""; Headers map[string][]string "json:\"headers,omitempty\""; Body string "json:\"body,omitempty\""; DelayMs *int64 "json:\"delay_ms,omitempty\""; RTTMs *int64 "json:\"rtt_ms,omitempty\"" }
@@ -919,6 +940,7 @@ export namespace models {
 	        this.endpoint_id = source["endpoint_id"];
 	        this.validation_failed = source["validation_failed"];
 	        this.response_failed = source["response_failed"];
+	        this.socks5_info = this.convertValues(source["socks5_info"], SOCKS5RequestInfo);
 	        this.client_request = this.convertValues(source["client_request"], Object);
 	        this.client_response = this.convertValues(source["client_response"], Object);
 	        this.backend_request = this.convertValues(source["backend_request"], Object);
@@ -959,6 +981,8 @@ export namespace models {
 	    pending: boolean;
 	    validation_failed?: boolean;
 	    response_failed?: boolean;
+	    target_host?: string;
+	    target_port?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new RequestLogSummary(source);
@@ -981,8 +1005,11 @@ export namespace models {
 	        this.pending = source["pending"];
 	        this.validation_failed = source["validation_failed"];
 	        this.response_failed = source["response_failed"];
+	        this.target_host = source["target_host"];
+	        this.target_port = source["target_port"];
 	    }
 	}
+	
 	
 	
 	
