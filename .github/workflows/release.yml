@@ -30,7 +30,7 @@ jobs:
         run: docker build -t ${{ matrix.artifact_name }} -f ${{ matrix.dockerfile }} .
 
       - name: Build application
-        run: docker run --rm -v $(pwd):/build ${{ matrix.artifact_name }} /bin/bash -c "cd /build && go mod tidy && wails build -platform linux/amd64"
+        run: docker run --rm --network=host -v $(pwd):/build ${{ matrix.artifact_name }} /bin/bash -c "cd /build && go mod tidy && wails build -platform linux/amd64"
       
       - name: Create tar.gz archive
         run: |
