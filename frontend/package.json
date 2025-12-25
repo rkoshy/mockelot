@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "npx --no-install vue-tsc --noEmit && npx --no-install vite build",
     "preview": "vite preview"
   },
   "dependencies": {
