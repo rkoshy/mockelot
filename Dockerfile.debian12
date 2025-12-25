@@ -9,8 +9,11 @@ RUN apt-get update && apt-get install -y \
     wget \
     curl \
     git \
-    npm \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+RUN apt-get install -y nodejs
 
 # Install Go 1.23.4
 RUN wget https://go.dev/dl/go1.23.4.linux-amd64.tar.gz && \
