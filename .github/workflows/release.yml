@@ -30,7 +30,7 @@ jobs:
         run: docker build -t ${{ matrix.artifact_name }} -f ${{ matrix.dockerfile }} .
 
       - name: Build application
-        run: docker run --rm --network=host -v $(pwd):/build ${{ matrix.artifact_name }} /bin/bash -c "cd /build && go mod tidy && wails build -platform linux/amd64"
+        run: docker run --rm --network=host -v $(pwd):/build ${{ matrix.artifact_name }} /bin/bash -c "cd /build/frontend && npm install && cd .. && go mod tidy && wails build -platform linux/amd64"
       
       - name: Create tar.gz archive
         run: |
@@ -70,6 +70,7 @@ jobs:
       
       - name: Build AppImage
         run: |
+          cd frontend && npm install && cd ..
           ./build-appimage.sh
       
       - name: Upload artifacts
@@ -100,7 +101,7 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
       - name: Build application
-        run: wails build -platform windows/amd64 -nsis -o mockelot-windows-amd64.exe
+        run: cd frontend && npm install && cd .. && wails build -platform windows/amd64 -nsis -o mockelot-windows-amd64.exe
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -141,7 +142,7 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
       - name: Build application
-        run: wails build -platform ${{ matrix.platform }}
+        run: cd frontend && npm install && cd .. && wails build -platform ${{ matrix.platform }}
 
       - name: Create zip archive
         run: |
