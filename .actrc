@@ -1,0 +1,4 @@
+# Act configuration for Mockelot
+# Use custom Docker image with pre-installed Wails build dependencies
+
+-P ubuntu-22.04=mockelot-wails-build:latest
