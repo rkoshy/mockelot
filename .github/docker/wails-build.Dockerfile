@@ -13,6 +13,7 @@ RUN apt-get update -qq && \
       curl \
       wget \
       git \
+      sudo \
       ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
