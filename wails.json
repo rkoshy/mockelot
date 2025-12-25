@@ -6,6 +6,8 @@
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
+  "frontend:dir": "./frontend",
+  "frontend:dist": "./frontend/dist",
   "author": {
     "name": "Renny Koshy",
     "email": "renny@scorus.ai"
