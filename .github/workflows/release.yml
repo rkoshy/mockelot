@@ -1,4 +1,5 @@
 name: Build and Release
+
 on:
   push:
     tags:
@@ -12,100 +13,52 @@ jobs:
       matrix:
         include:
           - name: linux-amd64
-            os: ubuntu-22.04
             platform: linux/amd64
+            os: ubuntu-latest
           - name: darwin-universal
-            os: macos-latest
             platform: darwin/universal
+            os: macos-latest
           - name: windows-amd64
-            os: windows-latest
             platform: windows/amd64
+            os: windows-latest
 
     runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
         with:
+          submodules: recursive
+
+      - name: Build with Wails
+        uses: dAppServer/wails-build-action@v2.2
+        id: build
+        with:
+          build-name: mockelot
+          build-platform: ${{ matrix.platform }}
+          package: false
           go-version: '1.23'
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
           node-version: '20'
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev build-essential pkg-config
-
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
-
-      - name: Build application
-        run: wails build -platform ${{ matrix.platform }} ${{ runner.os == 'Windows' && '-nsis' || '' }}
+          nsis: ${{ matrix.platform == 'windows/amd64' }}
 
       - name: Create tar.gz archive (Linux)
-        if: runner.os == 'Linux'
-        run: tar -czf mockelot-${{ matrix.name }}.tar.gz -C build/bin mockelot
-
-      - name: Create AppImage (Linux)
-        if: runner.os == 'Linux'
+        if: matrix.platform == 'linux/amd64'
         run: |
-          # Download appimagetool
-          wget -O appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x appimagetool
-
-          # Create AppDir structure
-          mkdir -p AppDir/usr/bin
-          mkdir -p AppDir/usr/share/applications
-          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
-
-          # Copy binary
-          cp build/bin/mockelot AppDir/usr/bin/
-
-          # Copy icon
-          cp build/appicon.png AppDir/usr/share/icons/hicolor/256x256/apps/mockelot.png
-          cp build/appicon.png AppDir/mockelot.png
-
-          # Create desktop file
-          cat > AppDir/usr/share/applications/mockelot.desktop << 'EOF'
-          [Desktop Entry]
-          Name=Mockelot
-          Exec=mockelot
-          Icon=mockelot
-          Type=Application
-          Categories=Development;
-          Comment=HTTP mock server for testing and development
-          Terminal=false
-          EOF
-
-          # Create AppRun script
-          cat > AppDir/AppRun << 'EOF'
-          #!/bin/bash
-          SELF=$(readlink -f "$0")
-          HERE=${SELF%/*}
-          export PATH="${HERE}/usr/bin:${PATH}"
-          exec "${HERE}/usr/bin/mockelot" "$@"
-          EOF
-          chmod +x AppDir/AppRun
-
-          # Build AppImage
-          ./appimagetool AppDir mockelot-${{ matrix.name }}.AppImage
-          chmod +x mockelot-${{ matrix.name }}.AppImage
+          cd build/bin
+          tar -czf ../../mockelot-${{ matrix.name }}.tar.gz mockelot
 
       - name: Create zip archive (macOS)
-        if: runner.os == 'macOS'
-        run: ditto -c -k --keepParent build/bin/mockelot.app mockelot-${{ matrix.name }}.zip
+        if: matrix.platform == 'darwin/universal'
+        run: |
+          cd build/bin
+          ditto -c -k --keepParent mockelot.app ../../mockelot-${{ matrix.name }}.zip
 
-      - name: Create zip archive (Windows - portable)
-        if: runner.os == 'Windows'
+      - name: Create zip archive (Windows)
+        if: matrix.platform == 'windows/amd64'
         shell: pwsh
-        run: Compress-Archive -Path build/bin/mockelot.exe -DestinationPath mockelot-${{ matrix.name }}-portable.zip
+        run: |
+          cd build/bin
+          Compress-Archive -Path mockelot.exe -DestinationPath ../../mockelot-${{ matrix.name }}-portable.zip
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -113,7 +66,6 @@ jobs:
           name: mockelot-${{ matrix.name }}
           path: |
             mockelot-*.tar.gz
-            mockelot-*.AppImage
             mockelot-*.zip
             build/bin/*.exe
 
@@ -123,6 +75,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
+
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -132,9 +85,7 @@ jobs:
       - name: Prepare release
         run: |
           mkdir release
-          # Copy all build artifacts
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*.AppImage" -o -name "*.zip" -o -name "*.exe" \) -exec cp {} release/ \;
-          # Generate checksums
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.exe" \) -exec cp {} release/ \;
           cd release && sha256sum * > checksums.txt
 
       - name: Create Release
@@ -146,7 +97,6 @@ jobs:
             ## Downloads
 
             ### Linux
-            - **AppImage**: `mockelot-linux-amd64.AppImage` (recommended - portable, no installation required)
             - **tar.gz**: `mockelot-linux-amd64.tar.gz` (extract and run)
 
             ### macOS
