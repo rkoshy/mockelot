@@ -9,7 +9,7 @@ require (
 	github.com/getkin/kin-openapi v0.133.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/wailsapp/wails/v2 v2.11.0
+	github.com/wailsapp/wails/v2 v2.9.0
 	golang.org/x/net v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 )
