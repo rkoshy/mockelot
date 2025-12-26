@@ -24,8 +24,8 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOPATH="/root/go"
 ENV PATH="${GOPATH}/bin:${PATH}"
 
-# Install Wails
-RUN go install github.com/wailsapp/wails/v2/cmd/wails@latest
+# Install Wails v2.9.0 (v2.10.0 has known issues)
+RUN go install github.com/wailsapp/wails/v2/cmd/wails@v2.9.0
 
 # Set working directory
 WORKDIR /build
