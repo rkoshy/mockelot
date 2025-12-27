@@ -1,594 +1,616 @@
-# SOCKS5 Proxy Guide for Mockelot
+# HOWTO: Using Mockelot as a SOCKS5 Proxy
+
+This guide shows you how to use Mockelot as a SOCKS5 proxy to selectively intercept and mock specific endpoints while allowing other traffic to pass through to real servers.
 
 ## Table of Contents
-1. [Overview](#overview)
-2. [Quick Start](#quick-start)
-3. [Configuration](#configuration)
-4. [Domain Takeover](#domain-takeover)
-5. [Domain Filtering](#domain-filtering)
-6. [Overlay Mode](#overlay-mode)
-7. [Browser Configuration](#browser-configuration)
-8. [Testing](#testing)
-9. [Common Use Cases](#common-use-cases)
-10. [Troubleshooting](#troubleshooting)
+
+- [Overview](#overview)
+- [Prerequisites](#prerequisites)
+- [Step 1: Enable HTTPS in Mockelot](#step-1-enable-https-in-mockelot)
+- [Step 2: Install SSL Certificates](#step-2-install-ssl-certificates)
+- [Step 3: Enable SOCKS5 Proxy](#step-3-enable-socks5-proxy)
+- [Step 4: Configure Domain Takeover](#step-4-configure-domain-takeover)
+- [Step 5: Configure Your Browser](#step-5-configure-your-browser)
+- [Example Scenarios](#example-scenarios)
+- [Troubleshooting](#troubleshooting)
+
+---
 
 ## Overview
 
-The SOCKS5 proxy feature allows you to route browser traffic through Mockelot without modifying DNS settings or using browser redirects. This makes it easy to test multiple domains and intercept specific requests while allowing others to pass through to real servers.
+**Why use SOCKS5 proxy mode?**
 
-### How It Works
+SOCKS5 proxy mode allows you to:
+- Test against multiple domains simultaneously (e.g., `api.company.com`, `auth.company.com`, `cdn.company.com`)
+- Selectively mock specific endpoints while allowing others to pass through to real servers
+- Test frontend applications locally while using production/staging backends
+- Override broken or slow endpoints during development
+- No need to modify `/etc/hosts` or DNS settings
 
-1. **Configure SOCKS5** - Enable SOCKS5 proxy in Mockelot settings (default port 1080)
-2. **Add Domains** - Specify which domains to intercept (e.g., `api.example.com`)
-3. **Configure Browser** - Set browser to use SOCKS5 proxy `localhost:1080`
-4. **Route Traffic** - Browser requests go through Mockelot
-5. **Smart Routing** - Mockelot checks if domain is intercepted
-   - If intercepted: Match against configured endpoints (by domain + path)
-   - If endpoint matches: Return mock/proxy/container response
-   - If no endpoint matches: Use overlay mode (optional passthrough to real server)
-   - If not intercepted: Pass through directly to real server
-
-### Key Benefits
+**How it works:**
 
-- **No DNS Changes** - No need to modify `/etc/hosts` or DNS settings
-- **Domain Isolation** - Only intercept specific domains you're testing
-- **Selective Mocking** - Mix mocked endpoints with real backend calls
-- **Multi-Domain Testing** - Test multiple domains simultaneously
-- **Easy Switching** - Toggle proxy on/off in browser without config changes
-
-## Quick Start
+1. Configure your browser to use Mockelot as a SOCKS5 proxy (e.g., `localhost:1080`)
+2. Configure which domains Mockelot should intercept (e.g., `api.company.com`)
+3. Create mock or proxy endpoints for the paths you want to override
+4. All other requests pass through transparently to real servers
 
-### 1. Enable SOCKS5
-
-1. Open Mockelot
-2. Click **Settings** (gear icon)
-3. Navigate to **SOCKS5** tab
-4. Check **Enable SOCKS5 Proxy**
-5. Leave port as **1080** (default)
-6. Leave **Require Authentication** unchecked for testing
-7. Click **Apply**
+---
 
-### 2. Add a Domain to Intercept
+## Prerequisites
 
-1. In the **Intercepted Domains** section, click **Add Domain**
-2. Enter domain pattern (regex): `api\.test\.local`
-3. Check **Overlay Mode** (recommended for starting)
-4. Check **Enabled**
-5. Click **Apply**
+- Mockelot installed and running
+- A web browser (Firefox, Chrome, Edge, Safari, or Brave)
+- Administrator/root access to install SSL certificates system-wide (optional)
 
-### 3. Configure Your Browser
+---
 
-**Firefox:**
-1. Settings → General → Network Settings
-2. Click **Settings** button
-3. Select **Manual proxy configuration**
-4. SOCKS Host: `localhost`, Port: `1080`
-5. Select **SOCKS v5**
-6. Check **Proxy DNS when using SOCKS v5**
-7. Click **OK**
+## Step 1: Enable HTTPS in Mockelot
 
-**Chrome/Edge:**
-Use FoxyProxy or system proxy settings
+SOCKS5 proxy mode requires HTTPS to work with modern web applications.
 
-### 4. Add Hosts Entry
+1. **Open Mockelot**
+2. **Click the Settings icon** in the header bar
+3. **In the HTTPS section:**
+   - Check **"Enable HTTPS"**
+   - Leave the port as `8443` (or choose your preferred port)
+   - Click **"Generate Certificates"** if you don't have certificates yet
+4. **Click "Save"**
 
-Add to `/etc/hosts` (Linux/Mac) or `C:\Windows\System32\drivers\etc\hosts` (Windows):
-```
-127.0.0.1 api.test.local
-```
+Mockelot will now accept HTTPS connections on `https://localhost:8443`.
 
-### 5. Test
+---
 
-Create an endpoint in Mockelot:
-- **Path:** `/api/users`
-- **Domain Filter:** Specific → Select `api.test.local`
-- **Response:** Static JSON with user data
+## Step 2: Install SSL Certificates
 
-Navigate to `http://api.test.local:8080/api/users` in your browser.
+To avoid browser security warnings, you need to install Mockelot's CA certificate.
 
-## Configuration
+### Option A: Export and Install Manually
 
-### SOCKS5 Settings
+#### Step 2A.1: Export the CA Certificate
 
-**Enable SOCKS5 Proxy**
-- Toggle to enable/disable the SOCKS5 server
-- Requires server restart when changed
+1. **In Mockelot Settings**, scroll to the **HTTPS section**
+2. **Click "Export CA Certificate"**
+3. **Save the file** as `mockelot-ca.crt` to your Downloads folder
 
-**Port**
-- Default: `1080` (standard SOCKS5 port)
-- Range: 1-65535
-- Click **Reset to Default** to restore port 1080
-- Avoid ports already in use
+#### Step 2A.2: Install in Firefox
 
-**Require Authentication**
-- When enabled, clients must provide username/password
-- Useful for restricting access in shared environments
-- Leave disabled for local development
+1. **Open Firefox** → **Settings** (or Preferences)
+2. **Search for "certificates"** in the search bar
+3. **Click "View Certificates"**
+4. **Go to the "Authorities" tab**
+5. **Click "Import..."**
+6. **Select** `mockelot-ca.crt` from your Downloads folder
+7. **Check "Trust this CA to identify websites"**
+8. **Click "OK"**
 
-**Username / Password**
-- Only shown when authentication is enabled
-- Credentials are stored in plain text in config
-- Use strong passwords if exposing to network
+#### Step 2A.3: Install in Chrome / Edge / Brave (Windows)
 
-### Domain Takeover Configuration
+1. **Open Chrome/Edge/Brave** → **Settings**
+2. **Search for "certificates"** or navigate to **Privacy and Security → Security → Manage Certificates**
+3. **Go to the "Trusted Root Certification Authorities" tab**
+4. **Click "Import..."**
+5. **Follow the wizard:**
+   - Click "Next"
+   - Browse and select `mockelot-ca.crt`
+   - Click "Next"
+   - Select "Place all certificates in the following store: **Trusted Root Certification Authorities**"
+   - Click "Next" → "Finish"
+6. **Click "Yes"** on the security warning
+7. **Restart your browser**
 
-**Intercepted Domains Table**
+#### Step 2A.4: Install in Chrome / Brave (macOS)
 
-| Field | Description |
-|-------|-------------|
-| **Domain Pattern** | Regex pattern matching domain (e.g., `api\.example\.com`) |
-| **Overlay Mode** | When checked, requests that don't match any endpoint are proxied to the real server |
-| **Enabled** | When checked, domain is actively intercepted |
-| **Actions** | Delete button to remove domain |
+1. **Open Keychain Access** (Applications → Utilities → Keychain Access)
+2. **Select "System" keychain** in the left sidebar
+3. **Drag and drop** `mockelot-ca.crt` into the Keychain Access window
+4. **Right-click** the imported certificate (named "Mockelot CA")
+5. **Select "Get Info"**
+6. **Expand "Trust"**
+7. **Set "When using this certificate" to "Always Trust"**
+8. **Close the window** and enter your password when prompted
+9. **Restart Chrome/Brave**
 
-**Add Domain Button**
-- Creates new domain entry with defaults:
-  - Pattern: empty (you must fill in)
-  - Overlay Mode: ON (recommended)
-  - Enabled: ON
+#### Step 2A.5: Install in Safari (macOS)
 
-**Domain Pattern Syntax**
+Safari uses the macOS system keychain, so follow the Chrome/Brave (macOS) instructions above. The certificate will automatically be trusted by Safari.
 
-Patterns are **regular expressions**:
-- `api\.example\.com` - Match exact domain (escape dots)
-- `.*\.example\.com` - Match all subdomains of example.com
-- `(api|www)\.example\.com` - Match api.example.com or www.example.com
+#### Step 2A.6: Install in Chrome / Brave (Linux)
 
-**Overlay Mode**
+Chrome and Brave on Linux use the NSS certificate database.
 
-When enabled for a domain:
-- If request matches an endpoint → Use endpoint response
-- If request doesn't match any endpoint → Proxy to real server
-
-When disabled:
-- If request matches an endpoint → Use endpoint response
-- If request doesn't match any endpoint → Return 404
-
-Use overlay mode when you want to mock specific endpoints while allowing other requests to the same domain to reach the real server.
-
-## Domain Filtering
-
-Endpoints can filter which domains they respond to using the **Domain Filter** setting in the endpoint configuration.
-
-### Domain Filter Modes
-
-**Any Domain (`any`)**
-- Endpoint responds to requests from **all domains**
-- Use for endpoints that should work regardless of domain
-- Example: Health check endpoint `/health`
-
-**All Intercepted Domains (`all`)**
-- Endpoint responds to **all domains in the SOCKS5 takeover list**
-- Use for endpoints that apply to all your test domains
-- Example: Common `/api/status` endpoint
-
-**Specific Domains (`specific`)**
-- Endpoint responds **only to selected domains**
-- Select from list of enabled intercepted domains
-- Use for domain-specific endpoints
-- Example: `/api/users` only for `api.example.com`
-
-### Configuring Domain Filters
-
-1. Open endpoint settings (click endpoint in list)
-2. Scroll to **Domain Filter (SOCKS5 Proxy)** section
-3. Select filter mode from dropdown
-4. If **Specific Domains**, check domains to match
-5. Click **Save**
-
-### Domain + Path Matching
-
-Both domain AND path must match for endpoint to handle request:
-
-```
-Request: GET http://api.test.local:8080/api/users
-
-Endpoint Check:
-  1. Domain Filter: Does api.test.local match? → YES
-  2. Path Pattern: Does /api/users match ^/api/users? → YES
-  3. Method: Does GET match GET? → YES
-  → Endpoint handles request
-```
-
-If domain doesn't match, endpoint is skipped regardless of path.
-
-## Overlay Mode
-
-Overlay mode provides **selective passthrough** - mock some endpoints while allowing others to reach the real server.
-
-### How Overlay Mode Works
-
-```
-Browser Request → SOCKS5 Proxy → Mockelot
-
-1. Is domain in takeover list?
-   NO  → Pass through to real server (transparent proxy)
-   YES → Continue to step 2
-
-2. Does any endpoint match domain + path?
-   YES → Use endpoint response (mock/proxy/container)
-   NO  → Continue to step 3
-
-3. Is overlay mode enabled for this domain?
-   YES → Proxy to real server with DNS resolution
-   NO  → Return 404 Not Found
-```
-
-### Use Cases for Overlay Mode
-
-**Testing New API Integration**
-- Mock authentication endpoints (`/auth/login`)
-- Let other endpoints pass through to staging server
-- Gradually add more mocked endpoints as needed
-
-**Frontend Development**
-- Mock slow or flaky endpoints
-- Let working endpoints pass through
-- Avoid maintaining full mock for entire API
-
-**Debugging Specific Flows**
-- Intercept problematic endpoint to test fixes
-- Allow rest of application to work normally
-- Add logging or modify responses for that endpoint only
-
-### DNS Resolution and Caching
-
-When overlay mode proxies to a real server:
-1. **Resolve Domain** - Look up real IP address via DNS
-2. **Cache Result** - Store IP for 5 minutes
-3. **Build Request** - Create proxy request with real IP
-4. **Preserve Host** - Keep original `Host` header for virtual hosting
-5. **Execute Request** - Forward to real server
-6. **Return Response** - Send real server response to browser
-
-DNS caching reduces latency on subsequent requests to the same domain.
-
-## Browser Configuration
-
-### Firefox (Recommended)
-
-Firefox has native SOCKS5 support with DNS proxying:
-
-1. Open **Settings**
-2. Scroll to **Network Settings**
-3. Click **Settings** button
-4. Select **Manual proxy configuration**
-5. In **SOCKS Host**, enter: `localhost`
-6. In **Port**, enter: `1080`
-7. Select **SOCKS v5** radio button
-8. **Important:** Check **Proxy DNS when using SOCKS v5**
-9. Click **OK**
-
-**Testing:** Navigate to `http://any.domain.com/health` (if you have an endpoint configured)
-
-**Disable Proxy:** Open Network Settings, select **No proxy**
-
-### Chrome / Edge
-
-Chrome and Edge don't have built-in SOCKS5 configuration. Use one of these methods:
-
-**Option 1: FoxyProxy Extension (Recommended)**
-1. Install FoxyProxy extension
-2. Add new proxy:
-   - Type: SOCKS5
-   - Hostname: localhost
-   - Port: 1080
-3. Enable proxy
-
-**Option 2: Command Line**
 ```bash
-# Linux/Mac
-google-chrome --proxy-server="socks5://localhost:1080"
+# Install certutil if not already installed
+sudo apt-get install libnss3-tools  # Debian/Ubuntu
+# OR
+sudo yum install nss-tools          # RHEL/CentOS
 
-# Windows
+# Import the certificate
+certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n "Mockelot CA" -i ~/Downloads/mockelot-ca.crt
+
+# Restart your browser
+```
+
+### Option B: Install System-Wide (Recommended)
+
+Installing the certificate system-wide makes it trusted by all applications on your computer.
+
+#### Linux (System-Wide)
+
+```bash
+# Copy the certificate to the system trust store
+sudo cp ~/Downloads/mockelot-ca.crt /usr/local/share/ca-certificates/mockelot-ca.crt
+
+# Update the CA certificates
+sudo update-ca-certificates
+
+# Restart your browser
+```
+
+#### macOS (System-Wide)
+
+```bash
+# Import into the System keychain
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ~/Downloads/mockelot-ca.crt
+
+# Restart your browser
+```
+
+#### Windows (System-Wide)
+
+Use the Chrome/Edge/Brave instructions above (Step 2A.3) - installing to "Trusted Root Certification Authorities" makes it system-wide.
+
+Alternatively, use PowerShell (as Administrator):
+
+```powershell
+# Import the certificate
+Import-Certificate -FilePath "$env:USERPROFILE\Downloads\mockelot-ca.crt" -CertStoreLocation Cert:\LocalMachine\Root
+
+# Restart your browser
+```
+
+---
+
+## Step 3: Enable SOCKS5 Proxy
+
+1. **Open Mockelot Settings** (click the Settings icon in the header)
+2. **Go to the "SOCKS5 Proxy" tab**
+3. **Enable SOCKS5 Proxy:**
+   - Check **"Enable SOCKS5 Proxy"**
+   - Leave the port as `1080` (or choose your preferred port)
+4. **Authentication (optional):**
+   - If you want to require authentication, check **"Require Authentication"**
+   - Set a username and password
+5. **Click "Save"**
+
+Mockelot is now listening for SOCKS5 connections on `localhost:1080`.
+
+---
+
+## Step 4: Configure Domain Takeover
+
+Domain takeover tells Mockelot which domains to intercept.
+
+1. **In the SOCKS5 Proxy tab**, scroll to **"Domain Takeover Configuration"**
+2. **Click "Add Domain"**
+3. **Configure the domain:**
+   - **Pattern:** Enter the domain pattern (e.g., `api.company.com` or `*.company.com` for wildcards)
+   - **Overlay Mode:** Check this to allow unmatched requests to pass through to the real server
+   - **Enabled:** Check this to activate the domain interception
+4. **Click "Add"**
+5. **Repeat** for each domain you want to intercept
+6. **Click "Save"**
+
+**Example configurations:**
+
+| Pattern | Overlay Mode | Purpose |
+|---------|--------------|---------|
+| `api.company.com` | ✅ Enabled | Intercept API requests, pass through unmatched |
+| `auth.company.com` | ❌ Disabled | Block all requests to auth server (full mock) |
+| `*.staging.company.com` | ✅ Enabled | Intercept all staging subdomains |
+
+---
+
+## Step 5: Configure Your Browser
+
+Configure your browser to use Mockelot as a SOCKS5 proxy.
+
+### Firefox
+
+1. **Open Firefox** → **Settings**
+2. **Scroll down to "Network Settings"**
+3. **Click "Settings..."**
+4. **Select "Manual proxy configuration"**
+5. **Configure:**
+   - **SOCKS Host:** `localhost`
+   - **Port:** `1080`
+   - **Select "SOCKS v5"**
+   - **Check "Proxy DNS when using SOCKS v5"** (important!)
+6. **Click "OK"**
+
+### Chrome / Edge / Brave (Command Line)
+
+These browsers use system proxy settings, but you can launch them with a SOCKS5 proxy via command line:
+
+**Windows:**
+```cmd
 chrome.exe --proxy-server="socks5://localhost:1080"
 ```
 
-**Option 3: System Proxy**
-Configure OS-level SOCKS proxy (affects all applications)
-
-### cURL Command Line
-
-Test with cURL:
-
+**macOS:**
 ```bash
-# Basic SOCKS5 request
-curl --socks5 localhost:1080 http://api.test.local:8080/api/users
-
-# With authentication
-curl --socks5 localhost:1080 \
-  --proxy-user username:password \
-  http://api.test.local:8080/api/users
-
-# HTTPS through SOCKS5
-curl --socks5 localhost:1080 \
-  -k \
-  https://api.test.local:8443/api/users
-
-# Verbose output for debugging
-curl --socks5 localhost:1080 -v http://api.test.local:8080/health
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --proxy-server="socks5://localhost:1080"
 ```
 
-## Testing
-
-### Automated Test Script
-
-Mockelot includes a comprehensive test script: `test-socks5.sh`
-
+**Linux:**
 ```bash
-# Make script executable
-chmod +x test-socks5.sh
-
-# Run tests
-./test-socks5.sh
+google-chrome --proxy-server="socks5://localhost:1080"
 ```
 
-The script tests:
-1. Basic SOCKS5 connectivity
-2. Domain-specific matching
-3. All intercepted domains matching
-4. Overlay mode passthrough
-5. HTTPS through SOCKS5
-6. Non-intercepted domain passthrough
+### Chrome / Edge / Brave (Extension)
 
-### Test Configuration
+Use a proxy extension like **Proxy SwitchyOmega**:
 
-Load `test-socks5-config.json` for pre-configured test endpoints:
-- Endpoint with `any` domain filter at `/health`
-- Endpoint with `specific` domain filter at `/api/users` for `api.test.local`
-- Endpoint with `all` domain filter at `/test`
-- Three test domains: `api.test.local`, `app.test.local`, `passthrough.test.local`
+1. **Install Proxy SwitchyOmega** from the Chrome Web Store
+2. **Click the extension icon** → **Options**
+3. **Create a new profile** (e.g., "Mockelot")
+4. **Select "Proxy Profile"**
+5. **Configure:**
+   - **Protocol:** `SOCKS5`
+   - **Server:** `localhost`
+   - **Port:** `1080`
+6. **Click "Apply changes"**
+7. **Click the extension icon** and select your "Mockelot" profile
 
-### Manual Testing Steps
+### Safari (macOS)
 
-**Test 1: Basic Connectivity**
-```bash
-curl --socks5 localhost:1080 http://any.domain.com/health
-```
-Expected: `{"status": "healthy"}` (if endpoint configured)
+1. **Open System Preferences** → **Network**
+2. **Select your active network** (Wi-Fi or Ethernet)
+3. **Click "Advanced..."**
+4. **Go to the "Proxies" tab**
+5. **Check "SOCKS Proxy"**
+6. **Configure:**
+   - **SOCKS Proxy Server:** `localhost:1080`
+7. **Click "OK"** → **Apply**
 
-**Test 2: Domain Matching**
-```bash
-curl --socks5 localhost:1080 http://api.test.local:8080/api/users
-```
-Expected: User data from configured endpoint
+**Note:** This changes system-wide proxy settings on macOS.
 
-**Test 3: Overlay Mode**
-```bash
-curl --socks5 localhost:1080 http://passthrough.test.local:8080/unknown
-```
-Expected: Proxied response from real server (or DNS error if domain doesn't exist)
+---
 
-**Test 4: Authentication**
+## Example Scenarios
 
-Enable authentication in settings, then:
-```bash
-curl --socks5 localhost:1080 \
-  --proxy-user testuser:testpass \
-  http://api.test.local:8080/api/users
-```
+### Scenario 1: Override One REST Service, Pass Through Others
 
-## Common Use Cases
+**Use Case:** You're developing a new version of the `/users` service locally while using the production API for everything else.
 
-### Use Case 1: Frontend Development Against Multiple Services
+**Setup:**
 
-**Scenario:** You're developing a frontend that calls multiple backend services (`auth.example.com`, `api.example.com`, `cdn.example.com`). You want to mock auth and API but use real CDN.
+1. **Configure Domain Takeover:**
+   - **Pattern:** `api.company.com`
+   - **Overlay Mode:** ✅ **Enabled** (pass through unmatched requests)
 
-**Configuration:**
-1. Enable SOCKS5 on port 1080
-2. Add intercepted domains:
-   - `auth\.example\.com` (overlay mode: OFF)
-   - `api\.example\.com` (overlay mode: ON)
-   - `cdn\.example\.com` (overlay mode: ON)
-3. Create endpoints:
-   - `/auth/login` with domain filter: `auth.example.com` → Mock response
-   - `/api/users` with domain filter: `api.example.com` → Mock response
-4. Configure browser to use SOCKS5 proxy
-5. Result:
-   - Auth requests → Mocked
-   - `/api/users` requests → Mocked
-   - Other API requests → Proxied to real server (overlay mode)
-   - CDN requests → Proxied to real server (no endpoints configured)
+2. **Create a Proxy Endpoint** for the local service:
+   - **Type:** Proxy
+   - **Domain Filter:**
+     - **Mode:** Specific
+     - **Patterns:** `api.company.com`
+   - **Path Pattern:** `/users/*`
+   - **Target URL:** `http://localhost:3000/users`
+   - **Path Translation:** Strip (`/users/123` → `http://localhost:3000/users/123`)
 
-### Use Case 2: Testing Microservices
+**Result:**
+- `https://api.company.com/users/123` → Your local service at `http://localhost:3000/users/123`
+- `https://api.company.com/products/456` → Production server (passes through)
+- `https://api.company.com/orders/789` → Production server (passes through)
 
-**Scenario:** Testing a microservice that calls other services. Want to mock external dependencies.
+---
 
-**Configuration:**
-1. Enable SOCKS5 on port 1080
-2. Add intercepted domains for external services:
-   - `payment-service\.internal` (overlay mode: OFF)
-   - `notification-service\.internal` (overlay mode: OFF)
-3. Create mock endpoints for external API calls
-4. Run your microservice with SOCKS5 proxy environment:
-   ```bash
-   export http_proxy=socks5://localhost:1080
-   export https_proxy=socks5://localhost:1080
-   ./your-service
-   ```
+### Scenario 2: Override Multiple Paths to Different Services
 
-### Use Case 3: API Testing with Partial Mocking
+**Use Case:** You're testing two microservices locally (`users` and `orders`) while using production for everything else.
 
-**Scenario:** Testing API client library against staging server, but one endpoint is broken.
+**Setup:**
 
-**Configuration:**
-1. Enable SOCKS5
-2. Add domain: `api-staging.example.com` (overlay mode: ON)
-3. Create endpoint for broken path: `/api/broken-endpoint` → Mock working response
-4. All other requests pass through to real staging server
-5. Run tests with proxy configured
+1. **Configure Domain Takeover:**
+   - **Pattern:** `api.company.com`
+   - **Overlay Mode:** ✅ **Enabled**
 
-### Use Case 4: Simulating Multi-Tenant Environments
+2. **Create Proxy Endpoint for Users Service:**
+   - **Domain Filter:** Specific → `api.company.com`
+   - **Path Pattern:** `/api/v1/users/*`
+   - **Target URL:** `http://localhost:3000`
+   - **Path Translation:** None
 
-**Scenario:** Testing SaaS application with different tenant subdomains.
+3. **Create Proxy Endpoint for Orders Service:**
+   - **Domain Filter:** Specific → `api.company.com`
+   - **Path Pattern:** `/api/v1/orders/*`
+   - **Target URL:** `http://localhost:4000`
+   - **Path Translation:** None
 
-**Configuration:**
-1. Enable SOCKS5
-2. Add intercepted domain pattern: `.*\.example\.com` (matches all subdomains)
-3. Create endpoints with domain filters:
-   - `/api/config` → Domain filter: `tenant1\.example\.com` → Tenant 1 config
-   - `/api/config` → Domain filter: `tenant2\.example\.com` → Tenant 2 config
-4. Browser accesses different subdomains, gets tenant-specific responses
+**Result:**
+- `https://api.company.com/api/v1/users/123` → `http://localhost:3000/api/v1/users/123`
+- `https://api.company.com/api/v1/orders/456` → `http://localhost:4000/api/v1/orders/456`
+- `https://api.company.com/api/v1/products/789` → Production (passes through)
+
+---
+
+### Scenario 3: Test Frontend Module Locally, Proxy Static Assets
+
+**Use Case:** You're developing a portal module locally while using the production CDN for other assets.
+
+**Setup:**
+
+1. **Configure Domain Takeover:**
+   - **Pattern:** `app.company.com`
+   - **Overlay Mode:** ✅ **Enabled**
+
+2. **Create Proxy Endpoint for Local Portal:**
+   - **Domain Filter:** Specific → `app.company.com`
+   - **Path Pattern:** `/portal/admin/*`
+   - **Target URL:** `http://localhost:8080/portal/admin`
+   - **Path Translation:** None
+
+3. **Create Proxy Endpoint for Local Assets (optional):**
+   - **Path Pattern:** `/assets/admin/*`
+   - **Target URL:** `http://localhost:8080/assets/admin`
+
+**Result:**
+- `https://app.company.com/portal/admin` → Your local dev server at `http://localhost:8080/portal/admin`
+- `https://app.company.com/portal/dashboard` → Production (passes through)
+- `https://app.company.com/assets/admin/bundle.js` → Your local dev server
+- `https://app.company.com/assets/shared/common.css` → Production CDN (passes through)
+
+---
+
+### Scenario 4: Mock Authentication, Proxy Everything Else
+
+**Use Case:** You want to bypass authentication during testing but use real backend services.
+
+**Setup:**
+
+1. **Configure Domain Takeover:**
+   - **Pattern:** `auth.company.com`
+   - **Overlay Mode:** ❌ **Disabled** (block all, force mock)
+
+2. **Create Mock Endpoint for Login:**
+   - **Type:** Mock
+   - **Domain Filter:** Specific → `auth.company.com`
+   - **Path Pattern:** `/api/login`
+   - **Method:** POST
+   - **Response Mode:** Script
+   - **Status Code:** 200
+   - **Script:**
+     ```javascript
+     response.headers['Content-Type'] = 'application/json';
+     response.body = JSON.stringify({
+       token: 'mock-jwt-token-12345',
+       user: {
+         id: 1,
+         username: 'testuser',
+         email: 'test@example.com',
+         roles: ['admin']
+       }
+     });
+     ```
+
+3. **Configure other domains normally:**
+   - **Pattern:** `api.company.com`
+   - **Overlay Mode:** ✅ **Enabled** (real API calls)
+
+**Result:**
+- `https://auth.company.com/api/login` → Returns mock JWT token
+- `https://api.company.com/users` → Real API (uses mock token)
+
+---
+
+### Scenario 5: Add Delay to Test Timeout Handling
+
+**Use Case:** You want to test how your frontend handles slow API responses.
+
+**Setup:**
+
+1. **Configure Domain Takeover:**
+   - **Pattern:** `api.company.com`
+   - **Overlay Mode:** ✅ **Enabled**
+
+2. **Create Mock Endpoint with Delay:**
+   - **Domain Filter:** Specific → `api.company.com`
+   - **Path Pattern:** `/api/slow-endpoint`
+   - **Response Mode:** Static
+   - **Status Code:** 200
+   - **Body:** `{"status": "ok"}`
+   - **Delay (ms):** `5000` (5 second delay)
+
+**Result:**
+- `https://api.company.com/api/slow-endpoint` → Returns after 5 seconds
+- All other requests → Normal speed (passes through)
+
+---
+
+### Scenario 6: Override Broken Production Endpoint Temporarily
+
+**Use Case:** A production endpoint is returning errors. You want to mock it temporarily while waiting for the fix.
+
+**Setup:**
+
+1. **Configure Domain Takeover:**
+   - **Pattern:** `api.company.com`
+   - **Overlay Mode:** ✅ **Enabled**
+
+2. **Create Mock Endpoint for Broken Service:**
+   - **Domain Filter:** Specific → `api.company.com`
+   - **Path Pattern:** `/api/broken-service/*`
+   - **Response Mode:** Static
+   - **Status Code:** 200
+   - **Headers:** `Content-Type: application/json`
+   - **Body:**
+     ```json
+     {
+       "status": "temporary_mock",
+       "data": {
+         "id": 1,
+         "name": "Placeholder Data"
+       }
+     }
+     ```
+
+**Result:**
+- `https://api.company.com/api/broken-service/123` → Returns mock data
+- Everything else → Production (passes through)
+
+---
+
+### Scenario 7: Test Against Staging API with Mock Auth
+
+**Use Case:** You want to test your frontend against a staging API but mock the authentication service.
+
+**Setup:**
+
+1. **Configure Domain Takeover (Auth):**
+   - **Pattern:** `auth.staging.company.com`
+   - **Overlay Mode:** ❌ **Disabled**
+
+2. **Configure Domain Takeover (API):**
+   - **Pattern:** `api.staging.company.com`
+   - **Overlay Mode:** ✅ **Enabled**
+
+3. **Create Mock Auth Endpoint:**
+   - **Domain Filter:** Specific → `auth.staging.company.com`
+   - **Path Pattern:** `/oauth/token`
+   - **Response Mode:** Script
+   - **Script:**
+     ```javascript
+     response.headers['Content-Type'] = 'application/json';
+     response.body = JSON.stringify({
+       access_token: 'mock-oauth-token',
+       token_type: 'Bearer',
+       expires_in: 3600
+     });
+     ```
+
+**Result:**
+- `https://auth.staging.company.com/oauth/token` → Returns mock OAuth token
+- `https://api.staging.company.com/*` → Real staging API
+
+---
 
 ## Troubleshooting
 
-### SOCKS5 Server Won't Start
+### Browser Shows "Proxy Server Refusing Connections"
 
-**Symptom:** Error starting server, or SOCKS5 proxy doesn't respond
+**Cause:** Mockelot's SOCKS5 proxy is not running or wrong port configured.
 
-**Causes:**
-1. Port 1080 already in use
-2. Permission denied (port < 1024 on Linux without sudo)
-3. Firewall blocking port
+**Solution:**
+1. Verify SOCKS5 is enabled in Mockelot Settings → SOCKS5 Proxy tab
+2. Check the port matches your browser configuration (default: `1080`)
+3. Restart Mockelot
 
-**Solutions:**
+### SSL/TLS Certificate Errors
+
+**Cause:** CA certificate not installed or not trusted.
+
+**Solution:**
+1. Re-export the CA certificate from Mockelot
+2. Follow the installation instructions for your browser (Step 2)
+3. Restart your browser after installing the certificate
+4. Verify the certificate is installed:
+   - **Firefox:** Settings → Privacy & Security → View Certificates → Authorities → Search for "Mockelot"
+   - **Chrome/Edge:** Settings → Security → Manage Certificates → Trusted Root → Look for "Mockelot CA"
+
+### Requests Not Being Intercepted
+
+**Cause:** Domain not configured in Domain Takeover or overlay mode disabled without matching endpoint.
+
+**Solution:**
+1. Verify the domain is in the Domain Takeover list (Settings → SOCKS5 Proxy → Domain Takeover)
+2. Ensure the domain is **Enabled**
+3. Check your endpoint's Domain Filter matches the intercepted domain
+4. Enable **Overlay Mode** if you want unmatched requests to pass through
+
+### All Requests Returning 404
+
+**Cause:** Overlay mode is disabled and no matching endpoint exists.
+
+**Solution:**
+1. Enable **Overlay Mode** for the domain (Settings → SOCKS5 Proxy → Domain Takeover)
+2. Or create endpoints to handle all requests to that domain
+
+### Browser Proxy Settings Don't Persist
+
+**Cause:** Some browsers reset proxy settings on restart.
+
+**Solution:**
+- Use a browser extension like **Proxy SwitchyOmega** for persistent settings
+- Or use command-line flags to launch the browser with proxy enabled
+
+### DNS Not Resolving Through Proxy
+
+**Cause:** Browser not configured to proxy DNS queries.
+
+**Solution:**
+- **Firefox:** Enable "Proxy DNS when using SOCKS v5" in Network Settings
+- **Chrome/Others:** Ensure you're using `socks5://` (not `socks4://`) in proxy configuration
+
+### Performance Issues / Slow Responses
+
+**Cause:** Overlay mode performs DNS lookups and creates proxy connections on demand.
+
+**Solution:**
+1. DNS results are cached for 5 minutes, so subsequent requests will be faster
+2. For frequently accessed domains, consider creating explicit proxy endpoints instead of relying on overlay mode
+3. Check your endpoint delay settings (Mock endpoints → Delay field)
+
+### Authentication Required Popup Keeps Appearing
+
+**Cause:** SOCKS5 authentication is enabled in Mockelot but browser credentials not saved.
+
+**Solution:**
+1. Enter the username/password from Mockelot Settings → SOCKS5 Proxy
+2. Check "Remember password" in the browser prompt
+3. Or disable authentication if not needed (Settings → SOCKS5 Proxy → uncheck "Require Authentication")
+
+---
+
+## Advanced Tips
+
+### Using cURL with SOCKS5 Proxy
+
 ```bash
-# Check if port is in use
-netstat -an | grep 1080
-# or
-ss -tuln | grep 1080
+# Basic request
+curl --proxy socks5://localhost:1080 https://api.company.com/users
 
-# Use different port (e.g., 8081)
-# Change in SOCKS5 settings, click Apply
+# With authentication
+curl --proxy socks5://username:password@localhost:1080 https://api.company.com/users
 
-# Check firewall (Linux)
-sudo ufw status
-sudo ufw allow 1080
+# With CA certificate
+curl --proxy socks5://localhost:1080 --cacert mockelot-ca.crt https://api.company.com/users
 ```
 
-### Browser Can't Connect Through Proxy
+### Combining Mock and Proxy Endpoints
 
-**Symptom:** Browser shows connection errors when proxy is enabled
+You can mix mock and proxy endpoints for the same domain:
 
-**Checks:**
-1. Verify Mockelot is running
-2. Verify SOCKS5 is enabled in settings
-3. Check browser proxy configuration:
-   - Hostname: `localhost` (not 127.0.0.1, some browsers differ)
-   - Port: `1080` (match Mockelot settings)
-   - Type: SOCKS v5 (not SOCKS v4)
-4. Test with cURL:
-   ```bash
-   curl --socks5 localhost:1080 http://example.com
-   ```
+- **Mock** `/api/login` (authentication)
+- **Proxy** `/api/users/*` to `http://localhost:3000` (local service)
+- **Overlay** everything else to production
 
-### Domain Not Being Intercepted
+### Using Environment Variables for Different Configurations
 
-**Symptom:** Requests go to real server instead of Mockelot endpoints
+Save different Domain Takeover configurations for different testing scenarios (dev, staging, production mix) and switch between them easily.
 
-**Causes:**
-1. Domain not in intercepted domains list
-2. Domain pattern doesn't match (regex error)
-3. Domain is disabled in list
-4. Endpoint domain filter doesn't match
+### Debugging Intercepted Traffic
 
-**Debug Steps:**
-1. Check Mockelot logs for incoming requests
-2. Verify domain pattern matches with regex tester
-3. Ensure domain is **Enabled** in table
-4. Check endpoint **Domain Filter** setting
-5. Test with wildcard endpoint (domain filter: any, path: `.*`)
+1. Open the **Traffic Log** panel in Mockelot
+2. Filter by domain to see which requests are being intercepted
+3. Check the **Backend RTT** column to see if requests are being proxied (non-zero RTT) or mocked (zero RTT)
 
-### Authentication Failing
+---
 
-**Symptom:** Browser prompts for credentials repeatedly, or cURL returns authentication error
+## Summary
 
-**Solutions:**
-1. Verify username/password in Mockelot settings
-2. Check browser proxy username/password configuration
-3. For cURL, use `--proxy-user username:password`
-4. Try disabling authentication to isolate issue
+SOCKS5 proxy mode in Mockelot is powerful for:
+- Multi-domain testing without DNS changes
+- Selective endpoint mocking with pass-through for unmatched requests
+- Testing local services alongside production/staging backends
+- Bypassing broken or slow endpoints during development
 
-### Overlay Mode Not Working
-
-**Symptom:** Get 404 instead of proxied response
-
-**Checks:**
-1. Verify overlay mode is **checked** for domain
-2. Ensure domain resolves:
-   ```bash
-   nslookup example.com
-   ```
-3. Check Mockelot logs for DNS resolution errors
-4. Verify no firewall blocking outbound connections
-
-### HTTPS/TLS Errors
-
-**Symptom:** Certificate errors when accessing HTTPS through SOCKS5
-
-**Solutions:**
-1. Install Mockelot CA certificate in browser/OS
-2. See `docs/SETUP.md` for CA installation instructions
-3. For cURL, use `-k` to skip verification (testing only):
-   ```bash
-   curl --socks5 localhost:1080 -k https://api.test.local:8443/api/users
-   ```
-4. Ensure domain is in **Cert Names** in HTTPS settings
-
-### DNS Resolution Takes Long Time
-
-**Symptom:** First request to domain is slow, subsequent requests are fast
-
-**Explanation:** This is normal - first request performs DNS lookup, result is cached for 5 minutes.
-
-**Optimization:** Pre-warm cache by accessing domain once before testing.
-
-### Browser Using Proxy for All Domains
-
-**Symptom:** All browser traffic goes through Mockelot, even non-intercepted domains
-
-**Explanation:** This is correct behavior for SOCKS5 proxy. Mockelot passes through non-intercepted domains transparently.
-
-**If you want to avoid:** Configure proxy only for specific domains using PAC file or browser extension like FoxyProxy.
-
-## Advanced Configuration
-
-### SOCKS5 with Authentication
-
-For production or shared environments:
-1. Enable **Require Authentication**
-2. Set strong username and password
-3. Note: Credentials stored in plain text in config file
-4. Browser will prompt for credentials once per session
-
-### Hosts File Helper
-
-Instead of SOCKS5 (or in addition to), use hosts file entries:
-
-1. In SOCKS5 settings, see **Hosts File Helper** section
-2. Copy generated entries
-3. Paste into hosts file:
-   - **Linux/Mac:** `/etc/hosts` (requires sudo)
-   - **Windows:** `C:\Windows\System32\drivers\etc\hosts` (requires admin)
-4. Save file
-5. Test: `ping api.test.local` should resolve to 127.0.0.1
-
-Hosts file approach works for applications that don't support SOCKS5 proxy.
-
-### Combining SOCKS5 with Endpoint Features
-
-SOCKS5 domain filtering works with **all endpoint types**:
-
-- **Mock Endpoints:** Serve static/template/script responses per domain
-- **Proxy Endpoints:** Proxy to different backends based on domain
-- **Container Endpoints:** Route to containerized services by domain
-
-Example: Route `api.test.local` to mock, `db.test.local` to PostgreSQL container, `backend.test.local` to real proxy backend.
-
-## Best Practices
-
-1. **Start with Overlay Mode ON** - Prevents breaking other requests while you build endpoints
-2. **Use Descriptive Domain Patterns** - Comment your regex patterns
-3. **Enable HTTPS** - Install CA certificate for realistic browser testing
-4. **Test Incrementally** - Start with one domain, one endpoint
-5. **Use Domain Filter: Specific** - Explicitly list domains per endpoint for clarity
-6. **Monitor Logs** - Watch Traffic Log panel to verify requests being intercepted
-7. **Disable Proxy When Done** - Remember to disable browser proxy after testing
-8. **Version Control** - Save configurations for different test scenarios
-
-## See Also
-
-- [Setup Guide](SETUP.md) - Installation and HTTPS setup
-- [Mock Endpoint Guide](MOCK-GUIDE.md) - Creating mock responses
-- [Proxy Endpoint Guide](PROXY-GUIDE.md) - Configuring proxy endpoints
-- [Container Endpoint Guide](CONTAINER-GUIDE.md) - Using container endpoints
+The key is the **Overlay Mode** feature, which allows fine-grained control over which requests to intercept and which to pass through to real servers.

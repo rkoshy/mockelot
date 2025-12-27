@@ -11,6 +11,7 @@ Mock endpoints provide static, template-based, or script-generated HTTP response
   - [Template Mode](#template-mode)
   - [Script Mode](#script-mode)
 - [Path Patterns](#path-patterns)
+- [Domain Filtering (SOCKS5 Integration)](#domain-filtering-socks5-integration)
 - [Request Validation](#request-validation)
 - [Response Configuration](#response-configuration)
 - [Organizing with Groups](#organizing-with-groups)
@@ -354,6 +355,159 @@ Or use separate responses for different methods:
     status_code: 201
     body: '{"id": "new-user"}'
 ```
+
+## Domain Filtering (SOCKS5 Integration)
+
+When using Mockelot as a SOCKS5 proxy, you can configure mock endpoints to respond only to specific domains.
+
+### Filter Modes
+
+#### Any Domain (Default)
+
+Mock responds to all requests regardless of domain:
+
+```json
+{
+  "domain_filter": {
+    "mode": "any"
+  }
+}
+```
+
+This is the default mode when no domain filter is configured.
+
+#### All SOCKS5 Domains
+
+Mock responds only to domains configured in SOCKS5 domain takeover:
+
+```json
+{
+  "domain_filter": {
+    "mode": "all"
+  }
+}
+```
+
+The endpoint will match requests from any domain listed in your SOCKS5 configuration's domain takeover list.
+
+#### Specific Domains
+
+Mock responds only to specified domain patterns:
+
+```json
+{
+  "domain_filter": {
+    "mode": "specific",
+    "patterns": ["api.example.com", "*.staging.example.com"]
+  }
+}
+```
+
+Domain patterns support:
+- **Exact match**: `api.example.com`
+- **Wildcard subdomain**: `*.example.com` (matches any subdomain)
+- **Multiple patterns**: List multiple domains/patterns in the array
+
+### Use Cases
+
+#### Multi-Tenant API Testing
+
+Different mock responses for different subdomains:
+
+```yaml
+# Tenant 1 endpoint
+- type: response
+  response:
+    path_pattern: "/api/users"
+    domain_filter:
+      mode: "specific"
+      patterns: ["api.tenant1.example.com"]
+    body: '{"tenant": "tenant1", "users": [...]}'
+
+# Tenant 2 endpoint
+- type: response
+  response:
+    path_pattern: "/api/users"
+    domain_filter:
+      mode: "specific"
+      patterns: ["api.tenant2.example.com"]
+    body: '{"tenant": "tenant2", "users": [...]}'
+```
+
+Results:
+- `api.tenant1.example.com/api/users` → Tenant 1 data
+- `api.tenant2.example.com/api/users` → Tenant 2 data
+
+#### Service-Specific Mocking
+
+Mock only authentication service while proxying others:
+
+```yaml
+# Mock auth service
+- type: response
+  response:
+    path_pattern: "/login"
+    domain_filter:
+      mode: "specific"
+      patterns: ["auth.example.com"]
+    body: '{"token": "mock-jwt-token"}'
+
+# Other services use overlay mode (pass through to real backend)
+```
+
+Results:
+- `auth.example.com/login` → Mock response
+- `api.example.com/*` → Pass through to real API (overlay mode)
+
+#### Progressive Migration
+
+Mock legacy endpoints while using new ones:
+
+```yaml
+# Mock old API version
+- type: response
+  response:
+    path_pattern: "/v1/*"
+    domain_filter:
+      mode: "specific"
+      patterns: ["api.example.com"]
+    body: '{"version": "v1", "deprecated": true}'
+
+# New API version passes through to real backend
+```
+
+Results:
+- `api.example.com/v1/users` → Mock old API
+- `api.example.com/v2/users` → Proxy to new API (overlay mode)
+
+### Configuration in UI
+
+1. Open endpoint settings dialog
+2. Expand **"Domain Filter"** section
+3. Select filter mode:
+   - **Any** - Match all domains (default)
+   - **All SOCKS5** - Match all intercepted domains
+   - **Specific** - Match selected domains
+4. For "Specific" mode, add domain patterns (one per line or comma-separated)
+5. Click **Save** to apply changes
+
+### Domain + Path Matching
+
+Both domain filter AND path pattern must match for the endpoint to handle the request:
+
+```
+Request: api.example.com/api/users
+         ↓
+Domain Filter Check: Does domain match?
+         ↓ YES
+Path Pattern Check: Does /api/users match?
+         ↓ YES
+Return Mock Response
+```
+
+If either check fails, the request continues to the next endpoint or overlay mode.
+
+See [SOCKS5 Guide](SOCKS5-GUIDE.md) for complete SOCKS5 proxy setup and domain takeover configuration.
 
 ## Request Validation
 
