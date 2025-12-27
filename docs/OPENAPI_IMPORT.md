@@ -41,6 +41,154 @@ Mockelot now supports importing OpenAPI 3.x and Swagger specifications to automa
 3. Select your OpenAPI/Swagger file (.yaml, .yml, or .json)
 4. The imported endpoints will appear in the Responses panel
 
+## Step-by-Step UI Walkthrough
+
+### 1. Import Your Specification
+
+1. **Click "Import OpenAPI"** button in the Mockelot header bar
+2. **Choose import mode** in the dialog:
+   - **Append**: Add imported endpoints to existing configuration
+   - **Replace**: Clear all endpoints and import fresh
+   - **Cancel**: Close dialog without importing
+
+3. **Select your file**:
+   - Supported formats: `.yaml`, `.yml`, `.json`
+   - File browser opens to select local OpenAPI specification
+   - Large files (>5MB) may take a few seconds to process
+
+### 2. Review Imported Endpoints
+
+After import, you'll see:
+- **Grouped by path**: All HTTP methods for same path grouped together
+- **Status codes**: Separate response for each status code (200, 400, 404, etc.)
+- **Default states**:
+  - Success responses (2xx) are **enabled**
+  - Error responses (4xx, 5xx) are **disabled**
+  - Security responses (401, 403) are **disabled**
+
+### 3. Understanding Generated Content
+
+#### Static Responses
+
+Created when OpenAPI spec includes `example` or `examples`:
+
+```yaml
+responses:
+  '200':
+    description: User object
+    content:
+      application/json:
+        example:
+          id: 123
+          name: "John Doe"
+```
+
+→ Mockelot creates static JSON response
+
+#### Script Responses
+
+Created when OpenAPI spec includes `schema` but no example:
+
+```yaml
+responses:
+  '200':
+    description: User list
+    content:
+      application/json:
+        schema:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: integer}
+              name: {type: string}
+```
+
+→ Mockelot generates JavaScript using Faker.js:
+
+```javascript
+response.body = JSON.stringify([
+  {id: faker.number.int(), name: faker.person.fullName()},
+  {id: faker.number.int(), name: faker.person.fullName()}
+]);
+```
+
+#### Request Validation
+
+Created from OpenAPI query parameters and request body schemas:
+- **Query parameter validation**: Type checking, enum validation
+- **Request body validation**: Required fields, type checking
+- **Validation mode**: Script-based for flexibility
+
+### 4. Customizing After Import
+
+#### Enable/Disable Responses
+
+- Click response to expand
+- Toggle "Enabled" checkbox
+- Useful for testing specific error conditions
+
+#### Modify Generated Scripts
+
+- Edit script in "Script" tab
+- Add custom logic
+- Test with "Test Script" button
+
+#### Adjust Delays
+
+- Add response delays to simulate slow networks
+- Useful for testing loading states
+
+### Example: E-Commerce API
+
+**OpenAPI Spec:**
+
+```yaml
+paths:
+  /products:
+    get:
+      summary: List products
+      responses:
+        '200':
+          description: Product list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: {type: integer}
+                    name: {type: string}
+                    price: {type: number}
+  /products/{id}:
+    get:
+      summary: Get product
+      parameters:
+        - name: id
+          in: path
+          schema: {type: integer}
+      responses:
+        '200':
+          description: Product details
+        '404':
+          description: Not found
+```
+
+**After Import:**
+
+- Group: "GET /products" with 200 response (enabled)
+- Group: "GET /products/{id}" with 200 response (enabled) and 404 response (disabled)
+- Both responses use Faker-generated data
+- Path parameter `:id` automatically extracted
+- Validation scripts ensure `id` is numeric
+
+**Result:**
+
+- `GET /products` → Returns array of fake products
+- `GET /products/123` → Returns single fake product with id=123
+- `GET /products/abc` → Returns 404 (validation fails)
+
 ### Supported Features
 
 #### Schema Types
