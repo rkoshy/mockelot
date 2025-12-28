@@ -38,7 +38,7 @@
 
       <!-- Autocomplete dropdown -->
       <div
-        v-if="showDropdown && (filteredSOCKS5Domains.length > 0 || inputValue.trim())"
+        v-if="showDropdown"
         class="dropdown"
       >
         <!-- SOCKS5 domains section -->
@@ -104,9 +104,9 @@ const wrapperRef = ref<HTMLDivElement | null>(null)
 onMounted(async () => {
   try {
     const config = await GetSOCKS5Config()
-    if (config.DomainTakeover?.domains) {
+    if (config.domain_takeover?.domains) {
       // Extract patterns from enabled domains only
-      socks5Domains.value = config.DomainTakeover.domains
+      socks5Domains.value = config.domain_takeover.domains
         .filter(d => d.enabled)
         .map(d => d.pattern)
     }
