@@ -13,8 +13,13 @@ responses:
 endpoints:
   - id: 899567c9-4716-4946-a28f-5f3cdc2fcf55
     name: Dashboard
-    path_prefix: /test
+    path_prefix: ^/dashboard/.*
     translation_mode: none
+    enabled: true
+    domain_filter:
+      mode: specific
+      patterns:
+        - api.lab.platform28.com
     type: mock
     items:
       - type: response
@@ -34,13 +39,6 @@ endpoints:
             mode: script
             match_type: contains
           use_global_cors: true
-  - id: 3b815d29-bcba-4a66-9309-5f226611174e
-    name: OCW
-    path_prefix: ^/omnichannel-workspace*
-    translation_mode: none
-    enabled: true
-    display_order: 1
-    type: proxy
     proxy_config:
       backend_url: https://apps.lab.platform28.com/
       timeout_seconds: 30
@@ -73,6 +71,49 @@ endpoints:
       status_passthrough: true
       health_check_enabled: false
       health_check_interval: 0
+  - id: 3b815d29-bcba-4a66-9309-5f226611174e
+    name: Dashboard GUI
+    path_prefix: ^/dashboard.*
+    translation_mode: none
+    enabled: true
+    domain_filter:
+      mode: specific
+      patterns:
+        - apps.lab.platform28.com
+    type: proxy
+    proxy_config:
+      backend_url: http://localhost:5432
+      timeout_seconds: 30
+      inbound_headers:
+        - name: Connection
+          mode: drop
+        - name: Keep-Alive
+          mode: drop
+        - name: Proxy-Authenticate
+          mode: drop
+        - name: Proxy-Authorization
+          mode: drop
+        - name: Te
+          mode: drop
+        - name: Trailers
+          mode: drop
+        - name: Transfer-Encoding
+          mode: drop
+        - name: Upgrade
+          mode: drop
+        - name: X-Forwarded-For
+          mode: expression
+          expression: request.remoteAddr
+        - name: X-Forwarded-Host
+          mode: expression
+          expression: request.host
+        - name: X-Forwarded-Proto
+          mode: expression
+          expression: request.scheme
+      status_passthrough: true
+      health_check_enabled: false
+      health_check_interval: 30
+      health_check_path: /
   - id: system-overlay-apps-platform28-com
     name: 'Overlay: apps.platform28.com'
     path_prefix: /
@@ -184,4 +225,4 @@ domain_takeover:
       overlay_mode: true
       enabled: true
 selected_endpoint_id: 3b815d29-bcba-4a66-9309-5f226611174e
-last_modified: 2025-12-24T17:46:26.814624693-05:00
+last_modified: 2025-12-27T10:02:06.227369682-05:00
