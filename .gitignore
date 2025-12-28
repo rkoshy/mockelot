@@ -1,5 +1,6 @@
 # Binaries
 build/
+dist/
 mockelot
 mockagaintool
 *.exe
@@ -7,6 +8,12 @@ mockagaintool
 *.dll
 *.so
 *.dylib
+
+# Release artifacts
+mockelot-*.tar.gz
+mockelot-*.zip
+mockelot-*.AppImage
+checksums.txt
 
 # Test binary, built with `go test -c`
 *.test

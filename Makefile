@@ -1,7 +1,7 @@
 # Mockelot Build Makefile
 # Builds for Linux and Windows platforms with multiple distribution options
 
-.PHONY: all linux windows clean dev help appimage appimage-debian12 appimage-debian13 all-appimages debian12 debian13 docker-debian12 docker-debian13
+.PHONY: all linux windows clean dev help appimage appimage-debian12 appimage-debian13 all-appimages debian12 debian13 docker-debian12 docker-debian13 all-local
 
 # Default target
 all: linux windows
@@ -116,3 +116,22 @@ help:
 	@echo "  - AppImages bundle all dependencies including libwebkit"
 	@echo "  - Debian 12 AppImage works on webkit 4.0 systems (Debian 12, Ubuntu 22.04)"
 	@echo "  - Debian 13 AppImage works on webkit 4.1 systems (Debian 13, Ubuntu 24.04+)"
+
+# Build locally and copy artifacts to DESTDIR (for CI/CD)
+all-local:
+	@echo "Building for local platform and copying to ${DESTDIR}..."
+	@mkdir -p "${DESTDIR}"
+	@if [ -d "build/bin" ]; then \
+		cp -r build/bin/* "${DESTDIR}/" 2>/dev/null || true; \
+	fi
+	@if [ -f "build/bin/mockelot" ]; then \
+		echo "Copied: mockelot (Linux binary)"; \
+	fi
+	@if [ -f "build/bin/mockelot.exe" ]; then \
+		echo "Copied: mockelot.exe (Windows binary)"; \
+	fi
+	@if [ -f "build/bin/mockelot-x86_64.AppImage" ]; then \
+		cp build/bin/mockelot-x86_64.AppImage "${DESTDIR}/" 2>/dev/null || true; \
+		echo "Copied: mockelot-x86_64.AppImage"; \
+	fi
+	@echo "Build artifacts copied to ${DESTDIR}"
