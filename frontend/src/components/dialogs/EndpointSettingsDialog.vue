@@ -5,6 +5,7 @@ import { useServerStore } from '../../stores/server'
 import ProxyConfigPanel from './ProxyConfigPanel.vue'
 import ContainerConfigPanel from './ContainerConfigPanel.vue'
 import CustomSelect from '../common/CustomSelect.vue'
+import DomainFilterInput from '../common/DomainFilterInput.vue'
 
 const serverStore = useServerStore()
 
@@ -45,17 +46,6 @@ const activeTab = ref<'general' | 'proxy' | 'container'>('general')
 // Domain filter
 const domainFilterMode = ref<string>('any')
 const domainFilterPatterns = ref<string[]>([])
-
-// Computed property to bind textarea to patterns array
-const domainPatternsText = computed({
-  get: () => domainFilterPatterns.value.join('\n'),
-  set: (value: string) => {
-    domainFilterPatterns.value = value
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line.length > 0)
-  }
-})
 
 // Load endpoint data when dialog opens
 watch(() => props.show, (newVal) => {
@@ -252,15 +242,7 @@ function handleKeydown(e: KeyboardEvent) {
                 <label class="block text-sm font-medium text-gray-300 mb-2">
                   Domain Patterns
                 </label>
-                <textarea
-                  v-model="domainPatternsText"
-                  rows="4"
-                  placeholder="Enter domain patterns, one per line:&#10;api.example.com&#10;*.staging.example.com&#10;api-*.example.com"
-                  class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                />
-                <p class="mt-1 text-xs text-gray-400">
-                  Supports exact matches and wildcards (*). Example: *.example.com matches api.example.com, www.example.com, etc.
-                </p>
+                <DomainFilterInput v-model="domainFilterPatterns" />
               </div>
 
               <!-- Path Prefix -->
