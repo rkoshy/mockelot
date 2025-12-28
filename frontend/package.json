@@ -4,10 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "typecheck": "vue-tsc --noEmit",
-    "preview": "vite preview"
+    "dev": "npx vite",
+    "build": "npx vite build",
+    "typecheck": "npx vue-tsc --noEmit",
+    "preview": "npx vite preview"
   },
   "dependencies": {
     "@prettier/plugin-xml": "^3.4.2",
