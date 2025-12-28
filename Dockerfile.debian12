@@ -10,22 +10,31 @@ RUN apt-get update && apt-get install -y \
     curl \
     git \
     ca-certificates \
+    fuse \
+    squashfs-tools \
+    desktop-file-utils \
+    libfuse2 \
+    appmenu-gtk3-module \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
 RUN apt-get install -y nodejs
 
-# Install Go 1.23.4
-RUN wget https://go.dev/dl/go1.23.4.linux-amd64.tar.gz && \
-    tar -C /usr/local -xzf go1.23.4.linux-amd64.tar.gz && \
-    rm go1.23.4.linux-amd64.tar.gz
+# Install Go 1.24.3
+RUN wget https://go.dev/dl/go1.24.3.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go1.24.3.linux-amd64.tar.gz && \
+    rm go1.24.3.linux-amd64.tar.gz
 
 ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOPATH="/root/go"
 ENV PATH="${GOPATH}/bin:${PATH}"
 
-# Install Wails v2.9.0 (v2.10.0 has known issues)
+# Install Wails v2.9.0
 RUN go install github.com/wailsapp/wails/v2/cmd/wails@v2.9.0
+
+# Prepare AppImage tools
+RUN wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /usr/local/bin/appimagetool && \
+    chmod +x /usr/local/bin/appimagetool
 
 # Set working directory
 WORKDIR /build

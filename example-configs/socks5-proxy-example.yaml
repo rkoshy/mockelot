@@ -1,0 +1,227 @@
+# Mockelot Configuration Example: SOCKS5 Proxy with Domain Takeover
+#
+# This example demonstrates:
+# - SOCKS5 proxy configuration for browser-based testing
+# - Domain takeover (selective mocking by domain)
+# - Mock endpoints with domain filtering
+# - Proxy endpoints with overlay mode
+# - Script-based response generation
+#
+# Use Case: Mock specific endpoints on api.example.com while proxying others to real backend
+
+endpoints:
+  # Mock API endpoint with domain filtering
+  - id: api-mock-endpoint
+    name: API Mock Endpoint
+    path_prefix: ^/api/users
+    translation_mode: none
+    enabled: true
+    domain_filter:
+      mode: specific
+      patterns:
+        - api.example.com
+    type: mock
+    items:
+      - type: response
+        response:
+          id: users-response
+          path_pattern: /*
+          methods:
+            - GET
+            - POST
+          status_code: 200
+          status_text: OK
+          headers:
+            Content-Type: application/json
+          response_mode: script
+          script_body: |
+            // Generate mock user data
+            function randomInt(min, max) {
+                return Math.floor(Math.random() * (max - min + 1)) + min;
+            }
+
+            function generateUser(id) {
+                return {
+                    id: id,
+                    name: `User ${id}`,
+                    email: `user${id}@example.com`,
+                    age: randomInt(18, 65),
+                    active: Math.random() > 0.2
+                };
+            }
+
+            function generateMockUsers() {
+                const users = [];
+                for (let i = 1; i <= 10; i++) {
+                    users.push(generateUser(i));
+                }
+                return users;
+            }
+
+            response.headers["Content-Type"] = "application/json";
+            response.body = JSON.stringify(generateMockUsers(), null, 2);
+          request_validation:
+            mode: none
+            match_type: contains
+          use_global_cors: true
+
+  # Proxy endpoint with domain filtering
+  - id: dashboard-proxy
+    name: Dashboard Proxy
+    path_prefix: ^/dashboard
+    translation_mode: none
+    enabled: true
+    domain_filter:
+      mode: specific
+      patterns:
+        - app.example.com
+    type: proxy
+    proxy_config:
+      backend_url: http://localhost:3000
+      timeout_seconds: 30
+      inbound_headers:
+        - name: X-Forwarded-For
+          mode: expression
+          expression: request.remoteAddr
+        - name: X-Forwarded-Host
+          mode: expression
+          expression: request.host
+        - name: X-Forwarded-Proto
+          mode: expression
+          expression: request.scheme
+      status_passthrough: true
+      health_check_enabled: false
+      health_check_interval: 30
+      health_check_path: /
+
+  # Overlay endpoint for api.example.com (catches unmocked requests)
+  - id: overlay-api-example-com
+    name: 'Overlay: api.example.com'
+    path_prefix: /
+    translation_mode: none
+    enabled: true
+    is_system: true
+    display_order: 999997
+    domain_filter:
+      mode: specific
+      patterns:
+        - api.example.com
+    type: proxy
+    proxy_config:
+      backend_url: https://api.example.com
+      timeout_seconds: 30
+      status_passthrough: true
+      health_check_enabled: false
+      health_check_interval: 0
+
+  # Overlay endpoint for app.example.com (catches unmocked requests)
+  - id: overlay-app-example-com
+    name: 'Overlay: app.example.com'
+    path_prefix: /
+    translation_mode: none
+    enabled: true
+    is_system: true
+    display_order: 999997
+    domain_filter:
+      mode: specific
+      patterns:
+        - app.example.com
+    type: proxy
+    proxy_config:
+      backend_url: https://app.example.com
+      timeout_seconds: 30
+      status_passthrough: true
+      health_check_enabled: false
+      health_check_interval: 0
+
+  # System endpoints (SOCKS5 proxy handler and rejections)
+  - id: system-socks5-proxy
+    name: SOCKS5 Proxy
+    path_prefix: /
+    translation_mode: none
+    enabled: true
+    is_system: true
+    display_order: 999998
+    type: mock
+
+  - id: system-rejections
+    name: Rejections
+    path_prefix: /
+    translation_mode: none
+    enabled: true
+    is_system: true
+    display_order: 999999
+    type: mock
+    items:
+      - type: response
+        response:
+          id: reject-request
+          enabled: true
+          path_pattern: /*
+          methods:
+            - GET
+            - POST
+            - PUT
+            - PATCH
+            - DELETE
+            - HEAD
+            - OPTIONS
+          status_code: 404
+          headers:
+            Content-Type: text/plain
+          body: No matching endpoint found
+          response_mode: static
+          request_validation:
+            mode: none
+            match_type: contains
+          use_global_cors: true
+
+# HTTP Server Settings
+port: 8080
+https_enabled: true
+https_port: 8443
+http_to_https_redirect: true
+cert_mode: auto
+
+# CORS Configuration
+cors:
+  enabled: true
+  mode: headers
+  header_expressions:
+    - name: Access-Control-Allow-Origin
+      expression: request.origin || "*"
+    - name: Access-Control-Allow-Methods
+      expression: '"GET, POST, PUT, DELETE, OPTIONS, PATCH"'
+    - name: Access-Control-Allow-Headers
+      expression: '"Content-Type, Authorization"'
+    - name: Access-Control-Max-Age
+      expression: '"3600"'
+  options_default_status: 200
+
+# SOCKS5 Proxy Configuration
+socks5_config:
+  enabled: true
+  port: 1080
+  authentication: false
+  track_requests: false
+
+# Domain Takeover (SOCKS5)
+# These domains will be intercepted when using SOCKS5 proxy
+domain_takeover:
+  domains:
+    - id: domain-api-example
+      pattern: api.example.com
+      overlay_mode: true  # Passthrough unmocked requests to real server
+      enabled: true
+    - id: domain-app-example
+      pattern: app.example.com
+      overlay_mode: true
+      enabled: true
+
+# Usage Instructions:
+# 1. Start Mockelot and load this config
+# 2. Configure your browser to use SOCKS5 proxy: localhost:1080
+# 3. Browse to http://api.example.com/api/users - Gets mocked response
+# 4. Browse to http://api.example.com/other - Proxies to real api.example.com (overlay mode)
+# 5. Browse to http://app.example.com/dashboard - Proxies to localhost:3000
+# 6. Browse to http://google.com - Passes through unchanged (not in domain takeover list)

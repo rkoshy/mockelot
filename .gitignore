@@ -110,3 +110,5 @@ go.work.sum
 [Dd]esktop.ini
 $RECYCLE.BIN/
 *.lnk
+*.yaml
+!example-configs/*.yaml
