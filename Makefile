@@ -13,12 +13,12 @@ linux:
 		WAILS_TAGS=$$(./detect-platform.sh --wails-tags); \
 		if [ -n "$$WAILS_TAGS" ]; then \
 			echo "Using build tags: $$WAILS_TAGS"; \
-			~/go/bin/wails build -platform linux/amd64 $$WAILS_TAGS; \
+			~/go/bin/wails build $$WAILS_TAGS; \
 		else \
-			~/go/bin/wails build -platform linux/amd64; \
+			~/go/bin/wails build; \
 		fi \
 	else \
-		~/go/bin/wails build -platform linux/amd64; \
+		~/go/bin/wails build; \
 	fi
 	@echo "Linux build complete: build/bin/mockelot"
 
