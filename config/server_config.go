@@ -21,15 +21,14 @@ type ServerConfigManager struct {
 
 func NewServerConfigManager(customPath string) *ServerConfigManager {
 	if customPath == "" {
-		// Use user's home directory
-		homeDir, err := os.UserHomeDir()
+		// Use platform-specific app data directory
+		legacyPath, err := GetLegacyConfigPath()
 		if err != nil {
-			log.Printf("Could not determine home directory, using current directory: %v", err)
+			log.Printf("Could not determine config path, using current directory: %v", err)
 			customPath = DefaultServerConfigFile
 		} else {
-			// Store in ~/.mockelot/server-config.yaml
-			mockelotDir := filepath.Join(homeDir, ".mockelot")
-			customPath = filepath.Join(mockelotDir, DefaultServerConfigFile)
+			customPath = legacyPath
+			log.Printf("Server config path: %s", customPath)
 		}
 	}
 	return &ServerConfigManager{

@@ -419,6 +419,9 @@ type UserConfig struct {
 	SOCKS5Config   *SOCKS5Config           `json:"socks5_config,omitempty" yaml:"socks5_config,omitempty"` // SOCKS5 proxy configuration
 	DomainTakeover *DomainTakeoverConfig   `json:"domain_takeover,omitempty" yaml:"domain_takeover,omitempty"` // Domain takeover configuration
 
+	// Container Configuration
+	ContainerLogLineLimit int `json:"container_log_line_limit,omitempty" yaml:"container_log_line_limit,omitempty"` // Max log lines to retrieve
+
 	// UI State
 	SelectedEndpointId string `json:"selected_endpoint_id,omitempty" yaml:"selected_endpoint_id,omitempty"` // Selected endpoint
 

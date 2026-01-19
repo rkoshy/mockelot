@@ -13,12 +13,11 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"mockelot/config"
 )
 
 const (
-	certDirName = ".mockelot"
-	certSubDir  = "certs"
-
 	caCertFile      = "ca.crt"
 	caKeyFile       = "ca.key"
 	caTimestampFile = "ca.timestamp"
@@ -105,20 +104,9 @@ func NewCertificateManager() (*CertificateManager, error) {
 }
 
 // GetCertDir returns the certificate storage directory, creating it if needed
+// Uses platform-specific app data directory via config.GetCertsDir()
 func GetCertDir() (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	certDir := filepath.Join(homeDir, certDirName, certSubDir)
-
-	// Create directory if it doesn't exist
-	if err := os.MkdirAll(certDir, 0700); err != nil {
-		return "", fmt.Errorf("failed to create cert directory: %w", err)
-	}
-
-	return certDir, nil
+	return config.GetCertsDir()
 }
 
 // GenerateCA generates a new CA certificate and private key
