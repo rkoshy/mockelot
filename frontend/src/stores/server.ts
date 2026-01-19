@@ -284,8 +284,9 @@ export const useServerStore = defineStore('server', () => {
 
   async function importOpenAPISpec(appendMode: boolean) {
     try {
+      // Items are updated via the items:updated event emitted by the backend
+      // No need to call refreshItems() here as it would re-fetch and potentially overwrite
       await ImportOpenAPISpecWithDialog(appendMode)
-      await refreshItems()
     } catch (error) {
       console.error('Failed to import OpenAPI spec:', error)
       throw error

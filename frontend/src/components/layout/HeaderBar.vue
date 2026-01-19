@@ -22,7 +22,6 @@ const serverStore = useServerStore()
 const portInput = ref(8080)
 const isLoading = ref(false)
 const errorMessage = ref('')
-const showImportDialog = ref(false)
 const showLoadDialog = ref(false)
 const showServerConfigDialog = ref(false)
 const serverConfigDialogTab = ref<'http' | 'https'>('http')
@@ -360,32 +359,6 @@ function handleLoadDialogClose() {
   showLoadDialog.value = false
 }
 
-function handleImportOpenAPI() {
-  showImportDialog.value = true
-}
-
-async function handleAppend() {
-  showImportDialog.value = false
-  try {
-    await serverStore.importOpenAPISpec(true) // append mode
-  } catch (error) {
-    errorMessage.value = String(error)
-  }
-}
-
-async function handleReplace() {
-  showImportDialog.value = false
-  try {
-    await serverStore.importOpenAPISpec(false) // replace mode
-  } catch (error) {
-    errorMessage.value = String(error)
-  }
-}
-
-function handleCancelImport() {
-  showImportDialog.value = false
-}
-
 function openServerConfig(tab: 'http' | 'https' = 'http') {
   serverConfigDialogTab.value = tab
   showServerConfigDialog.value = true
@@ -466,26 +439,6 @@ function handleServerConfigClose() {
         </button>
       </div>
 
-      <!-- Separator -->
-      <div class="h-6 w-px bg-gray-600 ml-4"></div>
-
-      <!-- Import OpenAPI Icon -->
-      <button
-        @click="handleImportOpenAPI"
-        :disabled="serverStore.currentEndpoint?.is_system"
-        :class="[
-          'p-2 rounded transition-colors ml-4',
-          serverStore.currentEndpoint?.is_system
-            ? 'bg-gray-800 text-gray-600 cursor-not-allowed'
-            : 'bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white'
-        ]"
-        :title="serverStore.currentEndpoint?.is_system ? 'Cannot import OpenAPI when system endpoint is selected' : 'Import OpenAPI Specification'"
-      >
-        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 0L2.524 6v12L12 24l9.476-6V6L12 0zm0 2.5l7.476 4.75v9.5L12 21.5l-7.476-4.75v-9.5L12 2.5z"/>
-          <path d="M12 6L7 9v6l5 3 5-3V9l-5-3zm0 2.5L15 10v4l-3 1.8L9 14v-4l3-1.5z"/>
-        </svg>
-      </button>
     </div>
 
     <!-- Center: Status -->
@@ -557,19 +510,6 @@ function handleServerConfigClose() {
       cancel-text="Cancel"
       @primary="() => serverStore.respondToUnsavedChanges(true)"
       @cancel="() => serverStore.respondToUnsavedChanges(false)"
-    />
-
-    <!-- Import OpenAPI Dialog -->
-    <ConfirmDialog
-      :show="showImportDialog"
-      title="Import OpenAPI Specification"
-      message="How would you like to import the OpenAPI specification?"
-      primary-text="Append"
-      secondary-text="Replace"
-      cancel-text="Cancel"
-      @primary="handleAppend"
-      @secondary="handleReplace"
-      @cancel="handleCancelImport"
     />
 
     <!-- Server Configuration Dialog -->

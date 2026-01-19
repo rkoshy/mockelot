@@ -45,6 +45,8 @@ const showAddEndpointDialog = ref(false)
 const showEndpointSettingsDialog = ref(false)
 const showDeleteConfirmDialog = ref(false)
 const showContainerConsoleDialog = ref(false)
+const showImportDialog = ref(false)
+const importError = ref<string>('')
 const endpointToDelete = ref<string>('')
 const consoleEndpointId = ref<string>('')
 const consoleEndpointName = ref<string>('')
@@ -469,6 +471,33 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
+// OpenAPI Import handlers
+function handleImportOpenAPI() {
+  showImportDialog.value = true
+}
+
+async function handleAppendImport() {
+  showImportDialog.value = false
+  try {
+    await serverStore.importOpenAPISpec(true) // append mode
+  } catch (error) {
+    importError.value = String(error)
+  }
+}
+
+async function handleReplaceImport() {
+  showImportDialog.value = false
+  try {
+    await serverStore.importOpenAPISpec(false) // replace mode
+  } catch (error) {
+    importError.value = String(error)
+  }
+}
+
+function handleCancelImport() {
+  showImportDialog.value = false
+}
+
 // Register for container progress events (for inline progress indicator)
 onMounted(() => {
   if (registerEventListener) {
@@ -672,6 +701,16 @@ onUnmounted(() => {
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
           </svg>
           + Response
+        </button>
+        <button
+          @click="handleImportOpenAPI"
+          class="px-3 py-1 bg-green-700 hover:bg-green-600 rounded text-sm text-white font-medium flex items-center gap-1"
+          title="Import from OpenAPI/Swagger specification"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+          + OpenAPI
         </button>
       </div>
     </div>
@@ -1102,6 +1141,19 @@ onUnmounted(() => {
       :endpoint-id="consoleEndpointId"
       :endpoint-name="consoleEndpointName"
       @close="handleCloseConsole"
+    />
+
+    <!-- Import OpenAPI Dialog -->
+    <ConfirmDialog
+      :show="showImportDialog"
+      title="Import OpenAPI Specification"
+      message="How would you like to import the OpenAPI specification?"
+      primary-text="Append"
+      secondary-text="Replace"
+      cancel-text="Cancel"
+      @primary="handleAppendImport"
+      @secondary="handleReplaceImport"
+      @cancel="handleCancelImport"
     />
   </div>
 </template>

@@ -2444,34 +2444,45 @@ func (a *App) importOpenAPISpecWithMode(appendMode bool) (*models.AppConfig, err
 	// Get selected endpoint ID
 	selectedEndpointId := a.GetSelectedEndpointId()
 
-	// Import into selected endpoint if endpoints are configured
+	// Find target mock endpoint for import
+	// OpenAPI items can only be imported into mock endpoints
+	var targetEndpointIndex int = -1
+
 	if len(a.config.Endpoints) > 0 {
-		// Find the selected endpoint
-		found := false
+		// First, check if selected endpoint is a mock endpoint
 		for i := range a.config.Endpoints {
-			if a.config.Endpoints[i].ID == selectedEndpointId {
-				if appendMode {
-					// Append to existing items
-					a.config.Endpoints[i].Items = append(a.config.Endpoints[i].Items, items...)
-				} else {
-					// Replace existing items
-					a.config.Endpoints[i].Items = items
-				}
-				found = true
+			if a.config.Endpoints[i].ID == selectedEndpointId && a.config.Endpoints[i].Type == models.EndpointTypeMock {
+				targetEndpointIndex = i
 				break
 			}
 		}
 
-		if !found && len(a.config.Endpoints) > 0 {
-			// If selected endpoint not found, use first endpoint
-			if appendMode {
-				a.config.Endpoints[0].Items = append(a.config.Endpoints[0].Items, items...)
-			} else {
-				a.config.Endpoints[0].Items = items
+		// If selected endpoint is not a mock, find any mock endpoint
+		if targetEndpointIndex == -1 {
+			for i := range a.config.Endpoints {
+				if a.config.Endpoints[i].Type == models.EndpointTypeMock {
+					targetEndpointIndex = i
+					break
+				}
 			}
 		}
+
+		// If no mock endpoint found, return error
+		if targetEndpointIndex == -1 {
+			return nil, fmt.Errorf("no mock endpoint available - please create a mock endpoint first to import OpenAPI specs")
+		}
+
+		// Import into the target mock endpoint
+		if appendMode {
+			a.config.Endpoints[targetEndpointIndex].Items = append(a.config.Endpoints[targetEndpointIndex].Items, items...)
+		} else {
+			a.config.Endpoints[targetEndpointIndex].Items = items
+		}
+
+		// Select the target endpoint so the UI shows the imported items
+		a.config.SelectedEndpointId = a.config.Endpoints[targetEndpointIndex].ID
 	} else {
-		// Fallback to legacy Items for backward compatibility
+		// Fallback to legacy Items for backward compatibility (no endpoints configured)
 		if appendMode {
 			a.config.Items = append(a.config.Items, items...)
 		} else {
@@ -2484,7 +2495,10 @@ func (a *App) importOpenAPISpecWithMode(appendMode bool) (*models.AppConfig, err
 		a.server.UpdateConfig(a.config)
 	}
 
-	// Emit event to frontend
+	// Emit items:updated event to frontend
+	// Note: We don't emit endpoint:selected here because it would trigger refreshItems()
+	// which would re-fetch items using GetSelectedEndpointId() that reads from disk (old value).
+	// The items:updated event already provides the correct items directly.
 	runtime.EventsEmit(a.ctx, "items:updated", items)
 
 	return a.config, nil
