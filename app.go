@@ -125,7 +125,16 @@ func NewApp() *App {
 
 // startup is called when the app starts
 func (a *App) startup(ctx context.Context) {
+	// Recover from panics in startup
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in startup: %v", r)
+		}
+	}()
+
+	log.Println("[App.startup] Beginning startup sequence")
 	a.ctx = ctx
+	log.Println("[App.startup] Context assigned")
 
 	// Event polling architecture: Frontend polls PollEvents() periodically
 	// No need for event sender goroutine
@@ -136,11 +145,11 @@ func (a *App) startup(ctx context.Context) {
 	serverCfg, err := a.serverConfigMgr.Load()
 	if err != nil {
 		// Log error but continue with defaults
-		fmt.Printf("Failed to load server config, using defaults: %v\n", err)
+		log.Printf("[App.startup] No legacy server config found (this is normal): %v", err)
 	} else {
 		// Found old server-config.yaml, migrate to AppConfig
-		log.Println("Migrating server settings from old server-config.yaml to AppConfig")
-		log.Println("These settings will be marked as unsaved - please save to your main config file")
+		log.Println("[App.startup] Migrating server settings from old server-config.yaml to AppConfig")
+		log.Println("[App.startup] These settings will be marked as unsaved - please save to your main config file")
 
 		// Apply server config to app config
 		a.configMutex.Lock()
@@ -161,13 +170,25 @@ func (a *App) startup(ctx context.Context) {
 		a.ensureDomainTakeoverEndpoints()
 
 		a.status.Port = serverCfg.Port
-		// Note: SelectedEndpointId is loaded on-demand in GetSelectedEndpointId()
+		log.Printf("[App.startup] Config loaded: port=%d", a.config.Port)
 
 		// Mark as dirty to encourage user to save migrated settings
 		// Don't set savedConfig - this keeps IsDirty() returning true
 		runtime.EventsEmit(ctx, "config:dirty", true)
 		runtime.EventsEmit(ctx, "config:migration-notice", "Server settings migrated from old server-config.yaml. Please save to preserve these settings.")
+
+		// Remove the old server-config.yaml after migration to prevent re-migration
+		oldConfigPath, err := config.GetLegacyConfigPath()
+		if err == nil {
+			if err := os.Remove(oldConfigPath); err == nil {
+				log.Println("[App.startup] Removed old server-config.yaml after successful migration")
+			} else {
+				log.Printf("[App.startup] Could not remove old server-config.yaml: %v", err)
+			}
+		}
 	}
+
+	log.Println("[App.startup] Startup sequence complete")
 }
 
 // SendEvent queues an event for frontend polling
@@ -423,6 +444,7 @@ func (a *App) SetItems(items []models.ResponseItem) error {
 
 	// Emit event to frontend
 	runtime.EventsEmit(a.ctx, "items:updated", items)
+	runtime.EventsEmit(a.ctx, "config:dirty", true)
 
 	return nil
 }
@@ -471,6 +493,9 @@ func (a *App) AddGroup(name string) (models.ResponseGroup, error) {
 		a.server.UpdateConfig(a.config)
 	}
 
+	// Mark config as dirty
+	runtime.EventsEmit(a.ctx, "config:dirty", true)
+
 	return group, nil
 }
 
@@ -488,6 +513,9 @@ func (a *App) UpdateResponse(response models.MethodResponse) error {
 	if a.server != nil {
 		a.server.UpdateConfig(a.config)
 	}
+
+	// Mark config as dirty
+	runtime.EventsEmit(a.ctx, "config:dirty", true)
 
 	return nil
 }
@@ -510,6 +538,7 @@ func (a *App) SetResponses(responses []models.MethodResponse) error {
 
 	// Emit event to frontend
 	runtime.EventsEmit(a.ctx, "responses:updated", responses)
+	runtime.EventsEmit(a.ctx, "config:dirty", true)
 
 	return nil
 }
@@ -544,6 +573,10 @@ func (a *App) UpdateResponseByID(response models.MethodResponse) error {
 	if a.server != nil {
 		a.server.UpdateConfig(a.config)
 	}
+
+	// Mark config as dirty
+	runtime.EventsEmit(a.ctx, "responses:updated", a.config.Responses)
+	runtime.EventsEmit(a.ctx, "config:dirty", true)
 
 	return nil
 }
@@ -587,6 +620,9 @@ func (a *App) ReorderResponses(ids []string) error {
 	if a.server != nil {
 		a.server.UpdateConfig(a.config)
 	}
+
+	// Mark config as dirty
+	runtime.EventsEmit(a.ctx, "config:dirty", true)
 
 	return nil
 }
@@ -701,6 +737,7 @@ func (a *App) AddEndpoint(name string, pathPrefix string, translationMode string
 
 	// Emit event to frontend
 	runtime.EventsEmit(a.ctx, "endpoints:updated", a.config.Endpoints)
+	runtime.EventsEmit(a.ctx, "config:dirty", true)
 
 	return endpoint, nil
 }
@@ -868,6 +905,7 @@ func (a *App) AddEndpointWithConfig(config map[string]interface{}) (models.Endpo
 
 	// Emit event to frontend
 	runtime.EventsEmit(a.ctx, "endpoints:updated", a.config.Endpoints)
+	runtime.EventsEmit(a.ctx, "config:dirty", true)
 
 	return endpoint, nil
 }
@@ -1180,6 +1218,7 @@ func (a *App) UpdateEndpoint(endpoint models.Endpoint) error {
 
 	// Emit event to frontend
 	runtime.EventsEmit(a.ctx, "endpoints:updated", a.config.Endpoints)
+	runtime.EventsEmit(a.ctx, "config:dirty", true)
 
 	return nil
 }
@@ -1204,6 +1243,7 @@ func (a *App) DeleteEndpoint(id string) error {
 
 	// Emit event to frontend
 	runtime.EventsEmit(a.ctx, "endpoints:updated", a.config.Endpoints)
+	runtime.EventsEmit(a.ctx, "config:dirty", true)
 
 	return nil
 }
@@ -1936,6 +1976,9 @@ func (a *App) saveConfigToPath(path string) error {
 		SOCKS5Config:   a.config.SOCKS5Config,
 		DomainTakeover: a.config.DomainTakeover,
 
+		// Container configuration
+		ContainerLogLineLimit: a.config.ContainerLogLineLimit,
+
 		// UI state
 		SelectedEndpointId: a.config.SelectedEndpointId,
 
@@ -2084,13 +2127,12 @@ func (a *App) LoadConfig() (*models.AppConfig, error) {
 
 // getRecentFilesPath returns the path to the recent files JSON file
 func (a *App) getRecentFilesPath() string {
-	homeDir, err := os.UserHomeDir()
+	path, err := config.GetRecentFilesPath()
 	if err != nil {
-		log.Printf("Failed to get home directory: %v", err)
+		log.Printf("Failed to get recent files path: %v", err)
 		return ""
 	}
-	configDir := filepath.Join(homeDir, ".mockelot")
-	return filepath.Join(configDir, "recent-files.json")
+	return path
 }
 
 // GetRecentFiles returns the list of recent files with existence check
@@ -2841,7 +2883,6 @@ func copyFile(src, dst string) error {
 
 // UpdateServerSettings updates server configuration fields
 // Does NOT save to disk - only updates in-memory config and emits events
-// Frontend should call MarkDirty() after this to mark config as dirty
 func (a *App) UpdateServerSettings(settings models.ServerSettings) error {
 	a.configMutex.Lock()
 	defer a.configMutex.Unlock()
@@ -2887,6 +2928,7 @@ func (a *App) UpdateServerSettings(settings models.ServerSettings) error {
 
 	// Emit config updated event
 	runtime.EventsEmit(a.ctx, "config:updated", a.config)
+	runtime.EventsEmit(a.ctx, "config:dirty", true)
 
 	return nil
 }
@@ -3371,13 +3413,14 @@ func userConfigToAppConfig(userCfg *models.UserConfig, serverCfg *models.AppConf
 		CertNames:           []string{},
 
 		// Copy user content from UserConfig
-		Responses:           userCfg.Responses,
-		Items:               userCfg.Items,
-		Endpoints:           userCfg.Endpoints,
-		CORS:                userCfg.CORS,
-		SOCKS5Config:        userCfg.SOCKS5Config,
-		DomainTakeover:      userCfg.DomainTakeover,
-		SelectedEndpointId:  userCfg.SelectedEndpointId,
+		Responses:             userCfg.Responses,
+		Items:                 userCfg.Items,
+		Endpoints:             userCfg.Endpoints,
+		CORS:                  userCfg.CORS,
+		SOCKS5Config:          userCfg.SOCKS5Config,
+		DomainTakeover:        userCfg.DomainTakeover,
+		ContainerLogLineLimit: userCfg.ContainerLogLineLimit,
+		SelectedEndpointId:    userCfg.SelectedEndpointId,
 	}
 
 	// Server settings now come from UserConfig (unified format)

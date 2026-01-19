@@ -443,7 +443,7 @@ function handleServerConfigClose() {
           :class="[
             'p-2 rounded transition-colors',
             serverStore.isDirty
-              ? 'bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white cursor-pointer'
+              ? 'save-button-dirty cursor-pointer'
               : 'bg-gray-800 text-gray-600 cursor-not-allowed'
           ]"
           title="Save Configuration (Ctrl+S)"
@@ -631,3 +631,30 @@ function handleServerConfigClose() {
     </div>
   </header>
 </template>
+
+<style scoped>
+/* Prominent blinking animation for dirty save button */
+@keyframes save-button-pulse {
+  0%, 100% {
+    background-color: rgb(234, 179, 8); /* yellow-500 */
+    box-shadow: 0 0 8px rgba(234, 179, 8, 0.6);
+    color: rgb(17, 24, 39); /* gray-900 */
+  }
+  50% {
+    background-color: rgb(249, 115, 22); /* orange-500 */
+    box-shadow: 0 0 16px rgba(249, 115, 22, 0.8);
+    color: white;
+  }
+}
+
+.save-button-dirty {
+  animation: save-button-pulse 1s ease-in-out infinite;
+}
+
+.save-button-dirty:hover {
+  animation: none;
+  background-color: rgb(202, 138, 4); /* yellow-600 */
+  box-shadow: 0 0 12px rgba(234, 179, 8, 0.8);
+  color: rgb(17, 24, 39);
+}
+</style>
