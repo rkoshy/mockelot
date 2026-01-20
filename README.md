@@ -306,6 +306,20 @@ Build a redistributable package:
 wails build
 ```
 
+### Releasing
+
+Releases are built locally using Laminar CI and published to GitHub:
+
+```bash
+# Create a release (builds all platforms, creates tag, uploads to GitHub)
+./build-and-release.sh v0.3.1
+
+# With custom release notes
+./build-and-release.sh v0.3.1 "Bug fixes and performance improvements"
+```
+
+The script builds for Linux, macOS (universal), and Windows, then creates a GitHub release with all artifacts attached.
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
