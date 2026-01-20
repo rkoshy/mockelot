@@ -21,6 +21,7 @@ const statusCodeOptions = computed(() =>
 const props = defineProps<{
   response: models.MethodResponse
   index: number
+  isHighlighted?: boolean  // true when selected from traffic log
 }>()
 
 const emit = defineEmits<{
@@ -325,7 +326,11 @@ function onDrop(e: DragEvent) {
     class="rounded-lg border overflow-hidden transition-all"
     :class="[
       isEnabled ? 'bg-gray-800 border-gray-700' : 'bg-gray-900 border-gray-800 opacity-60',
-      { 'ring-2 ring-blue-500': showEditorPanel, 'opacity-50': isDragging }
+      {
+        'ring-2 ring-blue-500': showEditorPanel,
+        'opacity-50': isDragging,
+        'border-l-4 border-l-amber-500 bg-amber-950/20': isHighlighted && !showEditorPanel
+      }
     ]"
     @dragover.prevent="onDragOver"
     @drop="onDrop"

@@ -35,6 +35,8 @@ export function ExportLogsAsCurl(arg1:string,arg2:string):Promise<void>;
 
 export function ExportLogsAsHAR(arg1:string,arg2:string):Promise<void>;
 
+export function FrontendLog(arg1:string):Promise<void>;
+
 export function GetAllResponseIDsWithErrors():Promise<Array<string>>;
 
 export function GetCACertInfo():Promise<models.CACertInfo>;

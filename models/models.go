@@ -422,9 +422,6 @@ type UserConfig struct {
 	// Container Configuration
 	ContainerLogLineLimit int `json:"container_log_line_limit,omitempty" yaml:"container_log_line_limit,omitempty"` // Max log lines to retrieve
 
-	// UI State
-	SelectedEndpointId string `json:"selected_endpoint_id,omitempty" yaml:"selected_endpoint_id,omitempty"` // Selected endpoint
-
 	// Metadata
 	LastModified   time.Time               `json:"last_modified,omitempty" yaml:"last_modified,omitempty"` // Last time configuration was modified
 }
@@ -539,6 +536,7 @@ type RequestLogSummary struct {
 	ID               string `json:"id"`                              // Unique request identifier
 	Timestamp        string `json:"timestamp"`                       // Time request was received (ISO8601/RFC3339 format)
 	EndpointID       string `json:"endpoint_id,omitempty"`           // ID of endpoint that handled this request
+	ResponseID       string `json:"response_id,omitempty"`           // ID of the response that handled this request (mock endpoints only)
 	Method           string `json:"method"`                          // HTTP method
 	Path             string `json:"path"`                            // Request path
 	SourceIP         string `json:"source_ip"`                       // Client IP address
@@ -561,6 +559,7 @@ type RequestLog struct {
 	ID         string `json:"id"`                    // Unique request identifier
 	Timestamp  string `json:"timestamp"`             // Time request was received (ISO8601/RFC3339 format)
 	EndpointID string `json:"endpoint_id,omitempty"` // ID of endpoint that handled this request
+	ResponseID string `json:"response_id,omitempty"` // ID of the response that handled this request (mock endpoints only)
 
 	// Failure indicators
 	ValidationFailed bool `json:"validation_failed,omitempty"` // (V) badge - request matched path but failed validation

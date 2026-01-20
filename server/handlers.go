@@ -81,6 +81,68 @@ func (h *ResponseHandler) InvalidateRegexCache() {
 	h.regexCacheMutex.Unlock()
 }
 
+// canMockEndpointHandleRequest checks if a mock endpoint has a response that can handle the request
+// This checks both path pattern and method, but not validation (validation happens later)
+func (h *ResponseHandler) canMockEndpointHandleRequest(endpoint *models.Endpoint, translatedPath string, method string) bool {
+	for _, item := range endpoint.Items {
+		if item.Type == "response" && item.Response != nil {
+			resp := item.Response
+			if !resp.IsEnabled() {
+				continue
+			}
+
+			// Check if method matches
+			methodMatches := false
+			for _, m := range resp.Methods {
+				if m == method {
+					methodMatches = true
+					break
+				}
+			}
+			if !methodMatches {
+				continue
+			}
+
+			// Check if path matches
+			matchResult := matchPathPatternWithParams(resp.PathPattern, translatedPath)
+			if matchResult.Matches {
+				return true
+			}
+		} else if item.Type == "group" && item.Group != nil {
+			group := item.Group
+			if !group.IsEnabled() {
+				continue
+			}
+
+			for i := range group.Responses {
+				resp := &group.Responses[i]
+				if !resp.IsEnabled() {
+					continue
+				}
+
+				// Check if method matches
+				methodMatches := false
+				for _, m := range resp.Methods {
+					if m == method {
+						methodMatches = true
+						break
+					}
+				}
+				if !methodMatches {
+					continue
+				}
+
+				// Check if path matches
+				matchResult := matchPathPatternWithParams(resp.PathPattern, translatedPath)
+				if matchResult.Matches {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	// Read request body
 	bodyBytes, _ := io.ReadAll(r.Body)
@@ -111,6 +173,7 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 
 			// Check if PathPrefix is a regex (starts with ^) or plain prefix
 			var prefixMatches bool
+			var currentCaptureGroups []string
 			if strings.HasPrefix(endpoint.PathPrefix, "^") {
 				// Regex matching with capture groups
 				re, err := h.compileRegex(endpoint.PathPrefix)
@@ -121,7 +184,7 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 					matches := re.FindStringSubmatch(requestPath)
 					if matches != nil {
 						prefixMatches = true
-						captureGroups = matches // Store all capture groups (matches[0] is full match, matches[1]... are groups)
+						currentCaptureGroups = matches // Store all capture groups (matches[0] is full match, matches[1]... are groups)
 					} else {
 						prefixMatches = false
 					}
@@ -137,56 +200,70 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 				}
 			}
 
-			if prefixMatches {
-				matchedEndpoint = endpoint
-
-				// Apply path translation based on endpoint mode
-				switch endpoint.TranslationMode {
-				case models.TranslationModeNone:
-					translatedPath = requestPath
-				case models.TranslationModeStrip:
-					// Check if PathPrefix is a regex pattern
-					if strings.HasPrefix(endpoint.PathPrefix, "^") {
-						// Regex strip: find what matched and remove it
-						re, err := h.compileRegex(endpoint.PathPrefix)
-						if err != nil {
-							log.Printf("Invalid regex pattern for strip: %s (%v)", endpoint.PathPrefix, err)
-							translatedPath = requestPath
-						} else {
-							matched := re.FindString(requestPath)
-							if matched != "" {
-								translatedPath = strings.TrimPrefix(requestPath, matched)
-							} else {
-								translatedPath = requestPath
-							}
-						}
-					} else {
-						// Plain string strip
-						translatedPath = strings.TrimPrefix(requestPath, endpoint.PathPrefix)
-					}
-					// Ensure path starts with /
-					if !strings.HasPrefix(translatedPath, "/") {
-						translatedPath = "/" + translatedPath
-					}
-				case models.TranslationModeTranslate:
-					if endpoint.TranslatePattern != "" {
-						re, err := h.compileRegex(endpoint.TranslatePattern)
-						if err != nil {
-							log.Printf("Invalid regex pattern in endpoint %s: %v", endpoint.Name, err)
-							translatedPath = requestPath
-						} else {
-							translatedPath = re.ReplaceAllString(requestPath, endpoint.TranslateReplace)
-						}
-					} else {
-						translatedPath = requestPath
-					}
-				default:
-					translatedPath = requestPath
-				}
-
-				items = endpoint.Items
-				break // First match wins
+			if !prefixMatches {
+				continue
 			}
+
+			// Compute translated path for this endpoint
+			var currentTranslatedPath string
+			switch endpoint.TranslationMode {
+			case models.TranslationModeNone:
+				currentTranslatedPath = requestPath
+			case models.TranslationModeStrip:
+				// Check if PathPrefix is a regex pattern
+				if strings.HasPrefix(endpoint.PathPrefix, "^") {
+					// Regex strip: find what matched and remove it
+					re, err := h.compileRegex(endpoint.PathPrefix)
+					if err != nil {
+						log.Printf("Invalid regex pattern for strip: %s (%v)", endpoint.PathPrefix, err)
+						currentTranslatedPath = requestPath
+					} else {
+						matched := re.FindString(requestPath)
+						if matched != "" {
+							currentTranslatedPath = strings.TrimPrefix(requestPath, matched)
+						} else {
+							currentTranslatedPath = requestPath
+						}
+					}
+				} else {
+					// Plain string strip
+					currentTranslatedPath = strings.TrimPrefix(requestPath, endpoint.PathPrefix)
+				}
+				// Ensure path starts with /
+				if !strings.HasPrefix(currentTranslatedPath, "/") {
+					currentTranslatedPath = "/" + currentTranslatedPath
+				}
+			case models.TranslationModeTranslate:
+				if endpoint.TranslatePattern != "" {
+					re, err := h.compileRegex(endpoint.TranslatePattern)
+					if err != nil {
+						log.Printf("Invalid regex pattern in endpoint %s: %v", endpoint.Name, err)
+						currentTranslatedPath = requestPath
+					} else {
+						currentTranslatedPath = re.ReplaceAllString(requestPath, endpoint.TranslateReplace)
+					}
+				} else {
+					currentTranslatedPath = requestPath
+				}
+			default:
+				currentTranslatedPath = requestPath
+			}
+
+			// For mock endpoints, verify there's a response that can handle this request (path + method)
+			// If not, continue to the next endpoint instead of committing to this one
+			if endpoint.Type == models.EndpointTypeMock {
+				if !h.canMockEndpointHandleRequest(endpoint, currentTranslatedPath, r.Method) {
+					// This mock endpoint can't handle the request - try next endpoint
+					continue
+				}
+			}
+
+			// This endpoint can handle the request
+			matchedEndpoint = endpoint
+			translatedPath = currentTranslatedPath
+			captureGroups = currentCaptureGroups
+			items = endpoint.Items
+			break // First match wins
 		}
 
 		// If no endpoint matched, check for overlay mode before returning 404
@@ -281,6 +358,7 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 
 						// Log validation failure (no HTTP response sent)
 						requestLog := buildRequestLog(r, bodyBytes, endpointID)
+						requestLog.ResponseID = resp.ID // Track which response's validation failed
 						requestLog.ValidationFailed = true
 						requestLog.ClientResponse.StatusCode = nil // No HTTP response
 						requestLog.ClientResponse.Body = validationResult.Error
@@ -336,6 +414,7 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 
 							// Log validation failure (no HTTP response sent)
 							requestLog := buildRequestLog(r, bodyBytes, endpointID)
+							requestLog.ResponseID = resp.ID // Track which response's validation failed
 							requestLog.ValidationFailed = true
 							requestLog.ClientResponse.StatusCode = nil // No HTTP response
 							requestLog.ClientResponse.Body = validationResult.Error
@@ -397,6 +476,7 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 
 						// Log validation failure (no HTTP response sent)
 						requestLog := buildRequestLog(r, bodyBytes, endpointID)
+						requestLog.ResponseID = resp.ID // Track which response's validation failed
 						requestLog.ValidationFailed = true
 						requestLog.ClientResponse.StatusCode = nil // No HTTP response
 						requestLog.ClientResponse.Body = validationResult.Error
@@ -458,6 +538,7 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 	if responseErr != nil {
 		// Log response failure (no HTTP response sent)
 		requestLog := buildRequestLog(r, bodyBytes, endpointID)
+		requestLog.ResponseID = matchedResponse.ID // Track which response's generation failed
 		requestLog.ResponseFailed = true
 		requestLog.ClientResponse.StatusCode = nil // No HTTP response
 		requestLog.ClientResponse.Body = responseErr.Error()
@@ -517,6 +598,7 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 		ID:         uuid.New().String(),
 		Timestamp:  time.Now().Format(time.RFC3339),
 		EndpointID: endpointID,
+		ResponseID: matchedResponse.ID,
 	}
 
 	// Populate client request
@@ -596,6 +678,7 @@ func (h *ResponseHandler) handleMockRequest(w http.ResponseWriter, r *http.Reque
 
 						// Log validation failure (no HTTP response sent)
 						requestLog := buildRequestLog(r, bodyBytes, endpoint.ID)
+						requestLog.ResponseID = resp.ID // Track which response's validation failed
 						requestLog.ValidationFailed = true
 						requestLog.ClientResponse.StatusCode = nil // No HTTP response
 						requestLog.ClientResponse.Body = validationResult.Error
@@ -651,6 +734,7 @@ func (h *ResponseHandler) handleMockRequest(w http.ResponseWriter, r *http.Reque
 
 							// Log validation failure (no HTTP response sent)
 							requestLog := buildRequestLog(r, bodyBytes, endpoint.ID)
+							requestLog.ResponseID = resp.ID // Track which response's validation failed
 							requestLog.ValidationFailed = true
 							requestLog.ClientResponse.StatusCode = nil // No HTTP response
 							requestLog.ClientResponse.Body = validationResult.Error
@@ -721,6 +805,7 @@ func (h *ResponseHandler) handleMockRequest(w http.ResponseWriter, r *http.Reque
 	if responseErr != nil {
 		// Log response failure (no HTTP response sent)
 		requestLog := buildRequestLog(r, bodyBytes, endpoint.ID)
+		requestLog.ResponseID = matchedResponse.ID // Track which response's generation failed
 		requestLog.ResponseFailed = true
 		requestLog.ClientResponse.StatusCode = nil // No HTTP response
 		requestLog.ClientResponse.Body = responseErr.Error()
@@ -780,6 +865,7 @@ func (h *ResponseHandler) handleMockRequest(w http.ResponseWriter, r *http.Reque
 		ID:         uuid.New().String(),
 		Timestamp:  time.Now().Format(time.RFC3339),
 		EndpointID: endpoint.ID,
+		ResponseID: matchedResponse.ID,
 	}
 
 	// Populate client request

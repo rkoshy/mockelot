@@ -917,6 +917,7 @@ export namespace models {
 	    id: string;
 	    timestamp: string;
 	    endpoint_id?: string;
+	    response_id?: string;
 	    validation_failed?: boolean;
 	    response_failed?: boolean;
 	    socks5_info?: SOCKS5RequestInfo;
@@ -938,6 +939,7 @@ export namespace models {
 	        this.id = source["id"];
 	        this.timestamp = source["timestamp"];
 	        this.endpoint_id = source["endpoint_id"];
+	        this.response_id = source["response_id"];
 	        this.validation_failed = source["validation_failed"];
 	        this.response_failed = source["response_failed"];
 	        this.socks5_info = this.convertValues(source["socks5_info"], SOCKS5RequestInfo);
@@ -969,6 +971,7 @@ export namespace models {
 	    id: string;
 	    timestamp: string;
 	    endpoint_id?: string;
+	    response_id?: string;
 	    method: string;
 	    path: string;
 	    source_ip: string;
@@ -993,6 +996,7 @@ export namespace models {
 	        this.id = source["id"];
 	        this.timestamp = source["timestamp"];
 	        this.endpoint_id = source["endpoint_id"];
+	        this.response_id = source["response_id"];
 	        this.method = source["method"];
 	        this.path = source["path"];
 	        this.source_ip = source["source_ip"];

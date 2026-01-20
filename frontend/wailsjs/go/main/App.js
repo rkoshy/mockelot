@@ -66,6 +66,10 @@ export function ExportLogsAsHAR(arg1, arg2) {
   return window['go']['main']['App']['ExportLogsAsHAR'](arg1, arg2);
 }
 
+export function FrontendLog(arg1) {
+  return window['go']['main']['App']['FrontendLog'](arg1);
+}
+
 export function GetAllResponseIDsWithErrors() {
   return window['go']['main']['App']['GetAllResponseIDsWithErrors']();
 }

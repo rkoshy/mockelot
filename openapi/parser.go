@@ -34,11 +34,13 @@ func ParseSpec(filePath string) (*openapi3.T, error) {
 }
 
 // ExtractOperations extracts all operations from the OpenAPI spec
+// Returns operations in document order (preserving the order paths appear in the spec)
 func ExtractOperations(spec *openapi3.T) []OperationInfo {
 	var operations []OperationInfo
 
-	// Iterate through all paths
-	for path, pathItem := range spec.Paths.Map() {
+	// Iterate through all paths in document order (preserves spec ordering)
+	for _, path := range spec.Paths.InMatchingOrder() {
+		pathItem := spec.Paths.Value(path)
 		if pathItem == nil {
 			continue
 		}
