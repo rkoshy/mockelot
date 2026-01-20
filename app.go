@@ -1902,7 +1902,7 @@ func (a *App) SetSelectedEndpointId(endpointId string) error {
 
 	// Emit events to frontend
 	runtime.EventsEmit(a.ctx, "endpoint:selected", endpointId)
-	runtime.EventsEmit(a.ctx, "config:dirty", true)
+	// Note: Tab switching no longer marks config as dirty (deprecated behavior)
 
 	return nil
 }

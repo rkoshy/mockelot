@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, inject, onMounted, onUnmounted, computed } from 'vue'
+import { ref, inject, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useServerStore } from '../../stores/server'
 import ResponseRuleCard from './ResponseRuleCard.vue'
 import ResponseGroupCard from './ResponseGroupCard.vue'
@@ -36,6 +36,11 @@ const sortedEndpoints = computed(() => {
 
 // Track selected tab (server vs endpoint)
 const selectedTab = ref<'server' | string>('server')  // Default to Server tab
+
+// Reset to Server tab when a new config file is loaded
+watch(() => serverStore.currentFilePath, () => {
+  selectedTab.value = 'server'
+})
 
 // Inject event registration function from HeaderBar
 type EventCallback = (data: any) => void
