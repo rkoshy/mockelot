@@ -2,6 +2,9 @@
 import { ref, computed } from 'vue'
 import { models } from '../../types/models'
 import ResponseRuleCard from './ResponseRuleCard.vue'
+import { useServerStore } from '../../stores/server'
+
+const serverStore = useServerStore()
 
 const props = defineProps<{
   group: models.ResponseGroup
@@ -293,6 +296,7 @@ function onGroupDrop(e: DragEvent) {
         :key="response.id || idx"
         :response="response"
         :index="idx"
+        :is-highlighted="serverStore.highlightedResponseId === response.id"
         @update="updateResponse(idx, $event)"
         @delete="deleteResponse(idx)"
         @dragstart="onResponseDragStart(idx, $event)"

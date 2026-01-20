@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, inject, onMounted, onUnmounted } from 'vue'
+import { ref, inject, onMounted, onUnmounted, computed } from 'vue'
 import { useServerStore } from '../../stores/server'
 import ResponseRuleCard from './ResponseRuleCard.vue'
 import ResponseGroupCard from './ResponseGroupCard.vue'
@@ -13,6 +13,26 @@ import { models } from '../../types/models'
 import { StartContainer, StopContainer, DeleteContainer } from '../../../wailsjs/go/main/App'
 
 const serverStore = useServerStore()
+
+// Sorted endpoints: mock first, then other user endpoints, then system endpoints
+// Each group sorted alphabetically by name
+const sortedEndpoints = computed(() => {
+  const endpoints = [...serverStore.endpoints]
+  return endpoints.sort((a, b) => {
+    // System endpoints always last
+    if (a.is_system && !b.is_system) return 1
+    if (!a.is_system && b.is_system) return -1
+
+    // Mock endpoints first (among non-system)
+    if (!a.is_system && !b.is_system) {
+      if (a.type === 'mock' && b.type !== 'mock') return -1
+      if (a.type !== 'mock' && b.type === 'mock') return 1
+    }
+
+    // Within same category, sort alphabetically by name
+    return (a.name || '').localeCompare(b.name || '')
+  })
+})
 
 // Track selected tab (server vs endpoint)
 const selectedTab = ref<'server' | string>('server')  // Default to Server tab
@@ -110,6 +130,8 @@ function onDragEnd() {
 }
 
 function selectEndpoint(id: string) {
+  console.log('[ServerConfigPanel.selectEndpoint] Tab clicked, id:', id)
+  console.log('[ServerConfigPanel.selectEndpoint] Current items before switch:', serverStore.items?.length || 0)
   selectedTab.value = id
   serverStore.selectEndpoint(id)
 }
@@ -551,7 +573,7 @@ onUnmounted(() => {
 
         <!-- Endpoint Tabs -->
         <div
-          v-for="endpoint in serverStore.endpoints"
+          v-for="endpoint in sortedEndpoints"
           :key="endpoint.id"
           :class="[
             'relative px-3 py-2 text-sm font-medium border-r border-gray-700 transition-colors flex flex-col items-start gap-1 min-w-[140px] group',
@@ -789,6 +811,7 @@ onUnmounted(() => {
           v-if="item.type === 'response' && item.response"
           :response="item.response"
           :is-expanded="serverStore.expandedItemId === item.response.id"
+          :is-highlighted="serverStore.highlightedResponseId === item.response.id"
           :index="index"
           @toggle="serverStore.toggleExpanded(item.response?.id || '')"
           @update="handleResponseUpdate(index, $event)"

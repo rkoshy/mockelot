@@ -44,6 +44,7 @@ export const useServerStore = defineStore('server', () => {
   const selectedLogId = ref<string | null>(null)
   const items = ref<models.ResponseItem[]>([])
   const expandedItemId = ref<string | null>(null)
+  const highlightedResponseId = ref<string | null>(null)
   const config = ref<models.AppConfig | null>(null)
 
   // Endpoint State
@@ -252,6 +253,9 @@ export const useServerStore = defineStore('server', () => {
   }
 
   function toggleExpanded(id: string) {
+    // Clear log highlight when manually toggling
+    highlightedResponseId.value = null
+
     if (expandedItemId.value === id) {
       expandedItemId.value = null
     } else {
@@ -278,8 +282,77 @@ export const useServerStore = defineStore('server', () => {
     }
   }
 
-  function selectLog(id: string | null) {
+  // Helper: Find where a response lives (top-level or in a group)
+  function findResponseLocation(responseId: string): { groupId: string | null, itemIndex: number } | null {
+    for (let i = 0; i < items.value.length; i++) {
+      const item = items.value[i]
+
+      // Check top-level responses
+      if (item.type === 'response' && item.response?.id === responseId) {
+        return { groupId: null, itemIndex: i }
+      }
+
+      // Check responses within groups
+      if (item.type === 'group' && item.group?.responses) {
+        const respIndex = item.group.responses.findIndex(r => r.id === responseId)
+        if (respIndex !== -1) {
+          return { groupId: item.group.id || null, itemIndex: i }
+        }
+      }
+    }
+    return null
+  }
+
+  // Helper: Expand one group, collapse all others
+  async function expandGroupOnly(targetGroupId: string) {
+    let needsSave = false
+
+    for (let i = 0; i < items.value.length; i++) {
+      const item = items.value[i]
+      if (item.type === 'group' && item.group) {
+        const shouldExpand = item.group.id === targetGroupId
+        const currentlyExpanded = item.group.expanded !== false
+
+        if (shouldExpand !== currentlyExpanded) {
+          item.group.expanded = shouldExpand
+          needsSave = true
+        }
+      }
+    }
+
+    if (needsSave) {
+      await saveItems()
+    }
+  }
+
+  async function selectLog(id: string | null) {
     selectedLogId.value = id
+
+    if (!id) {
+      highlightedResponseId.value = null
+      return
+    }
+
+    const log = requestLogs.value.find(l => l.id === id)
+    if (!log?.response_id) {
+      highlightedResponseId.value = null
+      return
+    }
+
+    // Find the response and its containing group (if any)
+    const location = findResponseLocation(log.response_id)
+
+    if (location) {
+      // If response is in a group, expand that group and collapse others
+      if (location.groupId) {
+        await expandGroupOnly(location.groupId)
+      }
+
+      // Highlight the response
+      highlightedResponseId.value = log.response_id
+    } else {
+      highlightedResponseId.value = null
+    }
   }
 
   async function importOpenAPISpec(appendMode: boolean) {
@@ -646,16 +719,21 @@ export const useServerStore = defineStore('server', () => {
     })
 
     EventsOn('items:updated', (newItems: models.ResponseItem[]) => {
+      console.log('[Event: items:updated] Received', newItems?.length || 0, 'items')
       items.value = newItems
+      console.log('[Event: items:updated] items.value now has', items.value.length, 'items')
     })
 
     EventsOn('endpoints:updated', (newEndpoints: models.Endpoint[]) => {
+      console.log('[Event: endpoints:updated] Received', newEndpoints?.length || 0, 'endpoints')
       endpoints.value = newEndpoints
     })
 
     EventsOn('endpoint:selected', (endpointId: string) => {
+      // Only update local state - don't refresh items here
+      // The selectEndpoint() function already handles refreshing items
+      // This event is for syncing state when backend changes the endpoint externally
       selectedEndpointId.value = endpointId
-      refreshItems()
     })
 
     // Dirty state tracking events
@@ -711,6 +789,7 @@ export const useServerStore = defineStore('server', () => {
     selectedLogId,
     items,
     expandedItemId,
+    highlightedResponseId,
     config,
     endpoints,
     selectedEndpointId,

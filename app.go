@@ -378,7 +378,10 @@ func (a *App) GetResponses() []models.MethodResponse {
 func (a *App) GetItems() []models.ResponseItem {
 	// Get items for the currently selected endpoint
 	selectedId := a.GetSelectedEndpointId()
+	log.Printf("[GetItems] Called. selectedId from GetSelectedEndpointId()=%q", selectedId)
+
 	if selectedId == "" {
+		log.Printf("[GetItems] No endpoint selected, returning empty array")
 		return []models.ResponseItem{}
 	}
 
@@ -386,14 +389,19 @@ func (a *App) GetItems() []models.ResponseItem {
 	for i := range a.config.Endpoints {
 		if a.config.Endpoints[i].ID == selectedId {
 			endpoint := &a.config.Endpoints[i]
+			log.Printf("[GetItems] Found endpoint: name=%q, type=%q, itemCount=%d",
+				endpoint.Name, endpoint.Type, len(endpoint.Items))
 			// Only return items for mock endpoints
 			if endpoint.Type == models.EndpointTypeMock {
+				log.Printf("[GetItems] Returning %d items for mock endpoint %q", len(endpoint.Items), endpoint.Name)
 				return endpoint.Items
 			}
+			log.Printf("[GetItems] Endpoint is not mock type (%s), returning empty array", endpoint.Type)
 			return []models.ResponseItem{}
 		}
 	}
 
+	log.Printf("[GetItems] Endpoint with ID %q not found in %d endpoints", selectedId, len(a.config.Endpoints))
 	return []models.ResponseItem{}
 }
 
@@ -1857,26 +1865,40 @@ func (a *App) TestContainerConfig(config map[string]interface{}) error {
 	return nil
 }
 
-// GetSelectedEndpointId returns the currently selected endpoint ID from ServerConfig
+// GetSelectedEndpointId returns the currently selected endpoint ID from memory
 func (a *App) GetSelectedEndpointId() string {
-	// Load from server config
-	serverCfg, err := a.serverConfigMgr.Load()
-	if err != nil {
-		fmt.Printf("Failed to load selected endpoint ID: %v\n", err)
-		// Return first endpoint ID if available
-		if len(a.config.Endpoints) > 0 {
-			return a.config.Endpoints[0].ID
-		}
-		return ""
+	// Return in-memory value (set by SetSelectedEndpointId or loaded at startup)
+	a.configMutex.RLock()
+	selectedId := a.config.SelectedEndpointId
+	a.configMutex.RUnlock()
+
+	log.Printf("[GetSelectedEndpointId] Returning from memory: %q", selectedId)
+
+	// If no endpoint selected, return first endpoint ID if available
+	if selectedId == "" && len(a.config.Endpoints) > 0 {
+		log.Printf("[GetSelectedEndpointId] No endpoint selected, falling back to first endpoint: %q", a.config.Endpoints[0].ID)
+		return a.config.Endpoints[0].ID
 	}
-	return serverCfg.SelectedEndpointId
+
+	return selectedId
 }
 
 // SetSelectedEndpointId sets the currently selected endpoint ID and saves to ServerConfig
 func (a *App) SetSelectedEndpointId(endpointId string) error {
+	log.Printf("[SetSelectedEndpointId] Setting endpoint ID to %q", endpointId)
+
+	// Log all endpoints and their item counts for debugging
+	log.Printf("[SetSelectedEndpointId] Current endpoints in memory:")
+	for i, ep := range a.config.Endpoints {
+		log.Printf("[SetSelectedEndpointId]   [%d] ID=%q Name=%q Type=%q Items=%d",
+			i, ep.ID, ep.Name, ep.Type, len(ep.Items))
+	}
+
 	a.configMutex.Lock()
 	a.config.SelectedEndpointId = endpointId
 	a.configMutex.Unlock()
+
+	log.Printf("[SetSelectedEndpointId] Updated memory, emitting events")
 
 	// Emit events to frontend
 	runtime.EventsEmit(a.ctx, "endpoint:selected", endpointId)
@@ -1978,9 +2000,6 @@ func (a *App) saveConfigToPath(path string) error {
 
 		// Container configuration
 		ContainerLogLineLimit: a.config.ContainerLogLineLimit,
-
-		// UI state
-		SelectedEndpointId: a.config.SelectedEndpointId,
 
 		// Metadata
 		LastModified:   time.Now(),
@@ -2516,6 +2535,7 @@ func (a *App) GetRequestLogs() []models.RequestLogSummary {
 			ID:             log.ID,
 			Timestamp:      log.Timestamp,
 			EndpointID:     log.EndpointID,
+			ResponseID:     log.ResponseID,
 			Method:         log.ClientRequest.Method,
 			Path:           log.ClientRequest.Path,
 			SourceIP:       log.ClientRequest.SourceIP,
@@ -3003,6 +3023,7 @@ func (a *App) LogRequest(log models.RequestLog) {
 		ID:         log.ID,
 		Timestamp:  log.Timestamp,
 		EndpointID: log.EndpointID,
+		ResponseID: log.ResponseID,
 		Method:     log.ClientRequest.Method,
 		Path:       log.ClientRequest.Path,
 		SourceIP:   log.ClientRequest.SourceIP,
@@ -3056,6 +3077,7 @@ func (a *App) UpdateRequestLog(log models.RequestLog) {
 		ID:         log.ID,
 		Timestamp:  log.Timestamp,
 		EndpointID: log.EndpointID,
+		ResponseID: log.ResponseID,
 		Method:     log.ClientRequest.Method,
 		Path:       log.ClientRequest.Path,
 		SourceIP:   log.ClientRequest.SourceIP,
@@ -3108,6 +3130,13 @@ func (a *App) PollRequestLogs() []models.RequestLogSummary {
 	a.requestLogSummaryQueue = make([]models.RequestLogSummary, 0)
 
 	return summaries
+}
+
+// ========== Frontend Logging ==========
+
+// FrontendLog allows the frontend to log messages to the backend log file
+func (a *App) FrontendLog(message string) {
+	log.Printf("[Frontend] %s", message)
 }
 
 // ========== Script Error Management ==========
@@ -3434,7 +3463,6 @@ func userConfigToAppConfig(userCfg *models.UserConfig, serverCfg *models.AppConf
 		SOCKS5Config:          userCfg.SOCKS5Config,
 		DomainTakeover:        userCfg.DomainTakeover,
 		ContainerLogLineLimit: userCfg.ContainerLogLineLimit,
-		SelectedEndpointId:    userCfg.SelectedEndpointId,
 	}
 
 	// Server settings now come from UserConfig (unified format)

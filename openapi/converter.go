@@ -12,15 +12,17 @@ import (
 
 // ConvertToResponseItems converts an OpenAPI spec to MockAgainTool ResponseItems
 // Groups responses by path, with all HTTP methods for each path in the same group
+// Preserves the order paths appear in the OpenAPI spec
 func ConvertToResponseItems(spec *openapi3.T) ([]models.ResponseItem, error) {
 	operations := ExtractOperations(spec)
 
-	// Group operations by path
-	pathGroups := groupOperationsByPath(operations)
+	// Group operations by path (preserving order)
+	pathGroups, pathOrder := groupOperationsByPath(operations)
 
-	// Convert each path group to a ResponseItem
+	// Convert each path group to a ResponseItem in document order
 	items := make([]models.ResponseItem, 0, len(pathGroups))
-	for _, group := range pathGroups {
+	for _, path := range pathOrder {
+		group := pathGroups[path]
 		items = append(items, models.ResponseItem{
 			Type:  "group",
 			Group: group,
@@ -32,8 +34,10 @@ func ConvertToResponseItems(spec *openapi3.T) ([]models.ResponseItem, error) {
 
 // groupOperationsByPath groups all operations by their path
 // Each unique path becomes a ResponseGroup containing all HTTP methods for that path
-func groupOperationsByPath(operations []OperationInfo) map[string]*models.ResponseGroup {
+// Returns both the groups map and the order in which paths were first encountered
+func groupOperationsByPath(operations []OperationInfo) (map[string]*models.ResponseGroup, []string) {
 	groups := make(map[string]*models.ResponseGroup)
+	pathOrder := make([]string, 0) // Track order paths are first seen
 
 	for _, op := range operations {
 		// Get or create group for this path
@@ -49,6 +53,7 @@ func groupOperationsByPath(operations []OperationInfo) map[string]*models.Respon
 				Responses: []models.MethodResponse{},
 			}
 			groups[op.Path] = group
+			pathOrder = append(pathOrder, op.Path) // Track order
 		}
 
 		// Convert this operation to response(s)
@@ -56,7 +61,7 @@ func groupOperationsByPath(operations []OperationInfo) map[string]*models.Respon
 		group.Responses = append(group.Responses, responses...)
 	}
 
-	return groups
+	return groups, pathOrder
 }
 
 // convertOperation converts a single OpenAPI operation to one or more MethodResponses
