@@ -327,9 +327,9 @@ function onDrop(e: DragEvent) {
     :class="[
       isEnabled ? 'bg-gray-800 border-gray-700' : 'bg-gray-900 border-gray-800 opacity-60',
       {
-        'ring-2 ring-blue-500': showEditorPanel,
-        'opacity-50': isDragging,
-        'border-l-4 border-l-amber-500 bg-amber-950/20': isHighlighted && !showEditorPanel
+        'ring-2 ring-blue-500': showEditorPanel && !isHighlighted,
+        'ring-2 ring-amber-500 bg-amber-900/30 border-amber-600': isHighlighted,
+        'opacity-50': isDragging
       }
     ]"
     @dragover.prevent="onDragOver"
