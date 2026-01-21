@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dop251/goja"
+	"github.com/google/uuid"
 	"mockelot/models"
 )
 
@@ -157,6 +158,16 @@ func runScript(vm *goja.Runtime, scriptBody string, reqContext *RequestContext, 
 	}
 	if err := vm.Set("JSON", jsonUtil); err != nil {
 		return nil, &ScriptError{Message: fmt.Sprintf("failed to set JSON object: %v", err)}
+	}
+
+	// Add crypto utility (Web Crypto API subset)
+	cryptoUtil := map[string]interface{}{
+		"randomUUID": func() string {
+			return uuid.New().String()
+		},
+	}
+	if err := vm.Set("crypto", cryptoUtil); err != nil {
+		return nil, &ScriptError{Message: fmt.Sprintf("failed to set crypto object: %v", err)}
 	}
 
 	// Execute the script
