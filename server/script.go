@@ -2,12 +2,16 @@ package server
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"time"
 
 	"github.com/dop251/goja"
@@ -194,20 +198,47 @@ func runScript(vm *goja.Runtime, scriptBody string, reqContext *RequestContext, 
 		},
 		// subtle contains cryptographic operations
 		"subtle": map[string]interface{}{
-			// digest returns hex-encoded hash of the input
-			// algorithm: "SHA-256" or "SHA-512"
-			"digest": func(algorithm string, data string) string {
+			// digest returns hash of the input
+			// algorithm: "MD5", "SHA-1", "SHA-256", "SHA-384", "SHA-512"
+			// format (optional): "hex" (default), "base64", "bytes"
+			"digest": func(algorithm string, data string, args ...string) interface{} {
+				var h hash.Hash
 				switch algorithm {
+				case "MD5":
+					h = md5.New()
+				case "SHA-1":
+					h = sha1.New()
 				case "SHA-256":
-					hash := sha256.Sum256([]byte(data))
-					return hex.EncodeToString(hash[:])
+					h = sha256.New()
+				case "SHA-384":
+					h = sha512.New384()
 				case "SHA-512":
-					hash := sha512.Sum512([]byte(data))
-					return hex.EncodeToString(hash[:])
+					h = sha512.New()
 				default:
-					// Default to SHA-256
-					hash := sha256.Sum256([]byte(data))
-					return hex.EncodeToString(hash[:])
+					h = sha256.New() // Default to SHA-256
+				}
+
+				h.Write([]byte(data))
+				result := h.Sum(nil)
+
+				// Check output format
+				format := "hex"
+				if len(args) > 0 {
+					format = args[0]
+				}
+
+				switch format {
+				case "base64":
+					return base64.StdEncoding.EncodeToString(result)
+				case "bytes":
+					// Return as array of integers
+					bytes := make([]int, len(result))
+					for i, b := range result {
+						bytes[i] = int(b)
+					}
+					return bytes
+				default: // "hex"
+					return hex.EncodeToString(result)
 				}
 			},
 		},
