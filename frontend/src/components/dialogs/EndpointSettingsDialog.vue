@@ -18,8 +18,9 @@ const translationModeOptions = [
 
 // Domain filter mode options
 const domainFilterModeOptions = [
-  { value: 'any', label: 'Any Domain', description: 'Match requests from any domain (default)' },
-  { value: 'specific', label: 'Specific Domains', description: 'Only match requests from specified domains' }
+  { value: 'any', label: 'Any Domain', description: 'Match requests from any domain (including direct HTTP)' },
+  { value: 'all', label: 'All SOCKS5 Domains', description: 'Only match requests from domains in SOCKS5 Domain Takeover' },
+  { value: 'specific', label: 'Specific Domains', description: 'Only match requests from specific domain patterns' }
 ]
 
 const props = defineProps<{

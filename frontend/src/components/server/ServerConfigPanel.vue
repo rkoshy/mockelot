@@ -454,9 +454,8 @@ function startDragging(event: MouseEvent) {
   document.addEventListener('mouseup', onMouseUp)
 }
 
-// Open endpoint settings
-function openEndpointSettings(endpoint: models.Endpoint) {
-  serverStore.selectEndpoint(endpoint.id)
+// Open endpoint settings - endpoint is already selected since button is only visible for selected endpoint
+function openEndpointSettings(_endpoint: models.Endpoint) {
   showEndpointSettingsDialog.value = true
 }
 

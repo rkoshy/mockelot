@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, watch } from 'vue'
+import { ref, watch, nextTick } from 'vue'
 import type { models } from '../../../wailsjs/go/models'
 import CustomSelect from '../common/CustomSelect.vue'
 
@@ -36,10 +36,12 @@ if (props.modelValue && props.modelValue.length > 0) {
 }
 
 // Watch for changes to modelValue from parent (e.g., when reset button is clicked)
-// Use a flag to prevent infinite loop
+// Use a flag to prevent infinite loop - must use nextTick to defer reset
 let isUpdatingFromProp = false
 watch(() => props.modelValue, (newValue) => {
-  if (isUpdatingFromProp) return // Prevent loop
+  if (isUpdatingFromProp) {
+    return
+  }
 
   isUpdatingFromProp = true
   if (newValue) {
@@ -50,7 +52,10 @@ watch(() => props.modelValue, (newValue) => {
   } else {
     headers.value = []
   }
-  isUpdatingFromProp = false
+  // Use nextTick to defer resetting the flag until after all watchers have fired
+  nextTick(() => {
+    isUpdatingFromProp = false
+  })
 }, { deep: true })
 
 // Add new header row
@@ -73,7 +78,9 @@ function removeHeader(index: number) {
 
 // Emit headers update
 function emitHeaders() {
-  if (isUpdatingFromProp) return // Prevent emitting while updating from prop
+  if (isUpdatingFromProp) {
+    return
+  }
 
   const validHeaders = headers.value
     .filter(h => h.name.trim() !== '')
@@ -85,6 +92,7 @@ function emitHeaders() {
 watch(headers, () => {
   emitHeaders()
 }, { deep: true })
+
 </script>
 
 <template>

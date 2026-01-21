@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, shallowRef, computed, triggerRef } from 'vue'
 import { main, models } from '../../wailsjs/go/models'
 import {
   StartServer,
@@ -42,7 +42,9 @@ export const useServerStore = defineStore('server', () => {
   const requestLogs = ref<models.RequestLogSummary[]>([])
   const requestLogCache = ref<Map<string, models.RequestLog>>(new Map())
   const selectedLogId = ref<string | null>(null)
-  const items = ref<models.ResponseItem[]>([])
+  // Use shallowRef to avoid deep reactivity tracking on large item arrays
+  // This significantly improves performance with many response entries
+  const items = shallowRef<models.ResponseItem[]>([])
   const expandedItemId = ref<string | null>(null)
   const highlightedResponseId = ref<string | null>(null)
   const config = ref<models.AppConfig | null>(null)
@@ -227,7 +229,10 @@ export const useServerStore = defineStore('server', () => {
   }
 
   async function updateItem(index: number, item: models.ResponseItem) {
-    items.value[index] = item
+    // Create new array to trigger shallowRef reactivity
+    const newItems = [...items.value]
+    newItems[index] = item
+    items.value = newItems
     await saveItems()
   }
 
