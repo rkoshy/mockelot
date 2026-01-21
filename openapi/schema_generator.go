@@ -17,7 +17,7 @@ func GenerateMockScript(schema *openapi3.SchemaRef, op OperationInfo) string {
 
 	ctx := &SchemaContext{
 		visited:  make(map[string]int),
-		maxDepth: 3,
+		maxDepth: 6, // Increased to handle deeply nested schemas
 		spec:     nil, // We don't have access to the full spec here
 	}
 
@@ -50,7 +50,7 @@ response.body = JSON.stringify({status: "ok"}, null, 2);
 // generateSchemaCode generates JavaScript code for a schema
 func generateSchemaCode(schema *openapi3.Schema, ctx *SchemaContext, depth int) string {
 	if depth > ctx.maxDepth {
-		return "null /* max depth reached */"
+		return generateDepthLimitDefault(schema)
 	}
 
 	// Priority 1: Use example if available
@@ -356,4 +356,49 @@ func contains(slice []string, value string) bool {
 		}
 	}
 	return false
+}
+
+// generateDepthLimitDefault generates type-appropriate defaults when depth limit is reached
+func generateDepthLimitDefault(schema *openapi3.Schema) string {
+	if schema == nil {
+		return "null"
+	}
+
+	// Use example if available
+	if schema.Example != nil {
+		return convertExampleToJS(schema.Example)
+	}
+
+	// Use enum if available
+	if len(schema.Enum) > 0 {
+		return generateEnumCode(schema.Enum)
+	}
+
+	// Generate based on type
+	types := schema.Type.Slice()
+	if len(types) == 0 {
+		if len(schema.Properties) > 0 {
+			return "{}" // Empty object for untyped with properties
+		}
+		return "null"
+	}
+
+	typ := types[0]
+	switch typ {
+	case "object":
+		return "{}"
+	case "array":
+		return "[]"
+	case "string":
+		if schema.Format != "" {
+			return generateFormattedString(schema.Format)
+		}
+		return `""`
+	case "integer", "number":
+		return "0"
+	case "boolean":
+		return "false"
+	default:
+		return "null"
+	}
 }
