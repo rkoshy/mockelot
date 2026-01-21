@@ -165,6 +165,12 @@ func generateArrayCode(schema *openapi3.Schema, ctx *SchemaContext, depth int) s
 		maxItems = 5
 	}
 
+	// If itemCode is an object literal (starts with {), wrap in parentheses
+	// to make it an expression, not a function body: () => ({...}) vs () => {...}
+	if strings.HasPrefix(strings.TrimSpace(itemCode), "{") {
+		itemCode = "(" + itemCode + ")"
+	}
+
 	return fmt.Sprintf(`Array(%d).fill(0).map(() => %s)`,
 		(minItems+maxItems)/2, itemCode)
 }
