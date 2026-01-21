@@ -359,7 +359,11 @@ export const useServerStore = defineStore('server', () => {
     try {
       // Items are updated via the items:updated event emitted by the backend
       // No need to call refreshItems() here as it would re-fetch and potentially overwrite
-      await ImportOpenAPISpecWithDialog(appendMode)
+      const result = await ImportOpenAPISpecWithDialog(appendMode)
+      // Mark dirty if import succeeded (result is not null = user didn't cancel)
+      if (result) {
+        markDirty()
+      }
     } catch (error) {
       console.error('Failed to import OpenAPI spec:', error)
       throw error
