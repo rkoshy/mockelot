@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { ref, watch, computed } from 'vue'
 import CustomSelect from '../common/CustomSelect.vue'
+import DomainFilterInput from '../common/DomainFilterInput.vue'
 import VolumeList from './VolumeList.vue'
 import EnvironmentVarList from './EnvironmentVarList.vue'
 import StatusTranslationList from './StatusTranslationList.vue'
@@ -25,6 +26,8 @@ const endpointType = ref('mock')
 const name = ref('')
 const pathPrefix = ref('/')
 const translationMode = ref('none')
+const domainFilterMode = ref('any')
+const domainFilterPatterns = ref<string[]>([])
 
 // Container config (Steps 2-5)
 const containerImageName = ref('')
@@ -81,28 +84,38 @@ const restartPolicyOptions = [
   { value: 'on-failure', label: 'On Failure - Restart only on failure' }
 ]
 
+const domainFilterModeOptions = [
+  { value: 'any', label: 'Any Domain' },
+  { value: 'all', label: 'All SOCKS5 Domains' },
+  { value: 'specific', label: 'Specific Domains' }
+]
+
 // Computed properties
 const totalSteps = computed(() => {
-  if (endpointType.value === 'container') return 7 // Added proxy configuration step
-  if (endpointType.value === 'proxy') return 3
-  return 1
+  if (endpointType.value === 'container') return 8 // Basic, Domain, Container, Volumes, Env, Permissions, Proxy, Test
+  if (endpointType.value === 'proxy') return 4     // Basic, Domain, Backend, Headers
+  return 2                                          // Basic, Domain
 })
 
 const canGoNext = computed(() => {
   if (currentStep.value === 1) {
     return name.value.trim() && pathPrefix.value.trim()
   }
+  // Step 2 is Domain Filter - always can proceed
+  if (currentStep.value === 2) {
+    return true
+  }
   if (endpointType.value === 'container') {
-    if (currentStep.value === 2) {
+    if (currentStep.value === 3) {
       return containerImageName.value.trim() && containerPort.value > 0 && imageValidationStatus.value === 'success'
     }
-    if (currentStep.value === 7) {
+    if (currentStep.value === 8) {
       // Can proceed if test succeeded or was skipped
       return containerTestStatus.value === 'success' || containerTestSkipped.value
     }
   }
   if (endpointType.value === 'proxy') {
-    if (currentStep.value === 2) {
+    if (currentStep.value === 3) {
       return backendURL.value.trim()
     }
   }
@@ -111,17 +124,18 @@ const canGoNext = computed(() => {
 
 const stepTitle = computed(() => {
   if (currentStep.value === 1) return 'Basic Configuration'
+  if (currentStep.value === 2) return 'Domain Filter'
   if (endpointType.value === 'container') {
-    if (currentStep.value === 2) return 'Container Settings'
-    if (currentStep.value === 3) return 'Volume Mappings'
-    if (currentStep.value === 4) return 'Environment Variables'
-    if (currentStep.value === 5) return 'Special Permissions'
-    if (currentStep.value === 6) return 'Proxy Configuration'
-    if (currentStep.value === 7) return 'Test Container'
+    if (currentStep.value === 3) return 'Container Settings'
+    if (currentStep.value === 4) return 'Volume Mappings'
+    if (currentStep.value === 5) return 'Environment Variables'
+    if (currentStep.value === 6) return 'Special Permissions'
+    if (currentStep.value === 7) return 'Proxy Configuration'
+    if (currentStep.value === 8) return 'Test Container'
   }
   if (endpointType.value === 'proxy') {
-    if (currentStep.value === 2) return 'Backend Configuration'
-    if (currentStep.value === 3) return 'Headers & Status Codes'
+    if (currentStep.value === 3) return 'Backend Configuration'
+    if (currentStep.value === 4) return 'Headers & Status Codes'
   }
   return ''
 })
@@ -142,6 +156,8 @@ function resetForm() {
   name.value = ''
   pathPrefix.value = '/'
   translationMode.value = 'none'
+  domainFilterMode.value = 'any'
+  domainFilterPatterns.value = []
 
   // Container fields
   containerImageName.value = ''
@@ -329,17 +345,19 @@ async function loadDefaultProxyHeaders() {
 }
 
 async function handleNext() {
-  if (!canGoNext.value) return
+  if (!canGoNext.value) {
+    return
+  }
   if (currentStep.value < totalSteps.value) {
     currentStep.value++
 
-    // Auto-load default container headers when entering proxy configuration step
-    if (endpointType.value === 'container' && currentStep.value === 6 && requestHeaders.value.length === 0) {
+    // Auto-load default container headers when entering proxy configuration step (step 7)
+    if (endpointType.value === 'container' && currentStep.value === 7 && requestHeaders.value.length === 0) {
       await loadDefaultContainerHeaders()
     }
 
-    // Auto-load default proxy headers when entering headers step for regular proxy endpoints
-    if (endpointType.value === 'proxy' && currentStep.value === 3 && requestHeaders.value.length === 0) {
+    // Auto-load default proxy headers when entering headers step for regular proxy endpoints (step 4)
+    if (endpointType.value === 'proxy' && currentStep.value === 4 && requestHeaders.value.length === 0) {
       await loadDefaultProxyHeaders()
     }
   } else {
@@ -363,7 +381,11 @@ function handleFinish() {
     name: name.value.trim(),
     path_prefix: pathPrefix.value.trim(),
     translation_mode: translationMode.value,
-    type: endpointType.value
+    type: endpointType.value,
+    domain_filter: domainFilterMode.value !== 'any' ? {
+      mode: domainFilterMode.value,
+      patterns: domainFilterMode.value === 'specific' ? domainFilterPatterns.value : []
+    } : undefined
   }
 
   // Add type-specific configuration
@@ -457,20 +479,6 @@ function handleKeydown(e: KeyboardEvent) {
           <div class="flex-1 overflow-y-auto px-6 py-6">
             <!-- Step 1: Basic Configuration -->
             <div v-if="currentStep === 1" class="space-y-6">
-              <!-- Name -->
-              <div>
-                <label class="block text-sm font-medium text-gray-300 mb-2">
-                  Endpoint Name <span class="text-red-400">*</span>
-                </label>
-                <input
-                  v-model="name"
-                  type="text"
-                  placeholder="e.g., API v1, User Service"
-                  class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  autofocus
-                />
-              </div>
-
               <!-- Endpoint Type -->
               <div>
                 <label class="block text-sm font-medium text-gray-300 mb-2">
@@ -491,6 +499,19 @@ function handleKeydown(e: KeyboardEvent) {
                     Run a Docker/Podman container to handle requests with full control over configuration
                   </template>
                 </p>
+              </div>
+
+              <!-- Name -->
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-2">
+                  Endpoint Name <span class="text-red-400">*</span>
+                </label>
+                <input
+                  v-model="name"
+                  type="text"
+                  placeholder="e.g., API v1, User Service"
+                  class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
               </div>
 
               <!-- Path Prefix -->
@@ -530,10 +551,56 @@ function handleKeydown(e: KeyboardEvent) {
                   </template>
                 </p>
               </div>
+
             </div>
 
-            <!-- Step 2: Container Settings -->
-            <div v-if="currentStep === 2 && endpointType === 'container'" class="space-y-6">
+            <!-- Step 2: Domain Filter -->
+            <div v-if="currentStep === 2" class="space-y-6">
+              <!-- Domain Filter Mode -->
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-2">
+                  Domain Filter
+                </label>
+                <CustomSelect
+                  v-model="domainFilterMode"
+                  :options="domainFilterModeOptions"
+                />
+                <p class="mt-2 text-sm text-gray-400">
+                  <template v-if="domainFilterMode === 'any'">
+                    Match requests from any domain (including direct HTTP requests)
+                  </template>
+                  <template v-else-if="domainFilterMode === 'all'">
+                    Only match requests from domains configured in SOCKS5 Domain Takeover
+                  </template>
+                  <template v-else>
+                    Only match requests from specific domain patterns
+                  </template>
+                </p>
+              </div>
+
+              <!-- Domain Patterns (only for 'specific' mode) -->
+              <div v-if="domainFilterMode === 'specific'">
+                <label class="block text-sm font-medium text-gray-300 mb-2">
+                  Domain Patterns
+                </label>
+                <DomainFilterInput v-model="domainFilterPatterns" />
+              </div>
+
+              <!-- Info box -->
+              <div class="p-4 bg-gray-900 border border-gray-700 rounded">
+                <p class="text-sm text-gray-300">
+                  <strong class="text-white">Domain filtering</strong> controls which HTTP requests this endpoint will handle based on the Host header.
+                </p>
+                <ul class="mt-2 text-sm text-gray-400 list-disc list-inside space-y-1">
+                  <li><strong>Any Domain:</strong> Handles all requests (direct HTTP and SOCKS5 proxied)</li>
+                  <li><strong>All SOCKS5 Domains:</strong> Only handles requests from domains in your SOCKS5 takeover list</li>
+                  <li><strong>Specific Domains:</strong> Only handles requests matching the patterns you specify</li>
+                </ul>
+              </div>
+            </div>
+
+            <!-- Step 3: Container Settings -->
+            <div v-if="currentStep === 3 && endpointType === 'container'" class="space-y-6">
               <!-- Image Name -->
               <div>
                 <label class="block text-sm font-medium text-gray-300 mb-2">
@@ -718,24 +785,24 @@ function handleKeydown(e: KeyboardEvent) {
               </div>
             </div>
 
-            <!-- Step 3: Volume Mappings (Container) -->
-            <div v-if="currentStep === 3 && endpointType === 'container'" class="space-y-4">
+            <!-- Step 4: Volume Mappings (Container) -->
+            <div v-if="currentStep === 4 && endpointType === 'container'" class="space-y-4">
               <p class="text-sm text-gray-400">
                 Mount host directories or files into the container. This allows the container to persist data or access configuration files.
               </p>
               <VolumeList v-model="volumes" />
             </div>
 
-            <!-- Step 4: Environment Variables (Container) -->
-            <div v-if="currentStep === 4 && endpointType === 'container'" class="space-y-4">
+            <!-- Step 5: Environment Variables (Container) -->
+            <div v-if="currentStep === 5 && endpointType === 'container'" class="space-y-4">
               <p class="text-sm text-gray-400">
                 Set environment variables that will be available inside the container.
               </p>
               <EnvironmentVarList v-model="environment" />
             </div>
 
-            <!-- Step 5: Special Permissions (Container) -->
-            <div v-if="currentStep === 5 && endpointType === 'container'" class="space-y-6">
+            <!-- Step 6: Special Permissions (Container) -->
+            <div v-if="currentStep === 6 && endpointType === 'container'" class="space-y-6">
               <p class="text-sm text-gray-400 mb-4">
                 Configure special permissions and network settings for the container.
               </p>
@@ -790,8 +857,8 @@ function handleKeydown(e: KeyboardEvent) {
               </div>
             </div>
 
-            <!-- Step 6: Proxy Configuration (Container) -->
-            <div v-if="currentStep === 6 && endpointType === 'container'" class="space-y-6">
+            <!-- Step 7: Proxy Configuration (Container) -->
+            <div v-if="currentStep === 7 && endpointType === 'container'" class="space-y-6">
               <p class="text-sm text-gray-400 mb-4">
                 Configure how requests are proxied to your container. The backend URL will automatically point to your container.
               </p>
@@ -865,8 +932,8 @@ function handleKeydown(e: KeyboardEvent) {
               </div>
             </div>
 
-            <!-- Step 7: Test Container (Container) -->
-            <div v-if="currentStep === 7 && endpointType === 'container'" class="space-y-6">
+            <!-- Step 8: Test Container (Container) -->
+            <div v-if="currentStep === 8 && endpointType === 'container'" class="space-y-6">
               <p class="text-sm text-gray-400 mb-4">
                 Test your container configuration by starting a temporary container. This verifies that the image can be pulled,
                 the container starts successfully, and responds on the configured port.
@@ -956,8 +1023,8 @@ function handleKeydown(e: KeyboardEvent) {
               </div>
             </div>
 
-            <!-- Step 2: Backend Configuration (Proxy) -->
-            <div v-if="currentStep === 2 && endpointType === 'proxy'" class="space-y-6">
+            <!-- Step 3: Backend Configuration (Proxy) -->
+            <div v-if="currentStep === 3 && endpointType === 'proxy'" class="space-y-6">
               <!-- Backend URL -->
               <div>
                 <label class="block text-sm font-medium text-gray-300 mb-2">
@@ -1010,8 +1077,8 @@ function handleKeydown(e: KeyboardEvent) {
               </div>
             </div>
 
-            <!-- Step 3: Headers & Status Codes (Proxy) -->
-            <div v-if="currentStep === 3 && endpointType === 'proxy'" class="space-y-6">
+            <!-- Step 4: Headers & Status Codes (Proxy) -->
+            <div v-if="currentStep === 4 && endpointType === 'proxy'" class="space-y-6">
               <!-- Request Headers -->
               <div>
                 <h4 class="text-sm font-medium text-gray-300 mb-3">Request Headers</h4>
