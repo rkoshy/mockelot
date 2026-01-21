@@ -2,6 +2,10 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -164,6 +168,48 @@ func runScript(vm *goja.Runtime, scriptBody string, reqContext *RequestContext, 
 	cryptoUtil := map[string]interface{}{
 		"randomUUID": func() string {
 			return uuid.New().String()
+		},
+		// getRandomValues returns an array of random bytes (0-255)
+		// Simplified version - Web Crypto modifies typed array in place
+		"getRandomValues": func(length int) []int {
+			if length <= 0 || length > 65536 {
+				length = 16
+			}
+			bytes := make([]byte, length)
+			rand.Read(bytes)
+			result := make([]int, length)
+			for i, b := range bytes {
+				result[i] = int(b)
+			}
+			return result
+		},
+		// randomBytes returns random bytes as hex string (convenience method)
+		"randomBytes": func(length int) string {
+			if length <= 0 || length > 65536 {
+				length = 16
+			}
+			bytes := make([]byte, length)
+			rand.Read(bytes)
+			return hex.EncodeToString(bytes)
+		},
+		// subtle contains cryptographic operations
+		"subtle": map[string]interface{}{
+			// digest returns hex-encoded hash of the input
+			// algorithm: "SHA-256" or "SHA-512"
+			"digest": func(algorithm string, data string) string {
+				switch algorithm {
+				case "SHA-256":
+					hash := sha256.Sum256([]byte(data))
+					return hex.EncodeToString(hash[:])
+				case "SHA-512":
+					hash := sha512.Sum512([]byte(data))
+					return hex.EncodeToString(hash[:])
+				default:
+					// Default to SHA-256
+					hash := sha256.Sum256([]byte(data))
+					return hex.EncodeToString(hash[:])
+				}
+			},
 		},
 	}
 	if err := vm.Set("crypto", cryptoUtil); err != nil {
