@@ -278,9 +278,15 @@ func (cm *CertificateManager) GenerateServerCert(caCert *x509.Certificate, caPri
 		cn = dnsNames[0]
 	}
 
+	// Generate cryptographically random 128-bit serial number (RFC 5280 best practice)
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate serial number: %w", err)
+	}
+
 	// Create server certificate template
 	serverTemplate := &x509.Certificate{
-		SerialNumber: big.NewInt(time.Now().Unix()),
+		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			CommonName:   cn,
 			Organization: []string{"Mockelot"},

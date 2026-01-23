@@ -4,6 +4,18 @@ set -euo pipefail
 # Mockelot Build and Release Script
 # Usage: ./build-and-release.sh <version>
 # Example: ./build-and-release.sh v0.3.1
+#
+# This script uses Laminar CI for multi-platform builds:
+#   - mockelot-linux-build   : Builds locally on Linux
+#   - mockelot-windows-build : Cross-compiles from Linux (Go cross-compilation)
+#   - mockelot-macos-build   : Builds remotely on macOS (10.100.102.102)
+#
+# Prerequisites:
+#   - Laminar CI running (http://localhost:9000)
+#   - SSH access to macOS machine (for macOS builds)
+#   - gh CLI authenticated with GitHub
+#
+# CI job scripts: /opt/laminar/var/cfg/jobs/mockelot-*.run
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIST_DIR="${SCRIPT_DIR}/dist"
