@@ -74,10 +74,13 @@ type App struct {
 	containerStartMutex    sync.Mutex                    // Mutex for thread-safe access to containerStartContexts
 	scriptErrors           map[string][]ScriptErrorLog   // Map of response ID to list of script errors
 	scriptErrorsMutex      sync.RWMutex                  // Mutex for thread-safe access to scriptErrors
+	logRequestMatching     bool                          // Enable verbose request matching logs (--log-request-matching flag)
 }
 
 // NewApp creates a new App application struct
-func NewApp() *App {
+// Parameters:
+// - logRequestMatching: if true, enables verbose request matching logs to mockelot-matching.log
+func NewApp(logRequestMatching bool) *App {
 	app := &App{
 		config: &models.AppConfig{
 			Port: 8080,
@@ -103,6 +106,7 @@ func NewApp() *App {
 		eventQueue:             make([]Event, 0),                       // Event queue for frontend polling
 		containerStartContexts: make(map[string]context.CancelFunc),
 		scriptErrors:           make(map[string][]ScriptErrorLog), // Script error tracking
+		logRequestMatching:     logRequestMatching,                // Request matching debug flag
 	}
 
 	// Initialize proxy handler (shared between server and container handler)
@@ -307,7 +311,7 @@ func (a *App) StartServer(port int) error {
 		runtime.EventsEmit(a.ctx, "config:dirty", true)
 	}
 
-	a.server = server.NewHTTPServer(a.config, a, a, a, a.containerHandler, a.proxyHandler)
+	a.server = server.NewHTTPServer(a.config, a, a, a, a.containerHandler, a.proxyHandler, a.logRequestMatching)
 
 	err := a.server.Start()
 	if err != nil {

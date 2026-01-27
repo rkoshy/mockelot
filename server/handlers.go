@@ -23,30 +23,41 @@ type ScriptErrorLogger interface {
 	LogScriptError(responseID, path, method, errorMsg string)
 }
 
-type ResponseHandler struct {
-	config            *models.AppConfig
-	configMutex       sync.RWMutex
-	requestLogger     RequestLogger
-	scriptErrorLogger ScriptErrorLogger
-	corsProcessor     *CORSProcessor
-	proxyHandler      *ProxyHandler
-	containerHandler  *ContainerHandler
-	overlayHandler    *OverlayHandler
-	regexCache        map[string]*regexp.Regexp // Cache for compiled regexes
-	regexCacheMutex   sync.RWMutex              // Mutex for regex cache
+// CORSPreflightMatch contains information about a matched CORS preflight request
+// This allows us to track which response triggered the CORS handling for logging purposes
+type CORSPreflightMatch struct {
+	ShouldHandle bool                    // Whether global CORS should handle this preflight
+	ResponseID   string                  // ID of the response that triggered CORS handling
+	Response     *models.MethodResponse  // The matching response (for UseGlobalCORS check)
+	Group        *models.ResponseGroup   // The group containing the response (if any)
 }
 
-func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptErrorLogger ScriptErrorLogger, proxyHandler *ProxyHandler, containerHandler *ContainerHandler) *ResponseHandler {
+type ResponseHandler struct {
+	config             *models.AppConfig
+	configMutex        sync.RWMutex
+	requestLogger      RequestLogger
+	scriptErrorLogger  ScriptErrorLogger
+	corsProcessor      *CORSProcessor
+	proxyHandler       *ProxyHandler
+	containerHandler   *ContainerHandler
+	overlayHandler     *OverlayHandler
+	regexCache         map[string]*regexp.Regexp // Cache for compiled regexes
+	regexCacheMutex    sync.RWMutex              // Mutex for regex cache
+	logRequestMatching bool                      // Enable verbose request matching logs
+}
+
+func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptErrorLogger ScriptErrorLogger, proxyHandler *ProxyHandler, containerHandler *ContainerHandler, logRequestMatching bool) *ResponseHandler {
 	overlayHandler := NewOverlayHandler(proxyHandler)
 	return &ResponseHandler{
-		config:            config,
-		requestLogger:     logger,
-		scriptErrorLogger: scriptErrorLogger,
-		corsProcessor:     NewCORSProcessor(&config.CORS),
-		proxyHandler:      proxyHandler,
-		containerHandler:  containerHandler,
-		overlayHandler:    overlayHandler,
-		regexCache:        make(map[string]*regexp.Regexp),
+		config:             config,
+		requestLogger:      logger,
+		scriptErrorLogger:  scriptErrorLogger,
+		corsProcessor:      NewCORSProcessor(&config.CORS),
+		proxyHandler:       proxyHandler,
+		containerHandler:   containerHandler,
+		overlayHandler:     overlayHandler,
+		regexCache:         make(map[string]*regexp.Regexp),
+		logRequestMatching: logRequestMatching,
 	}
 }
 
@@ -84,6 +95,22 @@ func (h *ResponseHandler) InvalidateRegexCache() {
 // canMockEndpointHandleRequest checks if a mock endpoint has a response that can handle the request
 // This checks both path pattern and method, but not validation (validation happens later)
 func (h *ResponseHandler) canMockEndpointHandleRequest(endpoint *models.Endpoint, translatedPath string, method string) bool {
+	if h.logRequestMatching {
+		log.Printf("[MATCH] canMockEndpointHandleRequest: endpoint=%s path=%s method=%s", endpoint.Name, translatedPath, method)
+	}
+
+	// For OPTIONS requests, check if we should handle as CORS preflight
+	if method == "OPTIONS" {
+		corsMatch := h.canHandleCORSPreflightForEndpoint(endpoint, translatedPath)
+		if h.logRequestMatching {
+			log.Printf("[CORS] CORS preflight check for OPTIONS: endpoint=%s path=%s shouldHandle=%v responseID=%s",
+				endpoint.Name, translatedPath, corsMatch.ShouldHandle, corsMatch.ResponseID)
+		}
+		if corsMatch.ShouldHandle {
+			return true
+		}
+	}
+
 	for _, item := range endpoint.Items {
 		if item.Type == "response" && item.Response != nil {
 			resp := item.Response
@@ -143,6 +170,152 @@ func (h *ResponseHandler) canMockEndpointHandleRequest(endpoint *models.Endpoint
 	return false
 }
 
+// canHandleCORSPreflightForEndpoint checks if a mock endpoint should handle
+// a CORS preflight (OPTIONS) request for the given path.
+// Returns CORSPreflightMatch with ShouldHandle=true if:
+// 1. Global CORS is enabled
+// 2. There is at least one response entry matching the path (any method)
+// 3. That response has UseGlobalCORS enabled (or nil = default enabled)
+// 4. There is no explicit OPTIONS handler (explicit handlers take precedence)
+func (h *ResponseHandler) canHandleCORSPreflightForEndpoint(endpoint *models.Endpoint, translatedPath string) CORSPreflightMatch {
+	noMatch := CORSPreflightMatch{ShouldHandle: false}
+
+	// Check if global CORS is enabled
+	if !h.config.CORS.Enabled {
+		if h.logRequestMatching {
+			log.Printf("[CORS] Global CORS is disabled")
+		}
+		return noMatch
+	}
+
+	hasExplicitOptionsHandler := false
+	var matchingResponse *models.MethodResponse
+	var matchingGroup *models.ResponseGroup
+
+	for _, item := range endpoint.Items {
+		switch item.Type {
+		case "response":
+			if item.Response == nil {
+				continue
+			}
+			resp := item.Response
+
+			// Skip disabled responses
+			if !resp.IsEnabled() {
+				continue
+			}
+
+			// Check if path matches
+			matchResult := matchPathPatternWithParams(resp.PathPattern, translatedPath)
+			if !matchResult.Matches {
+				continue
+			}
+
+			if h.logRequestMatching {
+				log.Printf("[CORS] Path matches response: id=%s pattern=%s", resp.ID, resp.PathPattern)
+			}
+
+			// Check for explicit OPTIONS handler
+			for _, m := range resp.Methods {
+				if m == "OPTIONS" {
+					hasExplicitOptionsHandler = true
+					if h.logRequestMatching {
+						log.Printf("[CORS] Found explicit OPTIONS handler: id=%s", resp.ID)
+					}
+					break
+				}
+			}
+
+			// Check UseGlobalCORS (nil defaults to true)
+			if resp.UseGlobalCORS == nil || *resp.UseGlobalCORS {
+				if matchingResponse == nil {
+					matchingResponse = resp
+					matchingGroup = nil // No group for standalone responses
+					if h.logRequestMatching {
+						log.Printf("[CORS] Found CORS-enabled response: id=%s useGlobalCORS=%v", resp.ID, resp.UseGlobalCORS)
+					}
+				}
+			}
+
+		case "group":
+			if item.Group == nil {
+				continue
+			}
+			group := item.Group
+
+			// Skip disabled groups
+			if !group.IsEnabled() {
+				continue
+			}
+
+			for i := range group.Responses {
+				resp := &group.Responses[i]
+
+				// Skip disabled responses
+				if !resp.IsEnabled() {
+					continue
+				}
+
+				// Check if path matches
+				matchResult := matchPathPatternWithParams(resp.PathPattern, translatedPath)
+				if !matchResult.Matches {
+					continue
+				}
+
+				if h.logRequestMatching {
+					log.Printf("[CORS] Path matches group response: group=%s id=%s pattern=%s", group.Name, resp.ID, resp.PathPattern)
+				}
+
+				// Check for explicit OPTIONS handler
+				for _, m := range resp.Methods {
+					if m == "OPTIONS" {
+						hasExplicitOptionsHandler = true
+						if h.logRequestMatching {
+							log.Printf("[CORS] Found explicit OPTIONS handler in group: group=%s id=%s", group.Name, resp.ID)
+						}
+						break
+					}
+				}
+
+				// Response overrides group for UseGlobalCORS
+				useGlobalCORS := true
+				if resp.UseGlobalCORS != nil {
+					useGlobalCORS = *resp.UseGlobalCORS
+				} else if group.UseGlobalCORS != nil {
+					useGlobalCORS = *group.UseGlobalCORS
+				}
+
+				if useGlobalCORS && matchingResponse == nil {
+					matchingResponse = resp
+					matchingGroup = group
+					if h.logRequestMatching {
+						log.Printf("[CORS] Found CORS-enabled group response: group=%s id=%s", group.Name, resp.ID)
+					}
+				}
+			}
+		}
+	}
+
+	// Handle preflight if path matches with CORS and no explicit OPTIONS handler
+	shouldHandle := matchingResponse != nil && !hasExplicitOptionsHandler
+
+	if h.logRequestMatching {
+		log.Printf("[CORS] Final decision: shouldHandle=%v hasMatch=%v hasExplicitOptions=%v",
+			shouldHandle, matchingResponse != nil, hasExplicitOptionsHandler)
+	}
+
+	if !shouldHandle {
+		return noMatch
+	}
+
+	return CORSPreflightMatch{
+		ShouldHandle: true,
+		ResponseID:   matchingResponse.ID,
+		Response:     matchingResponse,
+		Group:        matchingGroup,
+	}
+}
+
 func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	// Read request body
 	bodyBytes, _ := io.ReadAll(r.Body)
@@ -151,6 +324,12 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 	h.configMutex.RLock()
 	requestPath := r.URL.Path
 	requestDomain := extractDomain(r) // Extract domain from Host header
+
+	// Debug logging for request matching
+	if h.logRequestMatching {
+		log.Printf("[MATCH] === New Request ===")
+		log.Printf("[MATCH] Method: %s, Path: %s, Domain: %s", r.Method, requestPath, requestDomain)
+	}
 
 	// Step 1: Find matching endpoint by prefix and apply path translation
 	var matchedEndpoint *models.Endpoint
@@ -163,11 +342,21 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 		for i := range h.config.Endpoints {
 			endpoint := &h.config.Endpoints[i]
 			if !endpoint.IsEnabled() {
+				if h.logRequestMatching {
+					log.Printf("[MATCH] Skipping disabled endpoint: %s", endpoint.Name)
+				}
 				continue
+			}
+
+			if h.logRequestMatching {
+				log.Printf("[MATCH] Checking endpoint: %s (prefix: %s, type: %s)", endpoint.Name, endpoint.PathPrefix, endpoint.Type)
 			}
 
 			// Check domain filter first (before path matching)
 			if !h.matchesDomain(endpoint, requestDomain) {
+				if h.logRequestMatching {
+					log.Printf("[MATCH] Domain filter rejected: endpoint=%s domain=%s", endpoint.Name, requestDomain)
+				}
 				continue
 			}
 
@@ -254,7 +443,13 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 			if endpoint.Type == models.EndpointTypeMock {
 				if !h.canMockEndpointHandleRequest(endpoint, currentTranslatedPath, r.Method) {
 					// This mock endpoint can't handle the request - try next endpoint
+					if h.logRequestMatching {
+						log.Printf("[MATCH] Mock endpoint can't handle request: endpoint=%s path=%s method=%s", endpoint.Name, currentTranslatedPath, r.Method)
+					}
 					continue
+				}
+				if h.logRequestMatching {
+					log.Printf("[MATCH] Mock endpoint CAN handle request: endpoint=%s path=%s method=%s", endpoint.Name, currentTranslatedPath, r.Method)
 				}
 			}
 
@@ -263,17 +458,26 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 			translatedPath = currentTranslatedPath
 			captureGroups = currentCaptureGroups
 			items = endpoint.Items
+			if h.logRequestMatching {
+				log.Printf("[MATCH] ✓ Matched endpoint: %s (type=%s, translated_path=%s)", endpoint.Name, endpoint.Type, translatedPath)
+			}
 			break // First match wins
 		}
 
 		// If no endpoint matched, check for overlay mode before returning 404
 		if matchedEndpoint == nil {
+			if h.logRequestMatching {
+				log.Printf("[MATCH] No endpoint matched, checking overlay mode for domain: %s", requestDomain)
+			}
 			// Check if overlay mode should be used for this domain
 			domainTakeover := h.config.DomainTakeover
 			h.configMutex.RUnlock()
 
 			if h.overlayHandler != nil && h.overlayHandler.shouldUseOverlay(requestDomain, domainTakeover) {
 				// Use overlay mode - proxy to real server
+				if h.logRequestMatching {
+					log.Printf("[MATCH] Using overlay mode for domain: %s", requestDomain)
+				}
 				if err := h.overlayHandler.handleOverlay(w, r, requestDomain); err != nil {
 					log.Printf("Overlay mode error: %v", err)
 					http.Error(w, "Overlay mode failed", http.StatusBadGateway)
@@ -282,6 +486,9 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 			}
 
 			// No endpoint and no overlay - return 404
+			if h.logRequestMatching {
+				log.Printf("[MATCH] ✗ No match found, returning 404")
+			}
 			http.Error(w, "No endpoint configured for this path", http.StatusNotFound)
 			return
 		}
@@ -305,17 +512,20 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 		items = h.config.Items
 	}
 
-	// Check if this is a CORS preflight that should be handled globally
-	if r.Method == "OPTIONS" && h.shouldHandleCORSPreflightForItems(r, translatedPath, items) {
-		h.configMutex.RUnlock()
-		h.handleCORSPreflight(w, r)
-		return
-	}
-
 	// Determine endpoint ID for logging (empty string if legacy fallback)
 	endpointID := ""
 	if matchedEndpoint != nil {
 		endpointID = matchedEndpoint.ID
+	}
+
+	// Check if this is a CORS preflight that should be handled globally
+	if r.Method == "OPTIONS" {
+		corsMatch := h.shouldHandleCORSPreflightForItems(r, translatedPath, items)
+		if corsMatch.ShouldHandle {
+			h.configMutex.RUnlock()
+			h.handleCORSPreflightWithLogging(w, r, endpointID, corsMatch.ResponseID, bodyBytes)
+			return
+		}
 	}
 
 	// Step 2: Find matching response within the endpoint's items using translated path
@@ -632,10 +842,13 @@ func (h *ResponseHandler) handleMockRequest(w http.ResponseWriter, r *http.Reque
 	items := endpoint.Items
 
 	// Check if this is a CORS preflight that should be handled globally
-	if r.Method == "OPTIONS" && h.shouldHandleCORSPreflightForItems(r, translatedPath, items) {
-		h.configMutex.RUnlock()
-		h.handleCORSPreflight(w, r)
-		return
+	if r.Method == "OPTIONS" {
+		corsMatch := h.shouldHandleCORSPreflightForItems(r, translatedPath, items)
+		if corsMatch.ShouldHandle {
+			h.configMutex.RUnlock()
+			h.handleCORSPreflightWithLogging(w, r, endpoint.ID, corsMatch.ResponseID, bodyBytes)
+			return
+		}
 	}
 
 	// Find matching response within the endpoint's items using translated path
@@ -1079,13 +1292,23 @@ func (h *ResponseHandler) shouldHandleCORSPreflight(r *http.Request) bool {
 }
 
 // shouldHandleCORSPreflightForItems checks if global CORS should handle an OPTIONS request for specific items
-func (h *ResponseHandler) shouldHandleCORSPreflightForItems(r *http.Request, translatedPath string, items []models.ResponseItem) bool {
+// Returns CORSPreflightMatch with info about the matching response for logging
+func (h *ResponseHandler) shouldHandleCORSPreflightForItems(r *http.Request, translatedPath string, items []models.ResponseItem) CORSPreflightMatch {
+	noMatch := CORSPreflightMatch{ShouldHandle: false}
+
 	// Check if global CORS is enabled
 	if !h.config.CORS.Enabled {
-		return false
+		if h.logRequestMatching {
+			log.Printf("[CORS] Global CORS is disabled (shouldHandleCORSPreflightForItems)")
+		}
+		return noMatch
 	}
 
-	// Check if there's an explicit OPTIONS handler in the items for this translated path
+	var matchingResponse *models.MethodResponse
+	var matchingGroup *models.ResponseGroup
+	hasExplicitOptionsHandler := false
+
+	// Check items for explicit OPTIONS handlers and find matching CORS-enabled responses
 	for _, item := range items {
 		if item.Type == "response" && item.Response != nil {
 			resp := item.Response
@@ -1093,15 +1316,30 @@ func (h *ResponseHandler) shouldHandleCORSPreflightForItems(r *http.Request, tra
 				continue
 			}
 
-			// Check if this response handles OPTIONS
+			// Check if path matches (using translated path)
+			matchResult := matchPathPatternWithParams(resp.PathPattern, translatedPath)
+			if !matchResult.Matches {
+				continue
+			}
+
+			// Check if this response handles OPTIONS explicitly
 			for _, method := range resp.Methods {
 				if method == "OPTIONS" {
-					// Check if path matches (using translated path)
-					matchResult := matchPathPatternWithParams(resp.PathPattern, translatedPath)
-					if matchResult.Matches {
-						// There's an explicit OPTIONS handler, don't use global CORS
-						return false
+					// There's an explicit OPTIONS handler, don't use global CORS
+					if h.logRequestMatching {
+						log.Printf("[CORS] Found explicit OPTIONS handler: id=%s pattern=%s", resp.ID, resp.PathPattern)
 					}
+					hasExplicitOptionsHandler = true
+					break
+				}
+			}
+
+			// Track first matching CORS-enabled response
+			if matchingResponse == nil && (resp.UseGlobalCORS == nil || *resp.UseGlobalCORS) {
+				matchingResponse = resp
+				matchingGroup = nil
+				if h.logRequestMatching {
+					log.Printf("[CORS] Found CORS-enabled response: id=%s pattern=%s", resp.ID, resp.PathPattern)
 				}
 			}
 		} else if item.Type == "group" && item.Group != nil {
@@ -1117,31 +1355,75 @@ func (h *ResponseHandler) shouldHandleCORSPreflightForItems(r *http.Request, tra
 					continue
 				}
 
-				// Check if this response handles OPTIONS
+				// Check if path matches (using translated path)
+				matchResult := matchPathPatternWithParams(resp.PathPattern, translatedPath)
+				if !matchResult.Matches {
+					continue
+				}
+
+				// Check if this response handles OPTIONS explicitly
 				for _, method := range resp.Methods {
 					if method == "OPTIONS" {
-						// Check if path matches (using translated path)
-						matchResult := matchPathPatternWithParams(resp.PathPattern, translatedPath)
-						if matchResult.Matches {
-							// There's an explicit OPTIONS handler, don't use global CORS
-							return false
+						if h.logRequestMatching {
+							log.Printf("[CORS] Found explicit OPTIONS handler in group: group=%s id=%s", group.Name, resp.ID)
 						}
+						hasExplicitOptionsHandler = true
+						break
+					}
+				}
+
+				// Track first matching CORS-enabled response
+				// Response overrides group for UseGlobalCORS
+				useGlobalCORS := true
+				if resp.UseGlobalCORS != nil {
+					useGlobalCORS = *resp.UseGlobalCORS
+				} else if group.UseGlobalCORS != nil {
+					useGlobalCORS = *group.UseGlobalCORS
+				}
+
+				if matchingResponse == nil && useGlobalCORS {
+					matchingResponse = resp
+					matchingGroup = group
+					if h.logRequestMatching {
+						log.Printf("[CORS] Found CORS-enabled group response: group=%s id=%s", group.Name, resp.ID)
 					}
 				}
 			}
 		}
 	}
 
-	// No explicit OPTIONS handler, use global CORS
-	return true
+	// Handle preflight if there's a matching CORS-enabled response and no explicit OPTIONS handler
+	shouldHandle := matchingResponse != nil && !hasExplicitOptionsHandler
+
+	if h.logRequestMatching {
+		log.Printf("[CORS] shouldHandleCORSPreflightForItems result: shouldHandle=%v hasMatch=%v hasExplicitOptions=%v",
+			shouldHandle, matchingResponse != nil, hasExplicitOptionsHandler)
+	}
+
+	if !shouldHandle {
+		return noMatch
+	}
+
+	return CORSPreflightMatch{
+		ShouldHandle: true,
+		ResponseID:   matchingResponse.ID,
+		Response:     matchingResponse,
+		Group:        matchingGroup,
+	}
 }
 
-// handleCORSPreflight handles a CORS preflight request
+// handleCORSPreflight handles a CORS preflight request (legacy, no logging)
 func (h *ResponseHandler) handleCORSPreflight(w http.ResponseWriter, r *http.Request) {
-	// Process CORS headers
+	// Process CORS headers (includes Content-Length: 0 from default config)
 	corsHeaders := h.corsProcessor.ProcessCORS(r)
 	for name, value := range corsHeaders {
 		w.Header().Set(name, value)
+	}
+
+	// Compatibility: if Content-Length not set by CORS config, add it
+	// This ensures HTTP/1.1 clients know the response is complete
+	if w.Header().Get("Content-Length") == "" {
+		w.Header().Set("Content-Length", "0")
 	}
 
 	// Set status code (default to 204 if not specified)
@@ -1151,6 +1433,68 @@ func (h *ResponseHandler) handleCORSPreflight(w http.ResponseWriter, r *http.Req
 	}
 
 	w.WriteHeader(status)
+}
+
+// handleCORSPreflightWithLogging handles a CORS preflight request and logs it to the traffic log
+func (h *ResponseHandler) handleCORSPreflightWithLogging(w http.ResponseWriter, r *http.Request, endpointID string, responseID string, bodyBytes []byte) {
+	startTime := time.Now()
+
+	// Process CORS headers
+	h.configMutex.RLock()
+	corsHeaders := h.corsProcessor.ProcessCORS(r)
+	status := h.config.CORS.OptionsDefaultStatus
+	if status == 0 {
+		status = http.StatusNoContent // 204
+	}
+	h.configMutex.RUnlock()
+
+	// Set headers (includes Content-Length: 0 from default config)
+	for name, value := range corsHeaders {
+		w.Header().Set(name, value)
+	}
+
+	// Compatibility: if Content-Length not set by CORS config, add it
+	// This ensures HTTP/1.1 clients know the response is complete
+	if w.Header().Get("Content-Length") == "" {
+		w.Header().Set("Content-Length", "0")
+	}
+
+	// Capture time before first byte
+	firstByteTime := time.Now()
+
+	// Write response
+	w.WriteHeader(status)
+
+	// Capture completion time
+	completionTime := time.Now()
+
+	// Calculate timing
+	delayMs := firstByteTime.Sub(startTime).Milliseconds()
+	rttMs := completionTime.Sub(startTime).Milliseconds()
+
+	// Capture response headers for logging
+	respHeaders := make(map[string][]string, len(w.Header()))
+	for name, values := range w.Header() {
+		valuesCopy := make([]string, len(values))
+		copy(valuesCopy, values)
+		respHeaders[name] = valuesCopy
+	}
+
+	// Build and log request
+	requestLog := buildRequestLog(r, bodyBytes, endpointID)
+	requestLog.ResponseID = responseID
+	requestLog.ClientResponse.StatusCode = &status
+	requestLog.ClientResponse.StatusText = http.StatusText(status)
+	requestLog.ClientResponse.Headers = respHeaders
+	requestLog.ClientResponse.Body = ""
+	requestLog.ClientResponse.DelayMs = &delayMs
+	requestLog.ClientResponse.RTTMs = &rttMs
+
+	h.requestLogger.LogRequest(requestLog)
+
+	if h.logRequestMatching {
+		log.Printf("[CORS] Logged CORS preflight: endpoint=%s response=%s status=%d", endpointID, responseID, status)
+	}
 }
 
 // shouldApplyCORS determines if CORS headers should be applied to a response

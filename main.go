@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -14,6 +15,9 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"mockelot/config"
 )
+
+// Command-line flags
+var logRequestMatching = flag.Bool("log-request-matching", false, "Enable verbose logging for request matching (logs to mockelot-matching.log)")
 
 //go:embed all:frontend/dist
 var assets embed.FS
@@ -60,11 +64,19 @@ func initLogging() error {
 }
 
 func main() {
+	// Parse command-line flags
+	flag.Parse()
+
 	// Initialize logging first
 	if err := initLogging(); err != nil {
 		// If logging fails, write error to known location and stderr
 		config.WriteStartupError(fmt.Errorf("logging initialization failed: %w", err))
 		os.Exit(1)
+	}
+
+	// Log if request matching debug is enabled
+	if *logRequestMatching {
+		log.Println("Request matching debug logging enabled (logs to mockelot-matching.log)")
 	}
 	defer func() {
 		if logFile != nil {
@@ -85,7 +97,7 @@ func main() {
 	}()
 
 	// Create an instance of the app structure
-	app := NewApp()
+	app := NewApp(*logRequestMatching)
 	log.Println("App instance created")
 
 	// Create application with options
