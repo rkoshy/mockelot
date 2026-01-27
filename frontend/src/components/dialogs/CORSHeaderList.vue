@@ -35,6 +35,7 @@ if (props.initialHeaders && props.initialHeaders.length > 0) {
     { name: 'Access-Control-Allow-Methods', expression: '"GET, POST, PUT, DELETE, OPTIONS, PATCH"', valid: true, error: '' },
     { name: 'Access-Control-Allow-Headers', expression: '"Content-Type, Authorization"', valid: true, error: '' },
     { name: 'Access-Control-Max-Age', expression: '"3600"', valid: true, error: '' },
+    { name: 'Content-Length', expression: '"0"', valid: true, error: '' },
   ]
 }
 
