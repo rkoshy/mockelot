@@ -1,0 +1,31 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    configure)
+        # Make AppImage executable
+        chmod +x /opt/mockelot/bin/mockelot-*.AppImage
+
+        # Create version-agnostic symlink
+        cd /opt/mockelot/bin
+        ln -sf mockelot-*.AppImage mockelot.AppImage
+
+        # Create command-line symlink
+        ln -sf /opt/mockelot/bin/mockelot.AppImage /usr/bin/mockelot
+
+        # Update desktop database
+        if command -v update-desktop-database > /dev/null 2>&1; then
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+        fi
+
+        # Update icon cache
+        if command -v gtk-update-icon-cache > /dev/null 2>&1; then
+            gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
+        fi
+
+        echo "✓ Mockelot has been installed successfully."
+        echo "  Run from applications menu or type 'mockelot' in terminal."
+        ;;
+esac
+
+exit 0

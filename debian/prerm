@@ -1,0 +1,12 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    remove|upgrade|deconfigure)
+        # Remove symlinks
+        rm -f /usr/bin/mockelot
+        rm -f /opt/mockelot/bin/mockelot.AppImage
+        ;;
+esac
+
+exit 0

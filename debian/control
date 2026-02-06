@@ -1,0 +1,16 @@
+Package: mockelot
+Version: ${VERSION}
+Architecture: amd64
+Maintainer: Renny Koshy <renny@scorussolutions.com>
+Depends: libfuse2
+Description: HTTP Mock Server for Testing
+ Mockelot is a powerful HTTP mock server with support for:
+  - Mock endpoints with static, template, and script responses
+  - Proxy endpoints with transformation capabilities
+  - Container endpoints for running Docker/Podman containers
+  - SOCKS5 proxy for browser-based testing
+  - OpenAPI/Swagger import
+  - HTTPS with automatic certificate generation
+Homepage: https://github.com/rkoshy/mockelot
+Section: devel
+Priority: optional
