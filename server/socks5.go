@@ -27,7 +27,9 @@ const (
 	authMethodNoAcceptable = 0xFF
 
 	// Commands
-	cmdConnect = 0x01
+	cmdConnect      = 0x01
+	cmdBind         = 0x02
+	cmdUDPAssociate = 0x03
 
 	// Address types
 	atypIPv4   = 0x01
@@ -54,6 +56,8 @@ type SOCKS5Server struct {
 	tlsInterceptor  *TLSInterceptor             // TLS interception for HTTPS connections
 	domainTakeover  *models.DomainTakeoverConfig // Domain takeover config for intercept decisions
 	requestLogger   RequestLogger                // For logging SOCKS5 requests (observational)
+	udpRelay        *UDPRelay                    // UDP relay for DNS over SOCKS5
+	dnsResolver     *DNSResolver                 // DNS resolver for overrides
 	ctx             context.Context
 	cancel          context.CancelFunc
 	wg              sync.WaitGroup
@@ -67,8 +71,9 @@ type SOCKS5Server struct {
 //   - handler: ResponseHandler for processing intercepted requests
 //   - certCache: Certificate cache for TLS interception (nil disables TLS interception)
 //   - domainTakeover: Domain takeover config to determine which domains to intercept
+//   - dnsResolver: DNS resolver for UDP ASSOCIATE DNS queries
 //   - logger: RequestLogger for logging SOCKS5 requests (observational only)
-func NewSOCKS5Server(config *models.SOCKS5Config, handler *ResponseHandler, certCache *CertCache, domainTakeover *models.DomainTakeoverConfig, logger RequestLogger) *SOCKS5Server {
+func NewSOCKS5Server(config *models.SOCKS5Config, handler *ResponseHandler, certCache *CertCache, domainTakeover *models.DomainTakeoverConfig, dnsResolver *DNSResolver, logger RequestLogger) *SOCKS5Server {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var tlsInterceptor *TLSInterceptor
@@ -77,12 +82,28 @@ func NewSOCKS5Server(config *models.SOCKS5Config, handler *ResponseHandler, cert
 		log.Println("SOCKS5 TLS interception enabled")
 	}
 
+	// Initialize UDP relay for DNS over SOCKS5
+	var udpRelay *UDPRelay
+	if dnsResolver != nil {
+		relay, err := NewUDPRelay(dnsResolver)
+		if err != nil {
+			log.Printf("Warning: Failed to create UDP relay: %v", err)
+		} else {
+			udpRelay = relay
+			log.Printf("SOCKS5 UDP ASSOCIATE enabled for DNS on port %d", relay.GetAddress().Port)
+		}
+	} else {
+		log.Printf("Warning: DNS resolver is nil, UDP ASSOCIATE will not be available")
+	}
+
 	return &SOCKS5Server{
 		config:          config,
 		responseHandler: handler,
 		tlsInterceptor:  tlsInterceptor,
 		domainTakeover:  domainTakeover,
 		requestLogger:   logger,
+		udpRelay:        udpRelay,
+		dnsResolver:     dnsResolver,
 		ctx:             ctx,
 		cancel:          cancel,
 	}
@@ -106,6 +127,11 @@ func (s *SOCKS5Server) Start() error {
 	s.listener = listener
 	s.running = true
 	s.mu.Unlock()
+
+	// Start UDP relay if available
+	if s.udpRelay != nil {
+		s.udpRelay.Start()
+	}
 
 	log.Printf("SOCKS5 server listening on %s", addr)
 
@@ -143,6 +169,11 @@ func (s *SOCKS5Server) Stop() error {
 	log.Println("Stopping SOCKS5 server...")
 	s.cancel()
 
+	// Stop UDP relay if running
+	if s.udpRelay != nil {
+		s.udpRelay.Stop()
+	}
+
 	if s.listener != nil {
 		s.listener.Close()
 	}
@@ -162,6 +193,18 @@ func (s *SOCKS5Server) Stop() error {
 	}
 
 	return nil
+}
+
+// GetUDPRelay returns the UDP relay instance
+func (s *SOCKS5Server) GetUDPRelay() *UDPRelay {
+	return s.udpRelay
+}
+
+// UpdateDomainTakeover updates the domain takeover configuration
+func (s *SOCKS5Server) UpdateDomainTakeover(domainTakeover *models.DomainTakeoverConfig) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.domainTakeover = domainTakeover
 }
 
 // handleConnection processes a single SOCKS5 connection
@@ -195,6 +238,23 @@ func (s *SOCKS5Server) handleConnection(conn net.Conn) {
 
 	// Reset read deadline after handshake
 	conn.SetReadDeadline(time.Time{})
+
+	// Check if this is a UDP ASSOCIATE request
+	if targetAddr == "udp-associate" {
+		// Keep the TCP connection alive as a control channel
+		// It will be closed when the client disconnects
+		log.Printf("SOCKS5 UDP ASSOCIATE control channel established (relay port: %d)", targetPort)
+
+		// Read from connection until closed (control channel)
+		buf := make([]byte, 1)
+		for {
+			if _, err := conn.Read(buf); err != nil {
+				log.Printf("SOCKS5 UDP ASSOCIATE control channel closed")
+				break
+			}
+		}
+		return
+	}
 
 	log.Printf("SOCKS5 connection established to %s:%d", targetAddr, targetPort)
 
@@ -353,6 +413,11 @@ func (s *SOCKS5Server) handleRequest(conn net.Conn) (string, uint16, error) {
 		return "", 0, fmt.Errorf("invalid version: %d", version)
 	}
 
+	// Handle UDP ASSOCIATE command
+	if cmd == cmdUDPAssociate {
+		return s.handleUDPAssociate(conn, atyp, buf[3:])
+	}
+
 	if cmd != cmdConnect {
 		s.sendReply(conn, replyCommandNotSupported)
 		return "", 0, fmt.Errorf("unsupported command: %d", cmd)
@@ -409,6 +474,53 @@ func (s *SOCKS5Server) handleRequest(conn net.Conn) (string, uint16, error) {
 	}
 
 	return dstAddr, dstPort, nil
+}
+
+// handleUDPAssociate handles UDP ASSOCIATE requests for DNS over SOCKS5
+func (s *SOCKS5Server) handleUDPAssociate(conn net.Conn, atyp byte, header []byte) (string, uint16, error) {
+	// UDP ASSOCIATE is used for DNS queries through SOCKS5
+	// We need to provide a UDP relay address for the client to send UDP packets to
+
+	if s.udpRelay == nil {
+		s.sendReply(conn, replyCommandNotSupported)
+		return "", 0, fmt.Errorf("UDP ASSOCIATE not supported (UDP relay not initialized)")
+	}
+
+	// The client sends the address it will use as source for UDP packets
+	// We don't really need to parse it for our use case
+	// We just need to send back our UDP relay address
+
+	// Get UDP relay address
+	relayAddr := s.udpRelay.GetAddress()
+
+	// Send successful reply with UDP relay address
+	reply := []byte{
+		socks5Version,
+		replySuccess,
+		0x00, // RSV
+		atypIPv4,
+	}
+
+	// Add IP address (use 0.0.0.0 to indicate same host)
+	reply = append(reply, 0, 0, 0, 0)
+
+	// Add port
+	portBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(portBytes, uint16(relayAddr.Port))
+	reply = append(reply, portBytes...)
+
+	if _, err := conn.Write(reply); err != nil {
+		return "", 0, fmt.Errorf("failed to send UDP ASSOCIATE reply: %w", err)
+	}
+
+	log.Printf("SOCKS5 UDP ASSOCIATE established - relay on port %d", relayAddr.Port)
+
+	// Keep the TCP connection open (it's used as a control channel)
+	// The connection will be closed when the client disconnects
+	// We'll handle this in handleConnection
+
+	// Return special marker to indicate UDP ASSOCIATE mode
+	return "udp-associate", uint16(relayAddr.Port), nil
 }
 
 // sendReply sends a SOCKS5 reply message
@@ -557,8 +669,38 @@ func (s *SOCKS5Server) handleInterceptedHTTPS(conn net.Conn, targetAddr string, 
 // handlePassthrough connects to the real server and forwards raw bytes
 // Used for domains NOT in the takeover list (Option A - pass-through mode)
 func (s *SOCKS5Server) handlePassthrough(conn net.Conn, targetAddr string, targetPort uint16) {
+	// Resolve domain if needed (using our DNS resolver for override support)
+	var resolvedAddr string
+	if net.ParseIP(targetAddr) != nil {
+		// Already an IP address
+		resolvedAddr = targetAddr
+	} else {
+		// It's a domain, resolve it
+		if s.dnsResolver != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			ips, err := s.dnsResolver.Resolve(ctx, targetAddr)
+			if err != nil {
+				log.Printf("SOCKS5 pass-through: DNS resolution failed for %s: %v", targetAddr, err)
+				return
+			}
+			if len(ips) == 0 {
+				log.Printf("SOCKS5 pass-through: No IPs found for %s", targetAddr)
+				return
+			}
+			resolvedAddr = ips[0]
+			if resolvedAddr != targetAddr {
+				log.Printf("SOCKS5 pass-through: Resolved %s to %s", targetAddr, resolvedAddr)
+			}
+		} else {
+			// Fallback to system resolver
+			resolvedAddr = targetAddr
+		}
+	}
+
 	// Connect to the real destination
-	destAddr := fmt.Sprintf("%s:%d", targetAddr, targetPort)
+	destAddr := fmt.Sprintf("%s:%d", resolvedAddr, targetPort)
 	destConn, err := net.DialTimeout("tcp", destAddr, 30*time.Second)
 	if err != nil {
 		log.Printf("SOCKS5 pass-through: failed to connect to %s: %v", destAddr, err)

@@ -711,6 +711,16 @@
           </div>
         </div>
       </CollapsibleSection>
+
+      <!-- DNS Section -->
+      <CollapsibleSection title="DNS Resolution" :defaultOpen="false">
+        <DNSSection
+          :config="localSettings.dnsOverrides"
+          :providers="dnsProviders"
+          @update:config="updateDNSConfig"
+          @change="handleChange"
+        />
+      </CollapsibleSection>
     </div>
 
     <!-- Locked Footer with SAVE Button -->
@@ -756,7 +766,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useServerStore } from '../../../stores/server'
 import CollapsibleSection from '../../shared/CollapsibleSection.vue'
 import ComboBox from '../../shared/ComboBox.vue'
@@ -764,8 +774,10 @@ import StyledSelect from '../../shared/StyledSelect.vue'
 import ConfirmDialog from '../../dialogs/ConfirmDialog.vue'
 import CORSHeaderList from '../../dialogs/CORSHeaderList.vue'
 import CORSScript from '../../dialogs/CORSScript.vue'
-import { UpdateServerSettings, GetCACertInfo, RegenerateCA, DownloadCACert, InstallCACertSystem, SelectCertFile, GetDefaultCertNames } from '../../../../wailsjs/go/main/App'
+import DNSSection from './DNSSection.vue'
+import { UpdateServerSettings, GetCACertInfo, RegenerateCA, DownloadCACert, InstallCACertSystem, SelectCertFile, GetDefaultCertNames, GetDNSProviders, GetDNSOverrides, UpdateDNSOverrides } from '../../../../wailsjs/go/main/App'
 import { models } from '../../../../wailsjs/go/models'
+import { v4 as uuidv4 } from 'uuid'
 
 const serverStore = useServerStore()
 
@@ -817,6 +829,19 @@ const localSettings = ref({
     username: '',
     password: '',
   },
+  dnsOverrides: {
+    enabled: false,
+    overrides: [] as Array<{
+      id: string
+      pattern: string
+      type: 'static' | 'cname'
+      target: string
+      priority: number
+      enabled: boolean
+    }>,
+    upstreamServers: [] as string[],
+    useSystemDNS: true,
+  },
 })
 
 // Domain takeover state (part of SOCKS5)
@@ -826,6 +851,9 @@ const domains = ref<Array<{
   overlayMode: boolean
   enabled: boolean
 }>>([])
+
+// DNS state
+const dnsProviders = ref<Record<string, models.DNSProvider>>({})
 
 // Saved state (last saved or loaded from config)
 const savedSettings = ref(JSON.parse(JSON.stringify(localSettings.value)))
@@ -875,6 +903,17 @@ const hostsFileEntries = computed(() => {
     .map(d => `127.0.0.1 ${d.pattern}`)
     .join('\n')
 })
+
+
+// Load DNS providers
+async function loadDNSProviders() {
+  try {
+    const providers = await GetDNSProviders()
+    dnsProviders.value = providers || {}
+  } catch (error) {
+    console.error('Failed to load DNS providers:', error)
+  }
+}
 
 // Load CA info
 async function loadCAInfo() {
@@ -1029,6 +1068,12 @@ function handleCORSScriptUpdate(script: string) {
   handleChange()
 }
 
+// DNS config update
+function updateDNSConfig(newConfig: typeof localSettings.value.dnsOverrides) {
+  localSettings.value.dnsOverrides = newConfig
+  handleChange()
+}
+
 // SOCKS5 domain management
 function addDomain() {
   const newId = 'domain-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9)
@@ -1062,13 +1107,17 @@ async function copyHostsEntries() {
 }
 
 // Initialize from store config
-onMounted(() => {
+onMounted(async () => {
   loadCAInfo()
   loadDefaultCertNames()
+  await loadDNSProviders()
   if (serverStore.config) {
     loadFromConfig(serverStore.config)
   }
+
 })
+
+
 
 // Watch store config changes
 watch(() => serverStore.config, (newConfig) => {
@@ -1107,6 +1156,42 @@ function loadFromConfig(config: models.AppConfig) {
       username: config.socks5_config?.username || '',
       password: config.socks5_config?.password || '',
     },
+    dnsOverrides: {
+      enabled: config.dns_overrides?.enabled || false,
+      overrides: config.dns_overrides?.overrides?.map((o: any) => ({
+        id: o.id || uuidv4(),
+        pattern: o.pattern || '',
+        type: (o.type || 'static') as 'static' | 'cname',
+        target: o.target || '',
+        priority: o.priority ?? 0,
+        enabled: o.enabled ?? true
+      })) || [],
+      upstreamServers: config.dns_overrides?.upstream_servers || [],
+      useSystemDNS: config.dns_overrides?.use_system_dns ?? true,
+    },
+  }
+
+  // Load DNS provider selection
+  if (config.dns_overrides?.use_system_dns) {
+    selectedDNSProvider.value = 'system'
+    customDNSServers.value = ''
+  } else if (config.dns_overrides?.upstream_servers && config.dns_overrides.upstream_servers.length > 0) {
+    // Check if these match a known provider
+    const serversStr = config.dns_overrides.upstream_servers.join(',')
+    let foundProvider = false
+
+    for (const [key, provider] of Object.entries(dnsProviders.value)) {
+      if (provider.servers.join(',') === serversStr) {
+        selectedDNSProvider.value = key
+        foundProvider = true
+        break
+      }
+    }
+
+    if (!foundProvider) {
+      selectedDNSProvider.value = 'custom'
+      customDNSServers.value = config.dns_overrides.upstream_servers.join('\n')
+    }
   }
 
   // Load domain takeover
@@ -1184,6 +1269,23 @@ async function handleSave() {
 
     // Call backend to update settings
     await UpdateServerSettings(settings)
+
+    // Save DNS configuration
+    const dnsConfig = new models.DNSOverrideConfig({
+      enabled: true, // DNS is always enabled now
+      overrides: localSettings.value.dnsOverrides.overrides.map(o => new models.DNSOverride({
+        id: o.id,
+        pattern: o.pattern,
+        type: o.type,
+        target: o.target,
+        priority: o.priority,
+        enabled: o.enabled
+      })),
+      upstream_servers: localSettings.value.dnsOverrides.upstreamServers,
+      use_system_dns: localSettings.value.dnsOverrides.useSystemDNS
+    })
+
+    await UpdateDNSOverrides(dnsConfig)
 
     // Mark dirty in store
     serverStore.markDirty()

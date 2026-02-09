@@ -20,6 +20,7 @@ type OverlayHandler struct {
 	cacheMutex    sync.RWMutex
 	cacheExpiry   time.Duration
 	proxyHandler  *ProxyHandler
+	dnsResolver   *DNSResolver // DNS resolver with override support
 }
 
 // dnsCacheEntry represents a cached DNS lookup result
@@ -29,11 +30,12 @@ type dnsCacheEntry struct {
 }
 
 // NewOverlayHandler creates a new overlay mode handler
-func NewOverlayHandler(proxyHandler *ProxyHandler) *OverlayHandler {
+func NewOverlayHandler(proxyHandler *ProxyHandler, dnsResolver *DNSResolver) *OverlayHandler {
 	return &OverlayHandler{
 		dnsCache:     make(map[string]*dnsCacheEntry),
 		cacheExpiry:  5 * time.Minute, // 5 minute cache expiry
 		proxyHandler: proxyHandler,
+		dnsResolver:  dnsResolver,
 	}
 }
 
@@ -132,13 +134,26 @@ func (h *OverlayHandler) resolveRealIP(domain string) (string, error) {
 	}
 	h.cacheMutex.RUnlock()
 
-	// Perform DNS lookup
+	// Perform DNS lookup with override support
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	ips, err := net.DefaultResolver.LookupHost(ctx, domain)
-	if err != nil {
-		return "", fmt.Errorf("DNS lookup failed: %w", err)
+	var ips []string
+	var err error
+
+	// Use DNS resolver if available, otherwise fall back to system resolver
+	if h.dnsResolver != nil {
+		ips, err = h.dnsResolver.Resolve(ctx, domain)
+		if err != nil {
+			return "", fmt.Errorf("DNS lookup failed: %w", err)
+		}
+		log.Printf("[Overlay] DNS resolved %s to %v (with overrides)", domain, ips)
+	} else {
+		ips, err = net.DefaultResolver.LookupHost(ctx, domain)
+		if err != nil {
+			return "", fmt.Errorf("DNS lookup failed: %w", err)
+		}
+		log.Printf("[Overlay] DNS resolved %s to %v (system resolver)", domain, ips)
 	}
 
 	if len(ips) == 0 {

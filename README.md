@@ -131,6 +131,26 @@ Browser → SOCKS5 Proxy (localhost:1080) → Mockelot → Smart Routing
 
 See the **[SOCKS5 Guide](docs/SOCKS5-GUIDE.md)** for complete setup and usage.
 
+### DNS Resolution Control
+
+Take full control of DNS resolution with pattern-based overrides and custom upstream servers:
+
+**Key Features:**
+- **DNS Override Rules** - Redirect domains to specific IPs using regex patterns
+- **CNAME Support** - Create domain aliases
+- **Custom DNS Servers** - Choose from presets (Google, Cloudflare) or specify custom
+- **Independent of Mocking** - Override DNS without domain takeover
+- **SOCKS5h Support** - Works with browser remote DNS
+- **UDP ASSOCIATE** - True DNS-over-SOCKS5 for specialized tools
+
+**Use Cases:**
+- Redirect production domains to localhost for testing
+- Point domains to staging/development servers
+- Create domain aliases without touching DNS servers
+- Block domains by resolving to 0.0.0.0
+
+See the **[DNS Guide](docs/DNS-GUIDE.md)** for configuration and examples.
+
 ## Installation
 
 ### Download Binary
@@ -234,6 +254,7 @@ Comprehensive guides for all features:
 - **[Proxy Endpoint Guide](docs/PROXY-GUIDE.md)** - Reverse proxy configuration, header manipulation, and body transformation
 - **[Container Endpoint Guide](docs/CONTAINER-GUIDE.md)** - Docker/Podman container management and configuration
 - **[SOCKS5 Proxy Guide](docs/SOCKS5-GUIDE.md)** - SOCKS5 proxy setup, domain-based routing, and overlay mode
+- **[DNS Resolution Guide](docs/DNS-GUIDE.md)** - DNS overrides, custom upstream servers, and SOCKS5h/UDP ASSOCIATE support
 - **[OpenAPI Import Guide](docs/OPENAPI_IMPORT.md)** - Import OpenAPI/Swagger specifications to generate mock endpoints
 
 ## Configuration

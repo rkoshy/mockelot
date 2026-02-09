@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	goruntime "runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -2552,6 +2553,11 @@ func (a *App) GetRequestLogs() []models.RequestLogSummary {
 			summaries[i].BackendStatus = log.BackendResponse.StatusCode
 			summaries[i].BackendRTT = log.BackendResponse.RTTMs
 		}
+		// Add SOCKS5 info if present
+		if log.SOCKS5Info != nil {
+			summaries[i].TargetHost = log.SOCKS5Info.TargetHost
+			summaries[i].TargetPort = log.SOCKS5Info.TargetPort
+		}
 	}
 	return summaries
 }
@@ -3011,6 +3017,126 @@ func (a *App) GetSOCKS5Config() SOCKS5ConfigResponse {
 	}
 }
 
+// GetSOCKS5Domains returns aggregated information about all domains accessed via SOCKS5
+func (a *App) GetSOCKS5Domains() []models.SOCKS5DomainInfo {
+	a.logMutex.RLock()
+	defer a.logMutex.RUnlock()
+
+	domainMap := make(map[string]*models.SOCKS5DomainInfo)
+
+	// Get configured domains from takeover config
+	configuredDomains := make(map[string]bool)
+	if a.config.DomainTakeover != nil {
+		for _, dc := range a.config.DomainTakeover.Domains {
+			if dc.Enabled {
+				// Store the pattern for regex matching later
+				configuredDomains[dc.Pattern] = true
+			}
+		}
+	}
+
+	// Aggregate from request logs
+	for _, log := range a.requestLogs {
+		// Only process SOCKS5 proxy endpoint logs
+		if log.EndpointID == "system-socks5-proxy" && log.SOCKS5Info != nil {
+			domain := log.SOCKS5Info.TargetHost
+			if domain == "" {
+				continue
+			}
+
+			if info, exists := domainMap[domain]; exists {
+				info.RequestCount++
+				info.LastSeen = log.Timestamp
+				if log.SOCKS5Info.IsIntercepted {
+					info.IsIntercepted = true
+				}
+			} else {
+				domainMap[domain] = &models.SOCKS5DomainInfo{
+					Domain:        domain,
+					RequestCount:  1,
+					FirstSeen:     log.Timestamp,
+					LastSeen:      log.Timestamp,
+					IsConfigured:  a.isDomainConfigured(domain, configuredDomains),
+					IsIntercepted: log.SOCKS5Info.IsIntercepted,
+				}
+			}
+		}
+	}
+
+	// Convert to slice
+	domains := make([]models.SOCKS5DomainInfo, 0, len(domainMap))
+	for _, info := range domainMap {
+		domains = append(domains, *info)
+	}
+
+	// Sort by last seen (most recent first)
+	sort.Slice(domains, func(i, j int) bool {
+		return domains[i].LastSeen > domains[j].LastSeen
+	})
+
+	return domains
+}
+
+// isDomainConfigured checks if a domain matches any configured pattern
+func (a *App) isDomainConfigured(domain string, configuredPatterns map[string]bool) bool {
+	for pattern := range configuredPatterns {
+		// Try to compile and match the regex pattern
+		if re, err := regexp.Compile(pattern); err == nil {
+			if re.MatchString(domain) {
+				return true
+			}
+		}
+		// Also check for exact match (in case pattern is not regex)
+		if pattern == domain {
+			return true
+		}
+	}
+	return false
+}
+
+// AddDomainToSOCKS5Takeover adds a domain to the SOCKS5 takeover configuration
+func (a *App) AddDomainToSOCKS5Takeover(domain string, enableOverlay bool) error {
+	a.configMutex.Lock()
+	defer a.configMutex.Unlock()
+
+	// Initialize if needed
+	if a.config.DomainTakeover == nil {
+		a.config.DomainTakeover = &models.DomainTakeoverConfig{
+			Domains: []models.DomainConfig{},
+		}
+	}
+
+	// Check if already exists
+	for _, dc := range a.config.DomainTakeover.Domains {
+		if dc.Pattern == domain {
+			return fmt.Errorf("domain already configured")
+		}
+	}
+
+	// Add new domain
+	newDomain := models.DomainConfig{
+		ID:          uuid.New().String(),
+		Pattern:     domain,
+		OverlayMode: enableOverlay,
+		Enabled:     true,
+	}
+
+	a.config.DomainTakeover.Domains = append(a.config.DomainTakeover.Domains, newDomain)
+
+	// Mark config as dirty (user can save manually if they want)
+	runtime.EventsEmit(a.ctx, "config:dirty", true)
+
+	// Update server configuration if running
+	if a.server != nil {
+		// UpdateDomainTakeover also updates the SOCKS5 server internally
+		a.server.UpdateDomainTakeover(a.config.DomainTakeover)
+		// Ensure overlay endpoints are created if needed
+		a.ensureDomainTakeoverEndpoints()
+	}
+
+	return nil
+}
+
 // ValidateCORSHeaderExpression validates a CORS header expression for syntax errors
 func (a *App) ValidateCORSHeaderExpression(expression string) error {
 	return server.ValidateHeaderExpression(expression)
@@ -3043,6 +3169,12 @@ func (a *App) LogRequest(log models.RequestLog) {
 	if log.BackendResponse != nil {
 		summary.BackendStatus = log.BackendResponse.StatusCode
 		summary.BackendRTT = log.BackendResponse.RTTMs
+	}
+
+	// Add SOCKS5 info if present
+	if log.SOCKS5Info != nil {
+		summary.TargetHost = log.SOCKS5Info.TargetHost
+		summary.TargetPort = log.SOCKS5Info.TargetPort
 	}
 
 	// Set pending status
@@ -3098,6 +3230,12 @@ func (a *App) UpdateRequestLog(log models.RequestLog) {
 	if log.BackendResponse != nil {
 		summary.BackendStatus = log.BackendResponse.StatusCode
 		summary.BackendRTT = log.BackendResponse.RTTMs
+	}
+
+	// Add SOCKS5 info if present
+	if log.SOCKS5Info != nil {
+		summary.TargetHost = log.SOCKS5Info.TargetHost
+		summary.TargetPort = log.SOCKS5Info.TargetPort
 	}
 
 	// Queue updated summary
@@ -3502,4 +3640,57 @@ func userConfigToAppConfig(userCfg *models.UserConfig, serverCfg *models.AppConf
 	}
 
 	return appCfg
+}
+
+// GetDNSOverrides returns the current DNS override configuration
+func (a *App) GetDNSOverrides() *models.DNSOverrideConfig {
+	a.configMutex.RLock()
+	defer a.configMutex.RUnlock()
+
+	if a.config.DNSOverrides == nil {
+		return &models.DNSOverrideConfig{
+			Enabled:      false,
+			Overrides:    []models.DNSOverride{},
+			UseSystemDNS: true,
+		}
+	}
+
+	return a.config.DNSOverrides
+}
+
+// UpdateDNSOverrides updates the DNS override configuration
+func (a *App) UpdateDNSOverrides(dnsOverrides *models.DNSOverrideConfig) error {
+	a.configMutex.Lock()
+	defer a.configMutex.Unlock()
+
+	// Update configuration
+	a.config.DNSOverrides = dnsOverrides
+
+	// Update the server if running
+	if a.server != nil {
+		a.server.UpdateConfig(a.config)
+
+		// Also update the SOCKS5 server's UDP relay if it exists
+		socks5Server := a.server.GetSOCKS5Server()
+		if socks5Server != nil && socks5Server.GetUDPRelay() != nil {
+			// Update upstream servers in UDP relay
+			upstreamServers := dnsOverrides.UpstreamServers
+			if dnsOverrides.UseSystemDNS || len(upstreamServers) == 0 {
+				upstreamServers = server.GetSystemDNSServers()
+			}
+			socks5Server.GetUDPRelay().UpdateUpstreamServers(upstreamServers)
+		}
+	}
+
+	// Mark config as dirty
+	runtime.EventsEmit(a.ctx, "config:dirty", true)
+
+	log.Printf("[App] Updated DNS overrides with %d rules and %d upstream servers",
+		len(dnsOverrides.Overrides), len(dnsOverrides.UpstreamServers))
+	return nil
+}
+
+// GetDNSProviders returns all available DNS provider presets
+func (a *App) GetDNSProviders() map[string]models.DNSProvider {
+	return server.GetDNSProviders()
 }

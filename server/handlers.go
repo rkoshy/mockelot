@@ -46,8 +46,8 @@ type ResponseHandler struct {
 	logRequestMatching bool                      // Enable verbose request matching logs
 }
 
-func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptErrorLogger ScriptErrorLogger, proxyHandler *ProxyHandler, containerHandler *ContainerHandler, logRequestMatching bool) *ResponseHandler {
-	overlayHandler := NewOverlayHandler(proxyHandler)
+func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptErrorLogger ScriptErrorLogger, proxyHandler *ProxyHandler, containerHandler *ContainerHandler, logRequestMatching bool, dnsResolver *DNSResolver) *ResponseHandler {
+	overlayHandler := NewOverlayHandler(proxyHandler, dnsResolver)
 	return &ResponseHandler{
 		config:             config,
 		requestLogger:      logger,
