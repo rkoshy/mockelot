@@ -9,6 +9,7 @@ import ConfirmDialog from '../dialogs/ConfirmDialog.vue'
 import ContainerConsoleDialog from '../dialogs/ContainerConsoleDialog.vue'
 import TrafficLogPanel from '../traffic/TrafficLogPanel.vue'
 import ServerTab from './tabs/ServerTab.vue'
+import SOCKS5DomainsPanel from '../socks5/SOCKS5DomainsPanel.vue'
 import { models } from '../../types/models'
 import { StartContainer, StopContainer, DeleteContainer } from '../../../wailsjs/go/main/App'
 
@@ -791,17 +792,22 @@ onUnmounted(() => {
           serverStore.currentEndpoint?.name === 'Rejections' ? 'bg-red-950/20' : ''
         ]"
       >
-        <!-- Mock Endpoint: Rules List -->
-        <div v-if="serverStore.currentEndpoint?.type === 'mock'" class="flex-1 overflow-y-auto p-3 space-y-2" @dragend="onDragEnd">
-      <!-- Empty State -->
-      <div v-if="!serverStore.items || serverStore.items.length === 0" class="flex items-center justify-center h-32">
-        <div class="text-center text-gray-500">
-          <p class="text-sm">No response rules configured</p>
-          <p class="text-xs mt-1">Click "+ Response" or "+ Group" to get started</p>
-        </div>
-      </div>
+        <!-- Mock Endpoint: Rules List or SOCKS5 Domains -->
+        <div v-if="serverStore.currentEndpoint?.type === 'mock'" class="flex-1 overflow-y-auto">
+          <!-- Special handling for SOCKS5 Proxy endpoint -->
+          <SOCKS5DomainsPanel v-if="serverStore.currentEndpoint.id === 'system-socks5-proxy'" />
 
-      <!-- Items (Responses and Groups) -->
+          <!-- Regular mock endpoints -->
+          <div v-else class="p-3 space-y-2" @dragend="onDragEnd">
+            <!-- Empty State -->
+            <div v-if="!serverStore.items || serverStore.items.length === 0" class="flex items-center justify-center h-32">
+              <div class="text-center text-gray-500">
+                <p class="text-sm">No response rules configured</p>
+                <p class="text-xs mt-1">Click "+ Response" or "+ Group" to get started</p>
+              </div>
+            </div>
+
+            <!-- Items (Responses and Groups) -->
       <div
         v-for="(item, index) in serverStore.items"
         :key="getItemId(item)"
@@ -837,6 +843,7 @@ onUnmounted(() => {
           @drop="onDrop(index, $event)"
         />
       </div>
+          </div>
         </div>
 
         <!-- Proxy/Container Endpoint: Status View -->

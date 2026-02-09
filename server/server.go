@@ -33,6 +33,7 @@ type HTTPServer struct {
 	startupCtx         context.Context    // Context for container startup
 	startupCancel      context.CancelFunc // Cancel function for startup
 	logRequestMatching bool               // Enable verbose request matching logs
+	dnsResolver        *DNSResolver       // DNS resolver with override support
 }
 
 func NewHTTPServer(config *models.AppConfig, requestLogger RequestLogger, scriptErrorLogger ScriptErrorLogger, eventSender EventSender, containerHandler *ContainerHandler, proxyHandler *ProxyHandler, logRequestMatching bool) *HTTPServer {
@@ -42,6 +43,20 @@ func NewHTTPServer(config *models.AppConfig, requestLogger RequestLogger, script
 	}
 
 	// Proxy handler is passed in (shared with container handler)
+
+	// Initialize DNS resolver (always create for SOCKS5 DNS support)
+	var dnsResolver *DNSResolver
+	if config.DNSOverrides != nil {
+		dnsResolver = NewDNSResolver(config.DNSOverrides)
+		log.Printf("DNS resolver initialized with %d overrides", len(config.DNSOverrides.Overrides))
+	} else {
+		// Create with empty config for DNS passthrough (needed for SOCKS5 UDP ASSOCIATE)
+		dnsResolver = NewDNSResolver(&models.DNSOverrideConfig{
+			Enabled:      false,
+			UseSystemDNS: true,
+		})
+		log.Printf("DNS resolver initialized for SOCKS5 DNS passthrough")
+	}
 
 	return &HTTPServer{
 		config:             config,
@@ -53,6 +68,7 @@ func NewHTTPServer(config *models.AppConfig, requestLogger RequestLogger, script
 		proxyHandler:       proxyHandler,
 		containerHandler:   containerHandler,
 		logRequestMatching: logRequestMatching,
+		dnsResolver:        dnsResolver,
 	}
 }
 
@@ -73,7 +89,7 @@ func (s *HTTPServer) StartHTTP() error {
 		handler = HTTPSRedirectHandler(httpsPort)
 	} else {
 		// Use normal response handler
-		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching)
+		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver)
 		handler = http.HandlerFunc(responseHandler.HandleRequest)
 	}
 
@@ -212,7 +228,7 @@ func (s *HTTPServer) StartHTTPS() error {
 	}
 
 	// Create response handler
-	responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching)
+	responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver)
 
 	// Create HTTPS server
 	s.httpsServer = &http.Server{
@@ -296,7 +312,7 @@ func (s *HTTPServer) Start() error {
 	s.configMutex.RUnlock()
 
 	if socks5Config != nil && socks5Config.Enabled {
-		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching)
+		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver)
 
 		// Initialize certificate cache for TLS interception if HTTPS is enabled
 		// This allows SOCKS5 to intercept HTTPS connections for domains in the takeover list
@@ -321,7 +337,7 @@ func (s *HTTPServer) Start() error {
 			}
 		}
 
-		s.socks5Server = NewSOCKS5Server(socks5Config, responseHandler, s.certCache, domainTakeover, s.requestLogger)
+		s.socks5Server = NewSOCKS5Server(socks5Config, responseHandler, s.certCache, domainTakeover, s.dnsResolver, s.requestLogger)
 		go func() {
 			if err := s.socks5Server.Start(); err != nil {
 				log.Printf("Failed to start SOCKS5 server: %v", err)
@@ -545,6 +561,47 @@ func (s *HTTPServer) UpdateConfig(newConfig *models.AppConfig) {
 	s.configMutex.Lock()
 	defer s.configMutex.Unlock()
 	s.config = newConfig
+
+	// Update DNS resolver configuration
+	if s.dnsResolver != nil {
+		if newConfig.DNSOverrides != nil {
+			s.dnsResolver.UpdateConfig(newConfig.DNSOverrides)
+			log.Printf("[Server] Updated DNS resolver with %d overrides", len(newConfig.DNSOverrides.Overrides))
+		} else {
+			// Update to empty config for passthrough
+			s.dnsResolver.UpdateConfig(&models.DNSOverrideConfig{
+				Enabled:      false,
+				UseSystemDNS: true,
+			})
+			log.Printf("[Server] Updated DNS resolver for passthrough mode")
+		}
+	} else {
+		// Create DNS resolver if it doesn't exist (shouldn't happen but safety check)
+		if newConfig.DNSOverrides != nil {
+			s.dnsResolver = NewDNSResolver(newConfig.DNSOverrides)
+			log.Printf("[Server] Created DNS resolver with %d overrides", len(newConfig.DNSOverrides.Overrides))
+		} else {
+			s.dnsResolver = NewDNSResolver(&models.DNSOverrideConfig{
+				Enabled:      false,
+				UseSystemDNS: true,
+			})
+			log.Printf("[Server] Created DNS resolver for passthrough mode")
+		}
+	}
+}
+
+// UpdateDomainTakeover updates the domain takeover configuration for the SOCKS5 server
+func (s *HTTPServer) UpdateDomainTakeover(domainTakeover *models.DomainTakeoverConfig) {
+	s.configMutex.Lock()
+	defer s.configMutex.Unlock()
+
+	// Update the config
+	s.config.DomainTakeover = domainTakeover
+
+	// Update the SOCKS5 server if it exists
+	if s.socks5Server != nil {
+		s.socks5Server.UpdateDomainTakeover(domainTakeover)
+	}
 }
 
 // GetProxyHealthStatus returns the health status for a proxy endpoint
@@ -611,6 +668,11 @@ func (s *HTTPServer) StopSingleContainer(ctx context.Context, endpoint *models.E
 	}
 
 	return nil
+}
+
+// GetSOCKS5Server returns the SOCKS5 server instance
+func (s *HTTPServer) GetSOCKS5Server() *SOCKS5Server {
+	return s.socks5Server
 }
 
 // RestartContainer restarts a container endpoint

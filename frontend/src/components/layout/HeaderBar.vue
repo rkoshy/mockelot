@@ -4,7 +4,6 @@ import { useServerStore } from '../../stores/server'
 import { SaveCurrentConfig, SaveConfig, LoadConfig, StartContainers, PollEvents } from '../../../wailsjs/go/main/App'
 import { models } from '../../../wailsjs/go/models'
 import ConfirmDialog from '../dialogs/ConfirmDialog.vue'
-import ServerConfigDialog from '../dialogs/ServerConfigDialog.vue'
 import ContainerProgressDialog from '../dialogs/ContainerProgressDialog.vue'
 import LoadEndpointsDialog from '../dialogs/LoadEndpointsDialog.vue'
 import { EventsOn } from '../../../wailsjs/runtime/runtime'
@@ -23,9 +22,6 @@ const portInput = ref(8080)
 const isLoading = ref(false)
 const errorMessage = ref('')
 const showLoadDialog = ref(false)
-const showServerConfigDialog = ref(false)
-const serverConfigDialogTab = ref<'http' | 'https'>('http')
-const serverConfigDialogRef = ref<InstanceType<typeof ServerConfigDialog> | null>(null)
 
 // Container progress dialog state
 const showProgressDialog = ref(false)
@@ -358,23 +354,6 @@ async function handleLoadDialogLoaded() {
 function handleLoadDialogClose() {
   showLoadDialog.value = false
 }
-
-function openServerConfig(tab: 'http' | 'https' = 'http') {
-  serverConfigDialogTab.value = tab
-  showServerConfigDialog.value = true
-}
-
-// DEPRECATED: Server config dialog replaced with Server tab in main panel
-// This function is no longer called (gear icon removed)
-async function handleServerConfigApply() {
-  showServerConfigDialog.value = false
-  // Server settings are now managed through the Server tab
-  // which uses UpdateServerSettings() instead of individual SetXXX() functions
-}
-
-function handleServerConfigClose() {
-  showServerConfigDialog.value = false
-}
 </script>
 
 <template>
@@ -510,15 +489,6 @@ function handleServerConfigClose() {
       cancel-text="Cancel"
       @primary="() => serverStore.respondToUnsavedChanges(true)"
       @cancel="() => serverStore.respondToUnsavedChanges(false)"
-    />
-
-    <!-- Server Configuration Dialog -->
-    <ServerConfigDialog
-      ref="serverConfigDialogRef"
-      :show="showServerConfigDialog"
-      :initial-tab="serverConfigDialogTab"
-      @close="handleServerConfigClose"
-      @apply="handleServerConfigApply"
     />
 
     <!-- Container Progress Dialog -->

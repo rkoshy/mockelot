@@ -397,6 +397,16 @@ type SOCKS5RequestInfo struct {
 	IsIntercepted bool   `json:"is_intercepted"`           // true if domain was in takeover list and intercepted
 }
 
+// SOCKS5DomainInfo contains aggregated information about a domain accessed via SOCKS5
+type SOCKS5DomainInfo struct {
+	Domain        string `json:"domain"`         // Domain name
+	RequestCount  int    `json:"request_count"`  // Number of requests to this domain
+	FirstSeen     string `json:"first_seen"`     // ISO8601/RFC3339 timestamp of first request
+	LastSeen      string `json:"last_seen"`      // ISO8601/RFC3339 timestamp of most recent request
+	IsConfigured  bool   `json:"is_configured"`  // Whether domain is already in takeover list
+	IsIntercepted bool   `json:"is_intercepted"` // Whether any request was intercepted by an endpoint
+}
+
 // UserConfig stores all configuration (server settings + user content) in a single file
 type UserConfig struct {
 	// User Content
@@ -479,6 +489,7 @@ type AppConfig struct {
 	// SOCKS5 Proxy Configuration
 	SOCKS5Config     *SOCKS5Config           `json:"socks5_config,omitempty" yaml:"socks5_config,omitempty"`           // SOCKS5 proxy server settings
 	DomainTakeover   *DomainTakeoverConfig   `json:"domain_takeover,omitempty" yaml:"domain_takeover,omitempty"`       // Domain interception configuration
+	DNSOverrides     *DNSOverrideConfig      `json:"dns_overrides,omitempty" yaml:"dns_overrides,omitempty"`           // DNS override configuration
 
 	// Container Configuration
 	ContainerLogLineLimit int `json:"container_log_line_limit,omitempty" yaml:"container_log_line_limit,omitempty"` // Max number of log lines to retrieve (default 5000)
@@ -627,6 +638,32 @@ type DockerImageInfo struct {
 }
 
 // RecentFile represents a recently opened/saved configuration file
+// DNS override configuration
+type DNSOverrideConfig struct {
+	Enabled         bool            `json:"enabled" yaml:"enabled"`
+	Overrides       []DNSOverride   `json:"overrides" yaml:"overrides"`
+	UpstreamServers []string        `json:"upstream_servers,omitempty" yaml:"upstream_servers,omitempty"` // List of upstream DNS servers (IP addresses)
+	UseSystemDNS    bool            `json:"use_system_dns" yaml:"use_system_dns"`                         // Use system's DNS servers if no upstream specified
+}
+
+// Individual DNS override rule
+type DNSOverride struct {
+	ID       string `json:"id" yaml:"id"`
+	Pattern  string `json:"pattern" yaml:"pattern"`   // Regex pattern for domain matching
+	Type     string `json:"type" yaml:"type"`         // "static" or "cname"
+	Target   string `json:"target" yaml:"target"`     // IP address or domain
+	Enabled  bool   `json:"enabled" yaml:"enabled"`
+	Priority int    `json:"priority" yaml:"priority"` // Lower number = higher priority
+}
+
+// DNSProvider represents a DNS provider preset
+type DNSProvider struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Servers     []string `json:"servers"`
+	IsSystem    bool     `json:"is_system"`
+}
+
 type RecentFile struct {
 	Path         string    `json:"path"`           // Absolute path to the file
 	LastAccessed time.Time `json:"last_accessed"`  // Last time file was opened or saved
