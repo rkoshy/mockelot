@@ -743,6 +743,9 @@ func (a *App) AddEndpoint(name string, pathPrefix string, translationMode string
 		a.config.Endpoints = append(a.config.Endpoints, endpoint)
 	}
 
+	// Resort endpoints by DisplayOrder to ensure processing priority matches UI order
+	a.sortEndpoints()
+
 	// If server is running, update it
 	if a.server != nil {
 		a.server.UpdateConfig(a.config)
@@ -908,6 +911,9 @@ func (a *App) AddEndpointWithConfig(config map[string]interface{}) (models.Endpo
 		// No system endpoints, append at end
 		a.config.Endpoints = append(a.config.Endpoints, endpoint)
 	}
+
+	// Resort endpoints by DisplayOrder to ensure processing priority matches UI order
+	a.sortEndpoints()
 
 	log.Printf("Created endpoint with full config: ID=%s, Name=%s, Type=%s", endpoint.ID, endpoint.Name, endpoint.Type)
 
@@ -1094,6 +1100,9 @@ func (a *App) ensureDomainTakeoverEndpoints() {
 	if rejectionsEndpoint != nil {
 		a.config.Endpoints = append(a.config.Endpoints, *rejectionsEndpoint)
 	}
+
+	// Resort endpoints by DisplayOrder to ensure processing priority matches UI order
+	a.sortEndpoints()
 }
 
 // sanitizeForID converts a domain pattern to a safe ID string
@@ -1198,6 +1207,14 @@ func (a *App) ensureDisplayOrder() {
 	}
 }
 
+// sortEndpoints sorts the endpoints slice by DisplayOrder
+// This ensures that the order in the slice (used by ResponseHandler) matches the visual order in the UI
+func (a *App) sortEndpoints() {
+	sort.SliceStable(a.config.Endpoints, func(i, j int) bool {
+		return a.config.Endpoints[i].DisplayOrder < a.config.Endpoints[j].DisplayOrder
+	})
+}
+
 // UpdateEndpoint updates an existing endpoint
 func (a *App) UpdateEndpoint(endpoint models.Endpoint) error {
 	for i := range a.config.Endpoints {
@@ -1224,6 +1241,9 @@ func (a *App) UpdateEndpoint(endpoint models.Endpoint) error {
 		}
 	}
 
+	// Resort endpoints by DisplayOrder to ensure processing priority matches UI order
+	a.sortEndpoints()
+
 	// If server is running, update it
 	if a.server != nil {
 		a.server.UpdateConfig(a.config)
@@ -1248,6 +1268,9 @@ func (a *App) DeleteEndpoint(id string) error {
 			break
 		}
 	}
+
+	// Resort endpoints by DisplayOrder to maintain invariant
+	a.sortEndpoints()
 
 	// If server is running, update it
 	if a.server != nil {
