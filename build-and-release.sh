@@ -6,9 +6,10 @@ set -euo pipefail
 # Example: ./build-and-release.sh v0.3.1
 #
 # This script uses Laminar CI for multi-platform builds:
-#   - mockelot-linux-build   : Builds locally on Linux
-#   - mockelot-windows-build : Cross-compiles from Linux (Go cross-compilation)
-#   - mockelot-macos-build   : Builds remotely on macOS (10.100.102.102)
+#   - mockelot-linux-build    : Linux amd64 binary (Docker)
+#   - mockelot-appimage-build : AppImages + .deb packages for Debian 12/13 (Docker)
+#   - mockelot-macos-build    : macOS universal binary (remote SSH)
+#   - mockelot-windows-build  : Windows amd64 binary (Docker cross-compile)
 #
 # Prerequisites:
 #   - Laminar CI running (http://localhost:9000)
@@ -75,15 +76,18 @@ fi
 # Step 1: Trigger multi-platform builds
 log_info "Triggering multi-platform builds..."
 echo "  - Linux (amd64)"
+echo "  - Linux AppImages + .deb (Debian 12 & 13)"
 echo "  - macOS (universal)"
 echo "  - Windows (amd64)"
 echo ""
 
-# Use laminarc run to build all platforms in parallel and wait for completion
-# We run each build job and wait for all to complete
 log_info "Starting Linux build..."
 laminarc run mockelot-linux-build &
 LINUX_PID=$!
+
+log_info "Starting AppImage build..."
+laminarc run mockelot-appimage-build &
+APPIMAGE_PID=$!
 
 log_info "Starting macOS build..."
 laminarc run mockelot-macos-build &
@@ -99,6 +103,7 @@ log_info "Waiting for all builds to complete..."
 FAILED=0
 
 wait $LINUX_PID || { log_error "Linux build failed!"; FAILED=1; }
+wait $APPIMAGE_PID || { log_error "AppImage build failed!"; FAILED=1; }
 wait $MACOS_PID || { log_error "macOS build failed!"; FAILED=1; }
 wait $WINDOWS_PID || { log_error "Windows build failed!"; FAILED=1; }
 
@@ -116,13 +121,7 @@ LINUX_ARTIFACT="${DIST_DIR}/linux/mockelot-linux-amd64.tar.gz"
 MACOS_ARTIFACT="${DIST_DIR}/macos/mockelot-darwin-universal.zip"
 WINDOWS_ARTIFACT="${DIST_DIR}/windows/mockelot-windows-amd64.zip"
 
-# Generate checksums for Linux artifact
-log_info "Generating checksums..."
-cd "${DIST_DIR}/linux"
-sha256sum mockelot-linux-amd64.tar.gz > checksums.txt
-cd "$SCRIPT_DIR"
-
-# Verify all artifacts exist
+# Required artifacts
 for artifact in "$LINUX_ARTIFACT" "$MACOS_ARTIFACT" "$WINDOWS_ARTIFACT"; do
     if [ ! -f "$artifact" ]; then
         log_error "Missing artifact: $artifact"
@@ -130,9 +129,32 @@ for artifact in "$LINUX_ARTIFACT" "$MACOS_ARTIFACT" "$WINDOWS_ARTIFACT"; do
     fi
 done
 
+# Collect AppImage and .deb artifacts (version in filename uses git describe without v prefix)
+VER_NO_V="${VERSION#v}"
+RELEASE_ARTIFACTS=("$LINUX_ARTIFACT" "$MACOS_ARTIFACT" "$WINDOWS_ARTIFACT")
+
+# Look for AppImage artifacts in dist/linux
+for f in "${DIST_DIR}"/linux/*.AppImage; do
+    [ -f "$f" ] && RELEASE_ARTIFACTS+=("$f")
+done
+
+# Look for .deb artifacts in dist/linux
+for f in "${DIST_DIR}"/linux/*.deb; do
+    [ -f "$f" ] && RELEASE_ARTIFACTS+=("$f")
+done
+
+# Generate checksums
+log_info "Generating checksums..."
+cd "${DIST_DIR}/linux"
+sha256sum *.tar.gz *.AppImage *.deb 2>/dev/null > checksums.txt || true
+cd "$SCRIPT_DIR"
+
 log_success "All artifacts verified!"
 echo ""
-ls -lh "$LINUX_ARTIFACT" "$MACOS_ARTIFACT" "$WINDOWS_ARTIFACT"
+echo "Release artifacts:"
+for artifact in "${RELEASE_ARTIFACTS[@]}"; do
+    ls -lh "$artifact"
+done
 echo ""
 
 # Step 3: Generate release notes if not provided
@@ -176,12 +198,10 @@ git push origin "$VERSION"
 
 log_success "Tag ${VERSION} pushed to origin!"
 
-# Step 6: Create GitHub release with artifacts
+# Step 6: Create GitHub release with all artifacts
 log_info "Creating GitHub release..."
 gh release create "$VERSION" \
-    "$LINUX_ARTIFACT" \
-    "$MACOS_ARTIFACT" \
-    "$WINDOWS_ARTIFACT" \
+    "${RELEASE_ARTIFACTS[@]}" \
     --title "$VERSION" \
     --notes "## Changes
 
