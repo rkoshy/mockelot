@@ -116,10 +116,9 @@ LINUX_ARTIFACT="${DIST_DIR}/linux/mockelot-linux-amd64.tar.gz"
 MACOS_ARTIFACT="${DIST_DIR}/macos/mockelot-darwin-universal.zip"
 WINDOWS_ARTIFACT="${DIST_DIR}/windows/mockelot-windows-amd64.zip"
 
-# Recreate Linux tarball from fresh binary
-log_info "Creating fresh Linux tarball..."
+# Generate checksums for Linux artifact
+log_info "Generating checksums..."
 cd "${DIST_DIR}/linux"
-tar -czf mockelot-linux-amd64.tar.gz -C . mockelot
 sha256sum mockelot-linux-amd64.tar.gz > checksums.txt
 cd "$SCRIPT_DIR"
 
