@@ -113,6 +113,8 @@ else
     fi
 
     docker run --rm \
+        --user "$(id -u):$(id -g)" \
+        -e HOME=/tmp \
         -v "$(pwd):/build" \
         -w /build \
         "$TAG" \

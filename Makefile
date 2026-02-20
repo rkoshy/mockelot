@@ -62,7 +62,9 @@ appimage-debian12:
 	@echo "Using shared Docker image: $(APPIMAGE_BUILDER_D12)"
 	@mkdir -p releases
 	@docker run --rm --privileged \
+		--user "$$(id -u):$$(id -g)" \
 		-e VERSION=$(VERSION) \
+		-e HOME=/tmp \
 		-v "$(PWD):/workspace" \
 		-w /workspace \
 		$(APPIMAGE_BUILDER_D12) \
@@ -75,7 +77,9 @@ appimage-debian13:
 	@echo "Using shared Docker image: $(APPIMAGE_BUILDER_D13)"
 	@mkdir -p releases
 	@docker run --rm --privileged \
+		--user "$$(id -u):$$(id -g)" \
 		-e VERSION=$(VERSION) \
+		-e HOME=/tmp \
 		-v "$(PWD):/workspace" \
 		-w /workspace \
 		$(APPIMAGE_BUILDER_D13) \
@@ -105,6 +109,8 @@ deb: appimage-debian12
 deb-docker: appimage-debian12
 	@echo "Building Debian package in Docker..."
 	@docker run --rm \
+		--user "$$(id -u):$$(id -g)" \
+		-e HOME=/tmp \
 		-v "$(PWD):/workspace" \
 		-w /workspace \
 		$(APPIMAGE_BUILDER_D12) \
