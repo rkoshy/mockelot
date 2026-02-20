@@ -230,6 +230,10 @@ export function RemoveRecentFile(arg1) {
   return window['go']['main']['App']['RemoveRecentFile'](arg1);
 }
 
+export function ReorderEndpoints(arg1) {
+  return window['go']['main']['App']['ReorderEndpoints'](arg1);
+}
+
 export function ReorderResponses(arg1) {
   return window['go']['main']['App']['ReorderResponses'](arg1);
 }

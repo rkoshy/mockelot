@@ -117,6 +117,8 @@ export function RegenerateCA():Promise<void>;
 
 export function RemoveRecentFile(arg1:string):Promise<void>;
 
+export function ReorderEndpoints(arg1:Array<string>):Promise<void>;
+
 export function ReorderResponses(arg1:Array<string>):Promise<void>;
 
 export function RestartContainer(arg1:string):Promise<void>;

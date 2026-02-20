@@ -724,24 +724,10 @@ func (a *App) AddEndpoint(name string, pathPrefix string, translationMode string
 		}
 	}
 
-	// Insert endpoint before system endpoints (like Rejections)
-	// Find the index of the first system endpoint
-	insertIndex := len(a.config.Endpoints)
-	for i, ep := range a.config.Endpoints {
-		if ep.IsSystem {
-			insertIndex = i
-			break
-		}
-	}
+	// Set DisplayOrder to max non-system + 1 so new endpoints appear at the end
+	endpoint.DisplayOrder = a.nextDisplayOrder()
 
-	// Insert at the found index
-	if insertIndex < len(a.config.Endpoints) {
-		// Insert before system endpoints
-		a.config.Endpoints = append(a.config.Endpoints[:insertIndex], append([]models.Endpoint{endpoint}, a.config.Endpoints[insertIndex:]...)...)
-	} else {
-		// No system endpoints, append at end
-		a.config.Endpoints = append(a.config.Endpoints, endpoint)
-	}
+	a.config.Endpoints = append(a.config.Endpoints, endpoint)
 
 	// Resort endpoints by DisplayOrder to ensure processing priority matches UI order
 	a.sortEndpoints()
@@ -893,24 +879,10 @@ func (a *App) AddEndpointWithConfig(config map[string]interface{}) (models.Endpo
 		}
 	}
 
-	// Insert endpoint before system endpoints (like Rejections)
-	// Find the index of the first system endpoint
-	insertIndex := len(a.config.Endpoints)
-	for i, ep := range a.config.Endpoints {
-		if ep.IsSystem {
-			insertIndex = i
-			break
-		}
-	}
+	// Set DisplayOrder to max non-system + 1 so new endpoints appear at the end
+	endpoint.DisplayOrder = a.nextDisplayOrder()
 
-	// Insert at the found index
-	if insertIndex < len(a.config.Endpoints) {
-		// Insert before system endpoints
-		a.config.Endpoints = append(a.config.Endpoints[:insertIndex], append([]models.Endpoint{endpoint}, a.config.Endpoints[insertIndex:]...)...)
-	} else {
-		// No system endpoints, append at end
-		a.config.Endpoints = append(a.config.Endpoints, endpoint)
-	}
+	a.config.Endpoints = append(a.config.Endpoints, endpoint)
 
 	// Resort endpoints by DisplayOrder to ensure processing priority matches UI order
 	a.sortEndpoints()
@@ -1215,6 +1187,17 @@ func (a *App) sortEndpoints() {
 	})
 }
 
+// nextDisplayOrder returns the next available DisplayOrder for non-system endpoints
+func (a *App) nextDisplayOrder() int {
+	maxOrder := -1
+	for _, ep := range a.config.Endpoints {
+		if !ep.IsSystem && ep.DisplayOrder > maxOrder {
+			maxOrder = ep.DisplayOrder
+		}
+	}
+	return maxOrder + 1
+}
+
 // UpdateEndpoint updates an existing endpoint
 func (a *App) UpdateEndpoint(endpoint models.Endpoint) error {
 	for i := range a.config.Endpoints {
@@ -1250,6 +1233,56 @@ func (a *App) UpdateEndpoint(endpoint models.Endpoint) error {
 	}
 
 	// Emit event to frontend
+	runtime.EventsEmit(a.ctx, "endpoints:updated", a.config.Endpoints)
+	runtime.EventsEmit(a.ctx, "config:dirty", true)
+
+	return nil
+}
+
+// ReorderEndpoints reorders non-system endpoints based on the provided ordered list of IDs.
+// System endpoints retain their high DisplayOrder values.
+func (a *App) ReorderEndpoints(ids []string) error {
+	// Build a set of provided IDs for validation
+	idSet := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		idSet[id] = true
+	}
+
+	// Validate: all provided IDs must correspond to existing non-system endpoints
+	for _, id := range ids {
+		found := false
+		for _, ep := range a.config.Endpoints {
+			if ep.ID == id {
+				if ep.IsSystem {
+					return fmt.Errorf("cannot reorder system endpoint %s", id)
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("endpoint %s not found", id)
+		}
+	}
+
+	// Assign DisplayOrder based on position in the provided list
+	for order, id := range ids {
+		for i := range a.config.Endpoints {
+			if a.config.Endpoints[i].ID == id {
+				a.config.Endpoints[i].DisplayOrder = order
+				break
+			}
+		}
+	}
+
+	a.sortEndpoints()
+
+	// If server is running, update it
+	if a.server != nil {
+		a.server.UpdateConfig(a.config)
+	}
+
+	// Emit events
 	runtime.EventsEmit(a.ctx, "endpoints:updated", a.config.Endpoints)
 	runtime.EventsEmit(a.ctx, "config:dirty", true)
 

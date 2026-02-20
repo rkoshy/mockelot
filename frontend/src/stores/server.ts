@@ -32,7 +32,8 @@ import {
   RestartContainer,
   GetContainerStatus,
   GetRequestLogDetails,
-  PollRequestLogs
+  PollRequestLogs,
+  ReorderEndpoints
 } from '../../wailsjs/go/main/App'
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 
@@ -447,6 +448,31 @@ export const useServerStore = defineStore('server', () => {
     }
   }
 
+  async function reorderEndpointTabs(fromIndex: number, toIndex: number) {
+    // Work on non-system endpoints only
+    const nonSystem = endpoints.value.filter(ep => !ep.is_system)
+    if (fromIndex < 0 || fromIndex >= nonSystem.length || toIndex < 0 || toIndex >= nonSystem.length) {
+      return
+    }
+
+    // Reorder locally
+    const reordered = [...nonSystem]
+    const [moved] = reordered.splice(fromIndex, 1)
+    reordered.splice(toIndex, 0, moved)
+
+    // Extract IDs in new order
+    const ids = reordered.map(ep => ep.id)
+
+    try {
+      await ReorderEndpoints(ids)
+      // Backend emits endpoints:updated which refreshes the store
+    } catch (error) {
+      console.error('Failed to reorder endpoints:', error)
+      // Refresh to restore correct state
+      await refreshEndpoints()
+    }
+  }
+
   // HTTPS Actions
   async function loadCAInfo() {
     try {
@@ -846,6 +872,7 @@ export const useServerStore = defineStore('server', () => {
     addNewEndpointWithConfig,
     updateEndpointById,
     deleteEndpointById,
+    reorderEndpointTabs,
     // HTTPS Actions
     loadCAInfo,
     regenerateCA,

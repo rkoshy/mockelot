@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, inject, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, inject, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { useServerStore } from '../../stores/server'
 import ResponseRuleCard from './ResponseRuleCard.vue'
 import ResponseGroupCard from './ResponseGroupCard.vue'
@@ -15,24 +15,11 @@ import { StartContainer, StopContainer, DeleteContainer } from '../../../wailsjs
 
 const serverStore = useServerStore()
 
-// Sorted endpoints: mock first, then other user endpoints, then system endpoints
-// Each group sorted alphabetically by name
+// Sorted endpoints by DisplayOrder (matches backend processing priority)
 const sortedEndpoints = computed(() => {
-  const endpoints = [...serverStore.endpoints]
-  return endpoints.sort((a, b) => {
-    // System endpoints always last
-    if (a.is_system && !b.is_system) return 1
-    if (!a.is_system && b.is_system) return -1
-
-    // Mock endpoints first (among non-system)
-    if (!a.is_system && !b.is_system) {
-      if (a.type === 'mock' && b.type !== 'mock') return -1
-      if (a.type !== 'mock' && b.type === 'mock') return 1
-    }
-
-    // Within same category, sort alphabetically by name
-    return (a.name || '').localeCompare(b.name || '')
-  })
+  return [...serverStore.endpoints].sort((a, b) =>
+    (a.display_order ?? 0) - (b.display_order ?? 0)
+  )
 })
 
 // Track selected tab (server vs endpoint)
@@ -76,6 +63,35 @@ const importError = ref<string>('')
 const endpointToDelete = ref<string>('')
 const consoleEndpointId = ref<string>('')
 const consoleEndpointName = ref<string>('')
+
+// Tab scroll state
+const tabScrollContainer = ref<HTMLElement | null>(null)
+const canScrollLeft = ref(false)
+const canScrollRight = ref(false)
+let resizeObserver: ResizeObserver | null = null
+
+function updateScrollButtons() {
+  const el = tabScrollContainer.value
+  if (!el) return
+  canScrollLeft.value = el.scrollLeft > 0
+  canScrollRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+}
+
+function scrollTabs(direction: 'left' | 'right') {
+  const el = tabScrollContainer.value
+  if (!el) return
+  const amount = 200
+  el.scrollBy({ left: direction === 'left' ? -amount : amount, behavior: 'smooth' })
+}
+
+function onTabWheel(event: WheelEvent) {
+  const el = tabScrollContainer.value
+  if (!el) return
+  if (event.deltaY !== 0) {
+    event.preventDefault()
+    el.scrollLeft += event.deltaY
+  }
+}
 
 // Drag and drop state
 const draggedIndex = ref<number | null>(null)
@@ -133,6 +149,57 @@ function onDrop(index: number, event: DragEvent) {
 function onDragEnd() {
   draggedIndex.value = null
   dragOverIndex.value = null
+}
+
+// Tab drag and drop state (for reordering endpoint tabs)
+const tabDraggedIndex = ref<number | null>(null)
+const tabDragOverIndex = ref<number | null>(null)
+
+function onTabDragStart(index: number, endpoint: models.Endpoint, event: DragEvent) {
+  if (endpoint.is_system) {
+    event.preventDefault()
+    return
+  }
+  tabDraggedIndex.value = index
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', String(index))
+  }
+}
+
+function onTabDragOver(index: number, endpoint: models.Endpoint, event: DragEvent) {
+  if (endpoint.is_system) return
+  event.preventDefault()
+  tabDragOverIndex.value = index
+}
+
+function onTabDrop(index: number, endpoint: models.Endpoint, event: DragEvent) {
+  event.preventDefault()
+  if (endpoint.is_system || tabDraggedIndex.value === null || tabDraggedIndex.value === index) {
+    tabDraggedIndex.value = null
+    tabDragOverIndex.value = null
+    return
+  }
+
+  // Convert sorted visual indices to non-system indices for the store
+  const nonSystem = sortedEndpoints.value.filter(ep => !ep.is_system)
+  const fromEp = sortedEndpoints.value[tabDraggedIndex.value]
+  const toEp = sortedEndpoints.value[index]
+
+  const fromNsIndex = nonSystem.findIndex(ep => ep.id === fromEp?.id)
+  const toNsIndex = nonSystem.findIndex(ep => ep.id === toEp?.id)
+
+  if (fromNsIndex >= 0 && toNsIndex >= 0) {
+    serverStore.reorderEndpointTabs(fromNsIndex, toNsIndex)
+  }
+
+  tabDraggedIndex.value = null
+  tabDragOverIndex.value = null
+}
+
+function onTabDragEnd() {
+  tabDraggedIndex.value = null
+  tabDragOverIndex.value = null
 }
 
 function selectEndpoint(id: string) {
@@ -525,8 +592,22 @@ function handleCancelImport() {
   showImportDialog.value = false
 }
 
+// Watch sorted endpoints to update scroll buttons when tabs change
+watch(sortedEndpoints, () => {
+  nextTick(() => updateScrollButtons())
+})
+
 // Register for container progress events (for inline progress indicator)
 onMounted(() => {
+  // Set up tab scroll observer
+  const el = tabScrollContainer.value
+  if (el) {
+    el.addEventListener('scroll', updateScrollButtons)
+    resizeObserver = new ResizeObserver(updateScrollButtons)
+    resizeObserver.observe(el)
+    updateScrollButtons()
+  }
+
   if (registerEventListener) {
     unregisterProgressListener = registerEventListener('ctr:progress', (data: any) => {
       if (data.endpoint_id) {
@@ -549,11 +630,19 @@ onMounted(() => {
   }
 })
 
-// Unregister progress listener on unmount
+// Cleanup on unmount
 onUnmounted(() => {
   if (unregisterProgressListener) {
     unregisterProgressListener()
     unregisterProgressListener = null
+  }
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
+  const el = tabScrollContainer.value
+  if (el) {
+    el.removeEventListener('scroll', updateScrollButtons)
   }
 })
 </script>
@@ -562,26 +651,44 @@ onUnmounted(() => {
   <div class="h-full flex flex-col">
     <!-- Horizontal Tab Bar -->
     <div class="flex items-stretch border-b border-gray-700 flex-shrink-0 bg-gray-800">
-      <div class="flex-1 flex overflow-x-auto">
-        <!-- SERVER Tab (NEW) -->
-        <div
-          :class="[
-            'relative px-4 py-2 text-sm font-medium border-r border-gray-700 transition-colors flex items-center gap-1 min-w-[100px] cursor-pointer',
-            selectedTab === 'server'
-              ? 'bg-gray-900 text-white border-b-2 border-b-blue-500'
-              : 'text-gray-400 hover:text-gray-200 hover:bg-gray-750'
-          ]"
-          @click="selectedTab = 'server'"
-        >
-          <span class="font-semibold">Server</span>
-        </div>
+      <!-- SERVER Tab (fixed, outside scroll area) -->
+      <div
+        :class="[
+          'relative px-4 py-2 text-sm font-medium border-r border-gray-700 transition-colors flex items-center gap-1 min-w-[100px] cursor-pointer flex-shrink-0',
+          selectedTab === 'server'
+            ? 'bg-gray-900 text-white border-b-2 border-b-blue-500'
+            : 'text-gray-400 hover:text-gray-200 hover:bg-gray-750'
+        ]"
+        @click="selectedTab = 'server'"
+      >
+        <span class="font-semibold">Server</span>
+      </div>
 
+      <!-- Left scroll arrow -->
+      <button
+        v-show="canScrollLeft"
+        @click="scrollTabs('left')"
+        class="flex-shrink-0 w-7 flex items-center justify-center bg-gray-800/80 text-gray-400 hover:text-gray-200 hover:bg-gray-700 border-r border-gray-700 transition-colors"
+        title="Scroll tabs left"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+        </svg>
+      </button>
+
+      <!-- Scrollable tab container (endpoint tabs only) -->
+      <div ref="tabScrollContainer" class="flex-1 flex overflow-x-hidden" @wheel="onTabWheel">
         <!-- Endpoint Tabs -->
         <div
-          v-for="endpoint in sortedEndpoints"
+          v-for="(endpoint, tabIndex) in sortedEndpoints"
           :key="endpoint.id"
+          :draggable="!endpoint.is_system"
+          @dragstart="onTabDragStart(tabIndex, endpoint, $event)"
+          @dragover="onTabDragOver(tabIndex, endpoint, $event)"
+          @drop="onTabDrop(tabIndex, endpoint, $event)"
+          @dragend="onTabDragEnd"
           :class="[
-            'relative px-3 py-2 text-sm font-medium border-r border-gray-700 transition-colors flex flex-col items-start gap-1 min-w-[140px] group',
+            'relative px-3 py-2 text-sm font-medium border-r border-gray-700 transition-colors flex flex-col items-start gap-1 min-w-[140px] group flex-shrink-0',
             selectedTab === endpoint.id
               ? 'bg-gray-900 text-white border-b-2'
               : 'text-gray-400 hover:text-gray-200 hover:bg-gray-750',
@@ -592,7 +699,9 @@ onUnmounted(() => {
                 : '',
             endpoint.is_system
               ? 'cursor-default bg-gray-800/50 border-l-2 border-l-yellow-600'
-              : 'cursor-pointer'
+              : 'cursor-pointer',
+            tabDraggedIndex === tabIndex ? 'opacity-50' : '',
+            tabDragOverIndex === tabIndex && tabDraggedIndex !== tabIndex && !endpoint.is_system ? 'border-l-2 border-l-blue-500' : ''
           ]"
         >
           <!-- Invisible clickable overlay covering entire tab -->
@@ -694,17 +803,31 @@ onUnmounted(() => {
             </span>
           </div>
         </div>
-        <button
-          @click="showAddEndpointDialog = true"
-          class="px-4 py-3 text-sm font-medium text-blue-400 hover:text-blue-300 hover:bg-gray-750 whitespace-nowrap flex items-center gap-1 border-r border-gray-700"
-          title="Create a new endpoint"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-          </svg>
-          Endpoint
-        </button>
       </div>
+
+      <!-- Right scroll arrow -->
+      <button
+        v-show="canScrollRight"
+        @click="scrollTabs('right')"
+        class="flex-shrink-0 w-7 flex items-center justify-center bg-gray-800/80 text-gray-400 hover:text-gray-200 hover:bg-gray-700 border-l border-gray-700 transition-colors"
+        title="Scroll tabs right"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+        </svg>
+      </button>
+
+      <!-- + Endpoint button (always visible, outside scroll area) -->
+      <button
+        @click="showAddEndpointDialog = true"
+        class="flex-shrink-0 px-4 py-3 text-sm font-medium text-blue-400 hover:text-blue-300 hover:bg-gray-750 whitespace-nowrap flex items-center gap-1 border-l border-gray-700"
+        title="Create a new endpoint"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+        </svg>
+        Endpoint
+      </button>
     </div>
 
     <!-- Endpoint Controls (only for mock endpoints, not system endpoints) -->
