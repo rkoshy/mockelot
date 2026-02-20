@@ -122,8 +122,8 @@ fi
 
 cp mockelot-${VERSION}-x86_64.AppImage "/workspace/releases/${OUTPUT_FILE}"
 chmod 755 "/workspace/releases/${OUTPUT_FILE}"
-# Fix ownership to match the workspace owner (usually UID 1000)
-chown 1000:1000 "/workspace/releases/${OUTPUT_FILE}" 2>/dev/null || true
+# Fix ownership to match the host user
+chown ${HOST_UID:-1000}:${HOST_GID:-1000} "/workspace/releases/${OUTPUT_FILE}" 2>/dev/null || true
 
 # Build directory will be cleaned automatically when container exits
 echo "✓ AppImage created: /workspace/releases/${OUTPUT_FILE}"

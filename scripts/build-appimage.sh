@@ -21,6 +21,8 @@ mkdir -p releases
 
 docker run --rm --privileged \
     -e VERSION="${VERSION}" \
+    -e HOST_UID="${HOST_UID}" \
+    -e HOST_GID="${HOST_GID}" \
     -v "${PROJECT_DIR}:/workspace" \
     -w /workspace \
     "${IMAGE}" \

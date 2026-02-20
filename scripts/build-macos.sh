@@ -37,9 +37,9 @@ rsync -avz --delete \
 log_info "Building universal binary (arm64 + amd64)..."
 ssh "${REMOTE_USER}@${REMOTE_HOST}" "bash -lc 'cd ${REMOTE_BUILD_DIR} && \
     rm -rf build/bin/Mockelot*.app && \
-    ~/go/bin/wails build -platform darwin/arm64 && \
+    ~/go/bin/wails build -platform darwin/arm64 -ldflags \"-X main.version=${VERSION}\" && \
     mv build/bin/Mockelot.app build/bin/Mockelot-arm64.app && \
-    ~/go/bin/wails build -platform darwin/amd64 && \
+    ~/go/bin/wails build -platform darwin/amd64 -ldflags \"-X main.version=${VERSION}\" && \
     mv build/bin/Mockelot.app build/bin/Mockelot-amd64.app && \
     mkdir -p build/bin/Mockelot.app/Contents/MacOS && \
     lipo -create \

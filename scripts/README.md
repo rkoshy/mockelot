@@ -29,14 +29,10 @@ Developer runs directly:           Laminar dispatches:
   ./scripts/build-all.sh            mockelot-build-all.run → exec scripts/build-all.sh --laminar
 ```
 
-## Utility Scripts
+## Test Scripts
 
 | Script | Description |
 |--------|-------------|
-| `detect-platform.sh` | Detect current platform for build configuration |
-| `install-deps.sh` | Install build dependencies for local development |
-| `create-test-vm.sh` | Create a test VM |
-| `vm-setup.sh` | Set up VM environment |
 | `test-socks5.sh` | Test SOCKS5 proxy functionality |
 
 ## Output
