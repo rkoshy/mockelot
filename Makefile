@@ -62,13 +62,13 @@ appimage-debian12:
 	@echo "Using shared Docker image: $(APPIMAGE_BUILDER_D12)"
 	@mkdir -p releases
 	@docker run --rm --privileged \
-		--user "$$(id -u):$$(id -g)" \
 		-e VERSION=$(VERSION) \
-		-e HOME=/tmp \
+		-e HOST_UID=$$(id -u) \
+		-e HOST_GID=$$(id -g) \
 		-v "$(PWD):/workspace" \
 		-w /workspace \
 		$(APPIMAGE_BUILDER_D12) \
-		-c "chmod +x build-appimage-container.sh && ./build-appimage-container.sh debian12"
+		-c "chmod +x build-appimage-container.sh && ./build-appimage-container.sh debian12 && chown -R $$(id -u):$$(id -g) /workspace/releases /workspace/frontend/node_modules /workspace/frontend/dist /workspace/build 2>/dev/null || true"
 	@echo "✓ AppImage created: releases/mockelot-$(VERSION)-debian12-x86_64.AppImage"
 
 # Build AppImage for Debian 13 using temp build
@@ -77,13 +77,13 @@ appimage-debian13:
 	@echo "Using shared Docker image: $(APPIMAGE_BUILDER_D13)"
 	@mkdir -p releases
 	@docker run --rm --privileged \
-		--user "$$(id -u):$$(id -g)" \
 		-e VERSION=$(VERSION) \
-		-e HOME=/tmp \
+		-e HOST_UID=$$(id -u) \
+		-e HOST_GID=$$(id -g) \
 		-v "$(PWD):/workspace" \
 		-w /workspace \
 		$(APPIMAGE_BUILDER_D13) \
-		-c "chmod +x build-appimage-container.sh && ./build-appimage-container.sh debian13"
+		-c "chmod +x build-appimage-container.sh && ./build-appimage-container.sh debian13 && chown -R $$(id -u):$$(id -g) /workspace/releases /workspace/frontend/node_modules /workspace/frontend/dist /workspace/build 2>/dev/null || true"
 	@echo "✓ AppImage created: releases/mockelot-$(VERSION)-debian13-x86_64.AppImage"
 
 # Build both AppImage variants
@@ -109,12 +109,10 @@ deb: appimage-debian12
 deb-docker: appimage-debian12
 	@echo "Building Debian package in Docker..."
 	@docker run --rm \
-		--user "$$(id -u):$$(id -g)" \
-		-e HOME=/tmp \
 		-v "$(PWD):/workspace" \
 		-w /workspace \
 		$(APPIMAGE_BUILDER_D12) \
-		-c "chmod +x scripts/build-deb-package.sh && ./scripts/build-deb-package.sh $(VERSION)-debian12 releases/mockelot-$(VERSION)-debian12-x86_64.AppImage"
+		-c "chmod +x scripts/build-deb-package.sh && ./scripts/build-deb-package.sh $(VERSION)-debian12 releases/mockelot-$(VERSION)-debian12-x86_64.AppImage && chown -R $$(id -u):$$(id -g) /workspace/*.deb 2>/dev/null || true"
 
 # ============================================================================
 # Development

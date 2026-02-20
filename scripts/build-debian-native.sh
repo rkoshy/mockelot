@@ -113,12 +113,10 @@ else
     fi
 
     docker run --rm \
-        --user "$(id -u):$(id -g)" \
-        -e HOME=/tmp \
         -v "$(pwd):/build" \
         -w /build \
         "$TAG" \
-        bash -c "$BUILD_CMD && cp build/bin/mockelot build/bin/$OUTPUT_NAME"
+        bash -c "$BUILD_CMD && cp build/bin/mockelot build/bin/$OUTPUT_NAME && chown -R $(id -u):$(id -g) /build/build /build/frontend/node_modules /build/frontend/dist 2>/dev/null || true"
 
     echo ""
     echo "✓ Docker build complete: build/bin/$OUTPUT_NAME"

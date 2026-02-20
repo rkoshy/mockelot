@@ -16,7 +16,7 @@ fi
 
 # Run build inside Docker
 echo "Running build inside Docker container..." | tee -a "$BUILD_LOG"
-if ! docker run --rm --network=host --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$(pwd)":/build mockelot-debian13 /bin/bash -c "cd /build/frontend && npm install && cd .. && go mod tidy && wails build -platform linux/amd64" >> "$BUILD_LOG" 2>> "$ERROR_LOG"; then
+if ! docker run --rm --network=host -v "$(pwd)":/build mockelot-debian13 /bin/bash -c "cd /build/frontend && npm install && cd .. && go mod tidy && wails build -platform linux/amd64 && chown -R $(id -u):$(id -g) /build/build /build/frontend/node_modules /build/frontend/dist 2>/dev/null || true" >> "$BUILD_LOG" 2>> "$ERROR_LOG"; then
     echo "Build inside Docker container failed. Check $ERROR_LOG for details." >&2
     exit 1
 fi
