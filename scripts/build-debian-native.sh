@@ -9,13 +9,11 @@ DISTRO=${1:-debian12}
 
 case $DISTRO in
     debian12)
-        DOCKERFILE="Dockerfile.debian12"
-        TAG="mockelot-build:debian12"
+        DOCKER_IMAGE="scorussolutions/wails-appimage-builder-d12:latest"
         OUTPUT_NAME="mockelot-debian12"
         ;;
     debian13)
-        DOCKERFILE="Dockerfile.debian13"
-        TAG="mockelot-build:debian13"
+        DOCKER_IMAGE="scorussolutions/wails-appimage-builder-d13:latest"
         OUTPUT_NAME="mockelot-debian13"
         ;;
     *)
@@ -91,19 +89,14 @@ if [ "$CURRENT_PLATFORM" = "$DISTRO" ]; then
     echo "✓ Native build complete: build/bin/$OUTPUT_NAME"
 else
     echo "⚠ Current platform ($CURRENT_PLATFORM) differs from target ($DISTRO)"
-    echo "  Using Docker build for compatibility"
+    echo "  Using Docker build with ${DOCKER_IMAGE}"
     echo ""
 
-    # Build the Docker image
-    echo "Step 1: Building Docker image..."
-    docker build -f "$DOCKERFILE" -t "$TAG" .
+    HOST_UID=$(id -u)
+    HOST_GID=$(id -g)
 
     # Create output directory
     mkdir -p build/bin
-
-    # Run build in container
-    echo ""
-    echo "Step 2: Building application in container..."
 
     # Determine build tags for target distro
     BUILD_CMD="wails build -platform linux/amd64"
@@ -112,11 +105,20 @@ else
         BUILD_CMD="wails build -platform linux/amd64 -tags webkit2_41"
     fi
 
-    docker run --rm \
-        -v "$(pwd):/build" \
-        -w /build \
-        "$TAG" \
-        bash -c "$BUILD_CMD && cp build/bin/mockelot build/bin/$OUTPUT_NAME && chown -R $(id -u):$(id -g) /build/build /build/frontend/node_modules /build/frontend/dist 2>/dev/null || true"
+    echo "Building application in container (temp-dir-copy)..."
+    docker run --rm --privileged \
+        -v "$(pwd):/workspace" \
+        "${DOCKER_IMAGE}" \
+        -c "
+            set -e
+            cp -r /workspace /tmp/build
+            cd /tmp/build
+            rm -rf frontend/node_modules frontend/dist build/bin
+            ${BUILD_CMD}
+            mkdir -p /workspace/build/bin
+            cp /tmp/build/build/bin/mockelot /workspace/build/bin/${OUTPUT_NAME}
+            chown -R ${HOST_UID}:${HOST_GID} /workspace/build
+        "
 
     echo ""
     echo "✓ Docker build complete: build/bin/$OUTPUT_NAME"
