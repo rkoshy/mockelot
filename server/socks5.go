@@ -605,8 +605,44 @@ func (h *socks5ResponseHijacker) Header() http.Header { return h.header }
 func (h *socks5ResponseHijacker) Write(b []byte) (int, error) { return h.conn.Write(b) }
 func (h *socks5ResponseHijacker) WriteHeader(_ int)           {}
 func (h *socks5ResponseHijacker) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	brw := bufio.NewReadWriter(h.reader, bufio.NewWriter(h.conn))
+	// gorilla/websocket's Upgrader checks brw.Reader.Buffered() > 0 and closes the
+	// connection if any bytes are already buffered ("client sent data before handshake
+	// is complete"). Because h.reader is a bufio.Reader that read-ahead from the TLS
+	// stream (default 4 KiB buffer), it may contain bytes from the first WebSocket
+	// frame if the OS delivered it in the same TLS record as the HTTP upgrade headers.
+	//
+	// Fix: drain whatever is buffered, then present a fresh bufio.Reader that chains
+	// the drained bytes with the underlying connection, so gorilla sees 0 buffered bytes
+	// but doesn't lose any data.
+	var readSource io.Reader = h.conn
+	if n := h.reader.Buffered(); n > 0 {
+		buf := make([]byte, n)
+		h.reader.Read(buf) // reads exactly n bytes already in memory – no new I/O
+		readSource = io.MultiReader(bytes.NewReader(buf), h.conn)
+	}
+	brw := bufio.NewReadWriter(bufio.NewReaderSize(readSource, 4096), bufio.NewWriter(h.conn))
 	return h.conn, brw, nil
+}
+
+// forwardWSHeaders builds the header set to send with the backend WebSocket dial.
+// We forward headers that backends commonly need for auth and subprotocol selection
+// while excluding WebSocket handshake headers that gorilla generates itself.
+func forwardWSHeaders(req *http.Request) http.Header {
+	skip := map[string]bool{
+		"Upgrade":                  true,
+		"Connection":               true,
+		"Sec-Websocket-Key":        true,
+		"Sec-Websocket-Version":    true,
+		"Sec-Websocket-Extensions": true,
+	}
+	h := http.Header{}
+	for k, vals := range req.Header {
+		if skip[http.CanonicalHeaderKey(k)] {
+			continue
+		}
+		h[http.CanonicalHeaderKey(k)] = vals
+	}
+	return h
 }
 
 // makeWSEvent creates a WebSocketEvent from a gorilla message type + payload.
@@ -704,7 +740,9 @@ func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientRea
 	if req.URL.RawQuery != "" {
 		backendURL += "?" + req.URL.RawQuery
 	}
-	backendWS, _, err := websocket.DefaultDialer.Dial(backendURL, nil)
+	// Forward headers the backend may require for auth / subprotocol negotiation.
+	backendHeaders := forwardWSHeaders(req)
+	backendWS, _, err := websocket.DefaultDialer.Dial(backendURL, backendHeaders)
 	if err != nil {
 		log.Printf("SOCKS5 WS backend dial failed for %s: %v", backendURL, err)
 		clientWS.WriteMessage(websocket.CloseMessage,
@@ -798,7 +836,8 @@ func (s *SOCKS5Server) handlePlainWebSocket(clientConn net.Conn, clientReader *b
 	if req.URL.RawQuery != "" {
 		backendURL += "?" + req.URL.RawQuery
 	}
-	backendWS, _, err := websocket.DefaultDialer.Dial(backendURL, nil)
+	backendHeaders := forwardWSHeaders(req)
+	backendWS, _, err := websocket.DefaultDialer.Dial(backendURL, backendHeaders)
 	if err != nil {
 		log.Printf("SOCKS5 WS backend dial failed for %s: %v", backendURL, err)
 		clientWS.WriteMessage(websocket.CloseMessage,
