@@ -15,6 +15,8 @@ export function AddRecentFile(arg1:string):Promise<void>;
 
 export function AddResponse(arg1:models.MethodResponse):Promise<models.MethodResponse>;
 
+export function AppendWebSocketEvent(arg1:string,arg2:models.WebSocketEvent):Promise<void>;
+
 export function CancelContainerStart(arg1:string):Promise<void>;
 
 export function ClearRequestLogs():Promise<void>;

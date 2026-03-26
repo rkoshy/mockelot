@@ -17,6 +17,7 @@ import (
 type RequestLogger interface {
 	LogRequest(log models.RequestLog)
 	UpdateRequestLog(log models.RequestLog)
+	AppendWebSocketEvent(connectionID string, event models.WebSocketEvent)
 }
 
 type ScriptErrorLogger interface {

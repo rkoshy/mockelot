@@ -557,7 +557,27 @@ func (p *ProxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request, e
 	}
 	defer backendConn.Close()
 
-	// Bidirectional forwarding
+	// Log the WebSocket upgrade
+	connID := fmt.Sprintf("ws-%d", time.Now().UnixNano())
+	startTime := time.Now()
+	status101 := http.StatusSwitchingProtocols
+	if p.logger != nil {
+		wsLog := models.RequestLog{
+			ID:          connID,
+			Timestamp:   startTime.Format(time.RFC3339),
+			EndpointID:  endpoint.ID,
+			IsWebSocket: true,
+		}
+		wsLog.ClientRequest.Method = r.Method
+		wsLog.ClientRequest.FullURL = r.URL.String()
+		wsLog.ClientRequest.Path = r.URL.Path
+		wsLog.ClientRequest.SourceIP = r.RemoteAddr
+		wsLog.ClientResponse.StatusCode = &status101
+		wsLog.ClientResponse.StatusText = "Switching Protocols"
+		p.logger.LogRequest(wsLog)
+	}
+
+	// Bidirectional forwarding with frame logging
 	errChan := make(chan error, 2)
 
 	// Client -> Backend
@@ -571,6 +591,9 @@ func (p *ProxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request, e
 			if err := backendConn.WriteMessage(msgType, msg); err != nil {
 				errChan <- err
 				return
+			}
+			if p.logger != nil {
+				p.logger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionSend, startTime))
 			}
 		}
 	}()
@@ -586,6 +609,9 @@ func (p *ProxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request, e
 			if err := clientConn.WriteMessage(msgType, msg); err != nil {
 				errChan <- err
 				return
+			}
+			if p.logger != nil {
+				p.logger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionRecv, startTime))
 			}
 		}
 	}()

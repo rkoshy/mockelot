@@ -26,6 +26,10 @@ export function AddResponse(arg1) {
   return window['go']['main']['App']['AddResponse'](arg1);
 }
 
+export function AppendWebSocketEvent(arg1, arg2) {
+  return window['go']['main']['App']['AppendWebSocketEvent'](arg1, arg2);
+}
+
 export function CancelContainerStart(arg1) {
   return window['go']['main']['App']['CancelContainerStart'](arg1);
 }

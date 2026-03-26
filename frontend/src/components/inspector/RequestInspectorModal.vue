@@ -17,6 +17,7 @@ const props = defineProps<Props>()
 
 const emit = defineEmits<{
   close: []
+  openWsTab: [log: models.RequestLogSummary]
 }>()
 
 const serverStore = useServerStore()
@@ -187,14 +188,25 @@ watch(() => props.show, (newVal) => {
           <!-- Header -->
           <div class="px-6 py-4 border-b border-gray-700 flex items-center justify-between flex-shrink-0">
             <h2 class="text-lg font-semibold text-white">Request Inspector</h2>
-            <button
-              @click="emit('close')"
-              class="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-white transition-colors"
-            >
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+            <div class="flex items-center gap-2">
+              <!-- Open WS Tab button (only for WebSocket upgrade rows) -->
+              <button
+                v-if="props.log?.is_websocket"
+                @click="() => { if (props.log) { emit('openWsTab', props.log); emit('close') } }"
+                class="px-3 py-1 bg-cyan-700 hover:bg-cyan-600 rounded text-xs text-white transition-colors font-medium"
+                title="Open WebSocket frame tab"
+              >
+                Open WS Tab ↗
+              </button>
+              <button
+                @click="emit('close')"
+                class="p-1 hover:bg-gray-700 rounded text-gray-400 hover:text-white transition-colors"
+              >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           <!-- Request Summary -->

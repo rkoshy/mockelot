@@ -2045,6 +2045,7 @@ func (a *App) saveConfigToPath(path string) error {
 		Endpoints:      a.config.Endpoints,
 
 		// Server settings (now included in UserConfig)
+		ServerMode:             a.config.ServerMode,
 		Port:                   a.config.Port,
 		HTTP2Enabled:           a.config.HTTP2Enabled,
 		HTTPSEnabled:           a.config.HTTPSEnabled,
@@ -3236,6 +3237,11 @@ func (a *App) LogRequest(log models.RequestLog) {
 		summary.TargetPort = log.SOCKS5Info.TargetPort
 	}
 
+	// Mark WebSocket upgrade entries
+	if log.IsWebSocket {
+		summary.IsWebSocket = true
+	}
+
 	// Set pending status
 	summary.Pending = false // By default, logs are complete
 
@@ -3243,6 +3249,19 @@ func (a *App) LogRequest(log models.RequestLog) {
 	a.requestLogQueueMutex.Lock()
 	a.requestLogSummaryQueue = append(a.requestLogSummaryQueue, summary)
 	a.requestLogQueueMutex.Unlock()
+}
+
+// AppendWebSocketEvent implements the server.RequestLogger interface.
+// It appends a single WebSocket frame event to an existing request log identified by connectionID.
+func (a *App) AppendWebSocketEvent(connectionID string, event models.WebSocketEvent) {
+	a.logMutex.Lock()
+	for i := range a.requestLogs {
+		if a.requestLogs[i].ID == connectionID {
+			a.requestLogs[i].WebSocketEvents = append(a.requestLogs[i].WebSocketEvents, event)
+			break
+		}
+	}
+	a.logMutex.Unlock()
 }
 
 // UpdateRequestLog updates an existing request log (used for two-phase logging)

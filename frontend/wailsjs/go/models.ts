@@ -959,6 +959,34 @@ export namespace models {
 		    return a;
 		}
 	}
+	export class WebSocketEvent {
+	    id: string;
+	    timestamp: string;
+	    offset_ms: number;
+	    direction: string;
+	    opcode: string;
+	    data_size: number;
+	    data_preview?: string;
+	    close_code?: number;
+	    close_text?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WebSocketEvent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.timestamp = source["timestamp"];
+	        this.offset_ms = source["offset_ms"];
+	        this.direction = source["direction"];
+	        this.opcode = source["opcode"];
+	        this.data_size = source["data_size"];
+	        this.data_preview = source["data_preview"];
+	        this.close_code = source["close_code"];
+	        this.close_text = source["close_text"];
+	    }
+	}
 	export class SOCKS5RequestInfo {
 	    target_host: string;
 	    target_port: number;
@@ -985,6 +1013,8 @@ export namespace models {
 	    validation_failed?: boolean;
 	    response_failed?: boolean;
 	    socks5_info?: SOCKS5RequestInfo;
+	    is_websocket?: boolean;
+	    websocket_events?: WebSocketEvent[];
 	    // Go type: struct { Method string "json:\"method\""; FullURL string "json:\"full_url\""; Path string "json:\"path\""; QueryParams map[string][]string "json:\"query_params,omitempty\""; Headers map[string][]string "json:\"headers,omitempty\""; Body string "json:\"body,omitempty\""; Protocol string "json:\"protocol,omitempty\""; SourceIP string "json:\"source_ip\""; UserAgent string "json:\"user_agent,omitempty\"" }
 	    client_request: any;
 	    // Go type: struct { StatusCode *int "json:\"status_code,omitempty\""; StatusText string "json:\"status_text,omitempty\""; Headers map[string][]string "json:\"headers,omitempty\""; Body string "json:\"body,omitempty\""; DelayMs *int64 "json:\"delay_ms,omitempty\""; RTTMs *int64 "json:\"rtt_ms,omitempty\"" }
@@ -1007,6 +1037,8 @@ export namespace models {
 	        this.validation_failed = source["validation_failed"];
 	        this.response_failed = source["response_failed"];
 	        this.socks5_info = this.convertValues(source["socks5_info"], SOCKS5RequestInfo);
+	        this.is_websocket = source["is_websocket"];
+	        this.websocket_events = this.convertValues(source["websocket_events"], WebSocketEvent);
 	        this.client_request = this.convertValues(source["client_request"], Object);
 	        this.client_response = this.convertValues(source["client_response"], Object);
 	        this.backend_request = this.convertValues(source["backend_request"], Object);
@@ -1050,6 +1082,7 @@ export namespace models {
 	    response_failed?: boolean;
 	    target_host?: string;
 	    target_port?: number;
+	    is_websocket?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new RequestLogSummary(source);
@@ -1075,6 +1108,7 @@ export namespace models {
 	        this.response_failed = source["response_failed"];
 	        this.target_host = source["target_host"];
 	        this.target_port = source["target_port"];
+	        this.is_websocket = source["is_websocket"];
 	    }
 	}
 	
@@ -1156,6 +1190,7 @@ export namespace models {
 		    return a;
 		}
 	}
+	
 	
 
 }

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"mockelot/models"
 )
 
@@ -567,6 +568,281 @@ func (s *SOCKS5Server) shouldIntercept(domain string) bool {
 	return false
 }
 
+// isWebSocketUpgrade returns true when r carries a WebSocket upgrade request.
+func isWebSocketUpgrade(r *http.Request) bool {
+	return strings.ToLower(r.Header.Get("Upgrade")) == "websocket" &&
+		strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade")
+}
+
+// resolveTarget resolves a domain to an IP using the server's DNS resolver.
+// Returns the original value if it is already an IP or resolution fails.
+func (s *SOCKS5Server) resolveTarget(targetAddr string) string {
+	if net.ParseIP(targetAddr) != nil {
+		return targetAddr
+	}
+	if s.dnsResolver != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		ips, err := s.dnsResolver.Resolve(ctx, targetAddr)
+		if err != nil || len(ips) == 0 {
+			return targetAddr
+		}
+		return ips[0]
+	}
+	return targetAddr
+}
+
+// socks5ResponseHijacker wraps a raw net.Conn + bufio.Reader so that the gorilla
+// WebSocket upgrader can perform the HTTP→WS upgrade inside a SOCKS5 tunnel where
+// there is no real http.ResponseWriter.
+type socks5ResponseHijacker struct {
+	conn   net.Conn
+	reader *bufio.Reader
+	header http.Header
+}
+
+func (h *socks5ResponseHijacker) Header() http.Header { return h.header }
+func (h *socks5ResponseHijacker) Write(b []byte) (int, error) { return h.conn.Write(b) }
+func (h *socks5ResponseHijacker) WriteHeader(_ int)           {}
+func (h *socks5ResponseHijacker) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	brw := bufio.NewReadWriter(h.reader, bufio.NewWriter(h.conn))
+	return h.conn, brw, nil
+}
+
+// makeWSEvent creates a WebSocketEvent from a gorilla message type + payload.
+func makeWSEvent(msgType int, data []byte, direction string, connStart time.Time) models.WebSocketEvent {
+	opcode := models.WSOpcodeText
+	switch msgType {
+	case websocket.TextMessage:
+		opcode = models.WSOpcodeText
+	case websocket.BinaryMessage:
+		opcode = models.WSOpcodeBinary
+	case websocket.PingMessage:
+		opcode = models.WSOpcodePing
+	case websocket.PongMessage:
+		opcode = models.WSOpcodePong
+	case websocket.CloseMessage:
+		opcode = models.WSOpcodeClose
+	}
+
+	event := models.WebSocketEvent{
+		ID:        fmt.Sprintf("%d", time.Now().UnixNano()),
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+		OffsetMs:  time.Since(connStart).Milliseconds(),
+		Direction: direction,
+		Opcode:    opcode,
+		DataSize:  len(data),
+	}
+
+	if msgType == websocket.TextMessage && len(data) > 0 {
+		preview := string(data)
+		if len(preview) > 200 {
+			preview = preview[:200] + "…"
+		}
+		event.DataPreview = preview
+	}
+
+	if msgType == websocket.CloseMessage && len(data) >= 2 {
+		event.CloseCode = int(data[0])<<8 | int(data[1])
+		if len(data) > 2 {
+			event.CloseText = string(data[2:])
+		}
+	}
+
+	return event
+}
+
+// handleInterceptedWebSocket relays a WebSocket connection that was detected inside
+// an already-TLS-terminated SOCKS5 tunnel (port 443 / intercepted domain).
+func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientReader *bufio.Reader, req *http.Request, targetAddr string, targetPort uint16) {
+	connID := fmt.Sprintf("ws-%d", time.Now().UnixNano())
+	startTime := time.Now()
+	status101 := http.StatusSwitchingProtocols
+
+	// Log the WS upgrade as its own entry so it appears in the traffic log.
+	if s.requestLogger != nil {
+		wsLog := models.RequestLog{
+			ID:          connID,
+			Timestamp:   startTime.Format(time.RFC3339),
+			EndpointID:  "system-socks5-proxy",
+			IsWebSocket: true,
+			SOCKS5Info: &models.SOCKS5RequestInfo{
+				TargetHost:    targetAddr,
+				TargetPort:    int(targetPort),
+				Protocol:      "HTTPS",
+				IsIntercepted: true,
+			},
+		}
+		wsLog.ClientRequest.Method = req.Method
+		wsLog.ClientRequest.FullURL = fmt.Sprintf("wss://%s:%d%s", targetAddr, targetPort, req.URL.Path)
+		wsLog.ClientRequest.Path = req.URL.Path
+		wsLog.ClientRequest.Headers = make(map[string][]string)
+		for k, v := range req.Header {
+			wsLog.ClientRequest.Headers[k] = v
+		}
+		wsLog.ClientResponse.StatusCode = &status101
+		wsLog.ClientResponse.StatusText = "Switching Protocols"
+		s.requestLogger.LogRequest(wsLog)
+	}
+
+	// Upgrade the client-side connection to WebSocket using the hijackable writer.
+	hijacker := &socks5ResponseHijacker{conn: clientConn, reader: clientReader, header: make(http.Header)}
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	clientWS, err := upgrader.Upgrade(hijacker, req, nil)
+	if err != nil {
+		log.Printf("SOCKS5 WS client upgrade failed for %s: %v", targetAddr, err)
+		return
+	}
+	defer clientWS.Close()
+
+	// Dial the real backend WebSocket server (using original hostname for proper TLS SNI).
+	backendURL := fmt.Sprintf("wss://%s:%d%s", targetAddr, targetPort, req.URL.Path)
+	if req.URL.RawQuery != "" {
+		backendURL += "?" + req.URL.RawQuery
+	}
+	backendWS, _, err := websocket.DefaultDialer.Dial(backendURL, nil)
+	if err != nil {
+		log.Printf("SOCKS5 WS backend dial failed for %s: %v", backendURL, err)
+		clientWS.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "Backend connection failed"))
+		return
+	}
+	defer backendWS.Close()
+
+	log.Printf("SOCKS5 WSS tunnel established: %s", backendURL)
+
+	errChan := make(chan error, 2)
+
+	// Client → Backend
+	go func() {
+		for {
+			msgType, msg, err := clientWS.ReadMessage()
+			if err != nil {
+				errChan <- err
+				return
+			}
+			if err := backendWS.WriteMessage(msgType, msg); err != nil {
+				errChan <- err
+				return
+			}
+			if s.requestLogger != nil {
+				s.requestLogger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionSend, startTime))
+			}
+		}
+	}()
+
+	// Backend → Client
+	go func() {
+		for {
+			msgType, msg, err := backendWS.ReadMessage()
+			if err != nil {
+				errChan <- err
+				return
+			}
+			if err := clientWS.WriteMessage(msgType, msg); err != nil {
+				errChan <- err
+				return
+			}
+			if s.requestLogger != nil {
+				s.requestLogger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionRecv, startTime))
+			}
+		}
+	}()
+
+	<-errChan
+	log.Printf("SOCKS5 WSS tunnel closed: %s (%.1fs)", backendURL, time.Since(startTime).Seconds())
+}
+
+// handlePlainWebSocket relays a WebSocket connection detected inside a plain-HTTP SOCKS5 tunnel.
+func (s *SOCKS5Server) handlePlainWebSocket(clientConn net.Conn, clientReader *bufio.Reader, req *http.Request, targetAddr string, targetPort uint16) {
+	connID := fmt.Sprintf("ws-%d", time.Now().UnixNano())
+	startTime := time.Now()
+	status101 := http.StatusSwitchingProtocols
+
+	if s.requestLogger != nil {
+		wsLog := models.RequestLog{
+			ID:          connID,
+			Timestamp:   startTime.Format(time.RFC3339),
+			EndpointID:  "system-socks5-proxy",
+			IsWebSocket: true,
+			SOCKS5Info: &models.SOCKS5RequestInfo{
+				TargetHost: targetAddr,
+				TargetPort: int(targetPort),
+				Protocol:   "HTTP",
+			},
+		}
+		wsLog.ClientRequest.Method = req.Method
+		wsLog.ClientRequest.FullURL = fmt.Sprintf("ws://%s:%d%s", targetAddr, targetPort, req.URL.Path)
+		wsLog.ClientRequest.Path = req.URL.Path
+		wsLog.ClientResponse.StatusCode = &status101
+		wsLog.ClientResponse.StatusText = "Switching Protocols"
+		s.requestLogger.LogRequest(wsLog)
+	}
+
+	hijacker := &socks5ResponseHijacker{conn: clientConn, reader: clientReader, header: make(http.Header)}
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	clientWS, err := upgrader.Upgrade(hijacker, req, nil)
+	if err != nil {
+		log.Printf("SOCKS5 WS client upgrade failed for %s: %v", targetAddr, err)
+		return
+	}
+	defer clientWS.Close()
+
+	backendURL := fmt.Sprintf("ws://%s:%d%s", targetAddr, targetPort, req.URL.Path)
+	if req.URL.RawQuery != "" {
+		backendURL += "?" + req.URL.RawQuery
+	}
+	backendWS, _, err := websocket.DefaultDialer.Dial(backendURL, nil)
+	if err != nil {
+		log.Printf("SOCKS5 WS backend dial failed for %s: %v", backendURL, err)
+		clientWS.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "Backend connection failed"))
+		return
+	}
+	defer backendWS.Close()
+
+	log.Printf("SOCKS5 WS tunnel established: %s", backendURL)
+
+	errChan := make(chan error, 2)
+
+	go func() {
+		for {
+			msgType, msg, err := clientWS.ReadMessage()
+			if err != nil {
+				errChan <- err
+				return
+			}
+			if err := backendWS.WriteMessage(msgType, msg); err != nil {
+				errChan <- err
+				return
+			}
+			if s.requestLogger != nil {
+				s.requestLogger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionSend, startTime))
+			}
+		}
+	}()
+
+	go func() {
+		for {
+			msgType, msg, err := backendWS.ReadMessage()
+			if err != nil {
+				errChan <- err
+				return
+			}
+			if err := clientWS.WriteMessage(msgType, msg); err != nil {
+				errChan <- err
+				return
+			}
+			if s.requestLogger != nil {
+				s.requestLogger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionRecv, startTime))
+			}
+		}
+	}()
+
+	<-errChan
+	log.Printf("SOCKS5 WS tunnel closed: %s (%.1fs)", backendURL, time.Since(startTime).Seconds())
+}
+
 // handleTunnel processes HTTP/HTTPS requests through the SOCKS5 tunnel
 // For HTTPS (port 443):
 //   - If domain is in takeover list: TLS intercept → ResponseHandler
@@ -645,6 +921,12 @@ func (s *SOCKS5Server) handleInterceptedHTTPS(conn net.Conn, targetAddr string, 
 		// Ensure Host header is set
 		if req.Host == "" {
 			req.Host = targetAddr
+		}
+
+		// WebSocket upgrade: hand off to dedicated WS handler and stop the HTTP loop.
+		if isWebSocketUpgrade(req) {
+			s.handleInterceptedWebSocket(tlsConn, reader, req, targetAddr, targetPort)
+			return
 		}
 
 		// Create a response recorder to capture the response
@@ -777,6 +1059,12 @@ func (s *SOCKS5Server) handleHTTP(conn net.Conn, targetAddr string, targetPort u
 		// Ensure Host header is set
 		if req.Host == "" {
 			req.Host = targetAddr
+		}
+
+		// WebSocket upgrade: hand off to dedicated WS handler and stop the HTTP loop.
+		if isWebSocketUpgrade(req) {
+			s.handlePlainWebSocket(conn, reader, req, targetAddr, targetPort)
+			return
 		}
 
 		// Create a response recorder to capture the response

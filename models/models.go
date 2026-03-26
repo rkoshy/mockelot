@@ -34,6 +34,35 @@ const (
 	HeaderValidationModeScript   = "script"   // JavaScript expression
 )
 
+// WebSocket opcode name constants
+const (
+	WSOpcodeText         = "TEXT"
+	WSOpcodeBinary       = "BINARY"
+	WSOpcodePing         = "PING"
+	WSOpcodePong         = "PONG"
+	WSOpcodeClose        = "CLOSE"
+	WSOpcodeContinuation = "CONTINUATION"
+)
+
+// WebSocket frame direction constants
+const (
+	WSDirectionSend = "send" // client → server  (↑)
+	WSDirectionRecv = "recv" // server → client  (↓)
+)
+
+// WebSocketEvent represents a single WebSocket frame captured during a proxied connection
+type WebSocketEvent struct {
+	ID          string `json:"id"`
+	Timestamp   string `json:"timestamp"`              // ISO8601/RFC3339Nano
+	OffsetMs    int64  `json:"offset_ms"`              // ms elapsed since the WS upgrade
+	Direction   string `json:"direction"`              // WSDirectionSend / WSDirectionRecv
+	Opcode      string `json:"opcode"`                 // WSOpcodeText, WSOpcodeBinary, etc.
+	DataSize    int    `json:"data_size"`              // payload size in bytes
+	DataPreview string `json:"data_preview,omitempty"` // first 200 chars for TEXT frames
+	CloseCode   int    `json:"close_code,omitempty"`   // for CLOSE frames
+	CloseText   string `json:"close_text,omitempty"`   // for CLOSE frames
+}
+
 // ServerMode constants for server operation mode
 const (
 	ServerModeHTTP   = "http"   // Start HTTP (and optionally HTTPS) listener
@@ -573,6 +602,7 @@ type RequestLogSummary struct {
 	ResponseFailed   bool   `json:"response_failed,omitempty"`       // (R) badge - response generation failed (script error, etc.)
 	TargetHost       string `json:"target_host,omitempty"`           // For SOCKS5 logs: target host (domain or IP)
 	TargetPort       int    `json:"target_port,omitempty"`           // For SOCKS5 logs: target port
+	IsWebSocket      bool   `json:"is_websocket,omitempty"`          // true when this entry is a WebSocket upgrade (101)
 }
 
 // RequestLog represents a detailed log of an incoming HTTP request and response
@@ -589,6 +619,10 @@ type RequestLog struct {
 
 	// SOCKS5 proxy information (only set for SOCKS5 proxy endpoint logs)
 	SOCKS5Info *SOCKS5RequestInfo `json:"socks5_info,omitempty"`
+
+	// WebSocket connection data (only set when IsWebSocket == true)
+	IsWebSocket     bool             `json:"is_websocket,omitempty"`
+	WebSocketEvents []WebSocketEvent `json:"websocket_events,omitempty"`
 
 	// Client side: Client → Server
 	ClientRequest struct {
