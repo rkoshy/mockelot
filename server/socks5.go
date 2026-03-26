@@ -670,6 +670,29 @@ func forwardWSHeaders(req *http.Request) http.Header {
 	return h
 }
 
+// forwardBackendWSResponseHeaders extracts backend WebSocket upgrade response
+// headers that must be forwarded to the client. This is critical for protocol
+// negotiation (e.g. Sec-WebSocket-Protocol: sip) — without it clients like SIP
+// phones close immediately because the subprotocol handshake is incomplete.
+func forwardBackendWSResponseHeaders(resp *http.Response) http.Header {
+	if resp == nil {
+		return nil
+	}
+	skip := map[string]bool{
+		"Upgrade":              true,
+		"Connection":           true,
+		"Sec-Websocket-Accept": true, // gorilla computes this itself from the client key
+	}
+	h := http.Header{}
+	for k, vals := range resp.Header {
+		if skip[http.CanonicalHeaderKey(k)] {
+			continue
+		}
+		h[http.CanonicalHeaderKey(k)] = vals
+	}
+	return h
+}
+
 // makeWSEvent creates a WebSocketEvent from a gorilla message type + payload.
 func makeWSEvent(msgType int, data []byte, direction string, connStart time.Time) models.WebSocketEvent {
 	opcode := models.WSOpcodeText
@@ -720,11 +743,47 @@ func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientRea
 	startTime := time.Now()
 	status101 := http.StatusSwitchingProtocols
 
-	// Resolve the endpoint that owns this request so the log appears under the
-	// correct endpoint tab rather than the generic SOCKS5 proxy tab.
 	endpointID := s.responseHandler.FindEndpointID(req)
 
-	// Log the WS upgrade as its own entry so it appears in the traffic log.
+	// ── Step 1: dial the backend FIRST ───────────────────────────────────────
+	// Dialling before upgrading the client means a backend failure sends HTTP 502
+	// rather than a WebSocket close frame (client never sees onopen+onclose).
+	backendURL := fmt.Sprintf("wss://%s:%d%s", targetAddr, targetPort, req.URL.Path)
+	if req.URL.RawQuery != "" {
+		backendURL += "?" + req.URL.RawQuery
+	}
+	backendHeaders := forwardWSHeaders(req)
+	log.Printf("SOCKS5 WSS [%s] dialling backend %s (subprotocol: %s)",
+		targetAddr, backendURL, req.Header.Get("Sec-Websocket-Protocol"))
+	backendWS, backendResp, err := websocket.DefaultDialer.Dial(backendURL, backendHeaders)
+	if err != nil {
+		log.Printf("SOCKS5 WSS [%s] backend dial FAILED: %v", targetAddr, err)
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
+		return
+	}
+	defer backendWS.Close()
+	log.Printf("SOCKS5 WSS [%s] backend connected (subprotocol: %s)",
+		targetAddr, backendResp.Header.Get("Sec-Websocket-Protocol"))
+
+	// ── Step 2: upgrade the client, forwarding backend response headers ──────
+	// Critical: forward Sec-WebSocket-Protocol and any other backend response
+	// headers to the client. Without this, SIP phones (and other protocol-
+	// specific WebSocket clients) close immediately because the subprotocol
+	// negotiation response is missing.
+	clientRespHeaders := forwardBackendWSResponseHeaders(backendResp)
+	log.Printf("SOCKS5 WSS [%s] upgrading client (buffered=%d, forwarding headers: %v)",
+		targetAddr, clientReader.Buffered(), clientRespHeaders)
+	hijacker := &socks5ResponseHijacker{conn: clientConn, reader: clientReader, header: make(http.Header)}
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	clientWS, err := upgrader.Upgrade(hijacker, req, clientRespHeaders)
+	if err != nil {
+		log.Printf("SOCKS5 WSS [%s] client upgrade FAILED: %v", targetAddr, err)
+		return
+	}
+	defer clientWS.Close()
+	log.Printf("SOCKS5 WSS [%s] tunnel established", targetAddr)
+
+	// ── Step 3: log the completed handshake with full backend details ─────────
 	if s.requestLogger != nil {
 		wsLog := models.RequestLog{
 			ID:          connID,
@@ -741,47 +800,46 @@ func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientRea
 		wsLog.ClientRequest.Method = req.Method
 		wsLog.ClientRequest.FullURL = fmt.Sprintf("wss://%s:%d%s", targetAddr, targetPort, req.URL.Path)
 		wsLog.ClientRequest.Path = req.URL.Path
-		wsLog.ClientRequest.Headers = make(map[string][]string)
-		for k, v := range req.Header {
-			wsLog.ClientRequest.Headers[k] = v
-		}
+		wsLog.ClientRequest.Headers = map[string][]string(req.Header)
+
 		wsLog.ClientResponse.StatusCode = &status101
 		wsLog.ClientResponse.StatusText = "Switching Protocols"
+		wsLog.ClientResponse.Headers = map[string][]string(clientRespHeaders)
+
+		backendReqEntry := struct {
+			Method      string              `json:"method"`
+			FullURL     string              `json:"full_url"`
+			Path        string              `json:"path"`
+			QueryParams map[string][]string `json:"query_params,omitempty"`
+			Headers     map[string][]string `json:"headers,omitempty"`
+			Body        string              `json:"body,omitempty"`
+		}{
+			Method:  req.Method,
+			FullURL: backendURL,
+			Path:    req.URL.Path,
+			Headers: map[string][]string(backendHeaders),
+		}
+		wsLog.BackendRequest = &backendReqEntry
+
+		backendStatus := backendResp.StatusCode
+		backendRespEntry := struct {
+			StatusCode *int                `json:"status_code,omitempty"`
+			StatusText string              `json:"status_text,omitempty"`
+			Headers    map[string][]string `json:"headers,omitempty"`
+			Body       string              `json:"body,omitempty"`
+			DelayMs    *int64              `json:"delay_ms,omitempty"`
+			RTTMs      *int64              `json:"rtt_ms,omitempty"`
+		}{
+			StatusCode: &backendStatus,
+			StatusText: backendResp.Status,
+			Headers:    map[string][]string(backendResp.Header),
+		}
+		wsLog.BackendResponse = &backendRespEntry
+
 		s.requestLogger.LogRequest(wsLog)
 	}
 
-	// ── Step 1: dial the backend FIRST ────────────────────────────────────────
-	// We intentionally dial before upgrading the client so that if the backend
-	// is unreachable the client receives an HTTP 502 (never sees onopen) rather
-	// than a WebSocket close frame immediately after onopen.
-	backendURL := fmt.Sprintf("wss://%s:%d%s", targetAddr, targetPort, req.URL.Path)
-	if req.URL.RawQuery != "" {
-		backendURL += "?" + req.URL.RawQuery
-	}
-	backendHeaders := forwardWSHeaders(req)
-	log.Printf("SOCKS5 WSS [%s] dialling backend %s", targetAddr, backendURL)
-	backendWS, _, err := websocket.DefaultDialer.Dial(backendURL, backendHeaders)
-	if err != nil {
-		log.Printf("SOCKS5 WSS [%s] backend dial FAILED: %v", targetAddr, err)
-		// Client hasn't been upgraded yet — send a plain HTTP error response.
-		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
-		return
-	}
-	defer backendWS.Close()
-	log.Printf("SOCKS5 WSS [%s] backend connected", targetAddr)
-
-	// ── Step 2: upgrade the client connection ──────────────────────────────
-	log.Printf("SOCKS5 WSS [%s] upgrading client connection (buffered=%d)", targetAddr, clientReader.Buffered())
-	hijacker := &socks5ResponseHijacker{conn: clientConn, reader: clientReader, header: make(http.Header)}
-	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
-	clientWS, err := upgrader.Upgrade(hijacker, req, nil)
-	if err != nil {
-		log.Printf("SOCKS5 WSS [%s] client upgrade FAILED: %v", targetAddr, err)
-		return
-	}
-	defer clientWS.Close()
-	log.Printf("SOCKS5 WSS [%s] tunnel established", targetAddr)
-
+	// ── Step 4: relay frames bidirectionally ─────────────────────────────────
 	errChan := make(chan error, 2)
 
 	// Client → Backend
@@ -832,6 +890,39 @@ func (s *SOCKS5Server) handlePlainWebSocket(clientConn net.Conn, clientReader *b
 
 	endpointID := s.responseHandler.FindEndpointID(req)
 
+	// ── Step 1: dial backend first ────────────────────────────────────────────
+	backendURL := fmt.Sprintf("ws://%s:%d%s", targetAddr, targetPort, req.URL.Path)
+	if req.URL.RawQuery != "" {
+		backendURL += "?" + req.URL.RawQuery
+	}
+	backendHeaders := forwardWSHeaders(req)
+	log.Printf("SOCKS5 WS [%s] dialling backend %s (subprotocol: %s)",
+		targetAddr, backendURL, req.Header.Get("Sec-Websocket-Protocol"))
+	backendWS, backendResp, err := websocket.DefaultDialer.Dial(backendURL, backendHeaders)
+	if err != nil {
+		log.Printf("SOCKS5 WS [%s] backend dial FAILED: %v", targetAddr, err)
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
+		return
+	}
+	defer backendWS.Close()
+	log.Printf("SOCKS5 WS [%s] backend connected (subprotocol: %s)",
+		targetAddr, backendResp.Header.Get("Sec-Websocket-Protocol"))
+
+	// ── Step 2: upgrade client, forwarding backend response headers ───────────
+	clientRespHeaders := forwardBackendWSResponseHeaders(backendResp)
+	log.Printf("SOCKS5 WS [%s] upgrading client (buffered=%d, forwarding headers: %v)",
+		targetAddr, clientReader.Buffered(), clientRespHeaders)
+	hijacker := &socks5ResponseHijacker{conn: clientConn, reader: clientReader, header: make(http.Header)}
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	clientWS, err := upgrader.Upgrade(hijacker, req, clientRespHeaders)
+	if err != nil {
+		log.Printf("SOCKS5 WS [%s] client upgrade FAILED: %v", targetAddr, err)
+		return
+	}
+	defer clientWS.Close()
+	log.Printf("SOCKS5 WS [%s] tunnel established", targetAddr)
+
+	// ── Step 3: log completed handshake ──────────────────────────────────────
 	if s.requestLogger != nil {
 		wsLog := models.RequestLog{
 			ID:          connID,
@@ -847,39 +938,45 @@ func (s *SOCKS5Server) handlePlainWebSocket(clientConn net.Conn, clientReader *b
 		wsLog.ClientRequest.Method = req.Method
 		wsLog.ClientRequest.FullURL = fmt.Sprintf("ws://%s:%d%s", targetAddr, targetPort, req.URL.Path)
 		wsLog.ClientRequest.Path = req.URL.Path
+		wsLog.ClientRequest.Headers = map[string][]string(req.Header)
 		wsLog.ClientResponse.StatusCode = &status101
 		wsLog.ClientResponse.StatusText = "Switching Protocols"
+		wsLog.ClientResponse.Headers = map[string][]string(clientRespHeaders)
+
+		backendReqEntry := struct {
+			Method      string              `json:"method"`
+			FullURL     string              `json:"full_url"`
+			Path        string              `json:"path"`
+			QueryParams map[string][]string `json:"query_params,omitempty"`
+			Headers     map[string][]string `json:"headers,omitempty"`
+			Body        string              `json:"body,omitempty"`
+		}{
+			Method:  req.Method,
+			FullURL: backendURL,
+			Path:    req.URL.Path,
+			Headers: map[string][]string(backendHeaders),
+		}
+		wsLog.BackendRequest = &backendReqEntry
+
+		backendStatus := backendResp.StatusCode
+		backendRespEntry := struct {
+			StatusCode *int                `json:"status_code,omitempty"`
+			StatusText string              `json:"status_text,omitempty"`
+			Headers    map[string][]string `json:"headers,omitempty"`
+			Body       string              `json:"body,omitempty"`
+			DelayMs    *int64              `json:"delay_ms,omitempty"`
+			RTTMs      *int64              `json:"rtt_ms,omitempty"`
+		}{
+			StatusCode: &backendStatus,
+			StatusText: backendResp.Status,
+			Headers:    map[string][]string(backendResp.Header),
+		}
+		wsLog.BackendResponse = &backendRespEntry
+
 		s.requestLogger.LogRequest(wsLog)
 	}
 
-	// ── Step 1: dial backend first ─────────────────────────────────────────
-	backendURL := fmt.Sprintf("ws://%s:%d%s", targetAddr, targetPort, req.URL.Path)
-	if req.URL.RawQuery != "" {
-		backendURL += "?" + req.URL.RawQuery
-	}
-	backendHeaders := forwardWSHeaders(req)
-	log.Printf("SOCKS5 WS [%s] dialling backend %s", targetAddr, backendURL)
-	backendWS, _, err := websocket.DefaultDialer.Dial(backendURL, backendHeaders)
-	if err != nil {
-		log.Printf("SOCKS5 WS [%s] backend dial FAILED: %v", targetAddr, err)
-		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
-		return
-	}
-	defer backendWS.Close()
-	log.Printf("SOCKS5 WS [%s] backend connected", targetAddr)
-
-	// ── Step 2: upgrade the client ─────────────────────────────────────────
-	log.Printf("SOCKS5 WS [%s] upgrading client connection (buffered=%d)", targetAddr, clientReader.Buffered())
-	hijacker := &socks5ResponseHijacker{conn: clientConn, reader: clientReader, header: make(http.Header)}
-	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
-	clientWS, err := upgrader.Upgrade(hijacker, req, nil)
-	if err != nil {
-		log.Printf("SOCKS5 WS [%s] client upgrade FAILED: %v", targetAddr, err)
-		return
-	}
-	defer clientWS.Close()
-	log.Printf("SOCKS5 WS [%s] tunnel established", targetAddr)
-
+	// ── Step 4: relay frames ─────────────────────────────────────────────────
 	errChan := make(chan error, 2)
 
 	go func() {
