@@ -28,6 +28,11 @@ const OPCODE_BUCKETS: Record<string, string> = {
   CLOSE: 'CLOSE', CONTINUATION: 'TEXT',
 }
 
+// Content + size filters
+const contentFilter = ref('')
+const sizeMin = ref<number | null>(null)
+const sizeMax = ref<number | null>(null)
+
 // ── Live state from summary (reactive, no polling needed) ──────────────────
 const isActive   = computed(() => props.logSummary.ws_is_open)
 const framesSent = computed(() => props.logSummary.ws_frames_sent ?? 0)
@@ -65,10 +70,20 @@ const closeLabel = computed(() => {
 // ── Frame list from full log (polled only when count changes) ──────────────
 const filteredFrames = computed(() => {
   if (!fullLog.value?.websocket_events) return []
-  return fullLog.value.websocket_events.filter(
-    e => opcodeFilters.value[OPCODE_BUCKETS[e.opcode] ?? 'TEXT']
-  )
+  const content = contentFilter.value.trim().toLowerCase()
+  const min = sizeMin.value
+  const max = sizeMax.value
+  return fullLog.value.websocket_events.filter(e => {
+    if (!opcodeFilters.value[OPCODE_BUCKETS[e.opcode] ?? 'TEXT']) return false
+    if (min !== null && e.data_size < min) return false
+    if (max !== null && e.data_size > max) return false
+    if (content && !(e.data_preview ?? '').toLowerCase().includes(content)) return false
+    return true
+  })
 })
+
+const totalVisible = computed(() => filteredFrames.value.length)
+const totalAll = computed(() => fullLog.value?.websocket_events?.length ?? 0)
 
 // Track the last frame count we fetched at so we skip redundant fetches.
 let lastFetchedFrameCount = -1
@@ -201,18 +216,73 @@ function formatSize(bytes: number): string {
       </div>
     </div>
 
-    <!-- Filter + auto-scroll bar -->
-    <div class="px-4 py-2 border-b border-gray-700 flex-shrink-0 flex items-center gap-4">
+    <!-- Filter bar — row 1: opcode + auto-scroll -->
+    <div class="px-4 py-1.5 border-b border-gray-700/60 flex-shrink-0 flex items-center gap-4">
       <span class="text-xs text-gray-500 font-medium">Show:</span>
       <label v-for="(_, bucket) in opcodeFilters" :key="bucket" class="flex items-center gap-1 cursor-pointer select-none">
         <input type="checkbox" v-model="opcodeFilters[bucket]" class="w-3 h-3 rounded accent-blue-500" />
         <span :class="['text-xs font-medium', getOpcodeColor(bucket === 'PING/PONG' ? 'PING' : bucket)]">{{ bucket }}</span>
       </label>
-      <div class="ml-auto flex items-center gap-1">
+      <div class="ml-auto flex items-center gap-3">
+        <span class="text-xs text-gray-500">
+          {{ totalVisible }} / {{ totalAll }} frames
+        </span>
         <label class="flex items-center gap-1 cursor-pointer select-none">
           <input type="checkbox" v-model="autoScroll" class="w-3 h-3 rounded accent-blue-500" />
           <span class="text-xs text-gray-400">Auto-scroll</span>
         </label>
+      </div>
+    </div>
+
+    <!-- Filter bar — row 2: content search + size range -->
+    <div class="px-4 py-1.5 border-b border-gray-700 flex-shrink-0 flex items-center gap-3 flex-wrap">
+      <!-- Content search -->
+      <div class="relative flex items-center">
+        <input
+          v-model="contentFilter"
+          type="text"
+          placeholder="Search content…"
+          class="w-44 pl-2 pr-6 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+        />
+        <button
+          v-if="contentFilter"
+          @click="contentFilter = ''"
+          class="absolute right-1 text-gray-400 hover:text-white"
+          title="Clear"
+        >
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Size range -->
+      <div class="flex items-center gap-1 text-xs text-gray-400">
+        <span>Size:</span>
+        <input
+          v-model.number="sizeMin"
+          type="number"
+          min="0"
+          placeholder="min"
+          class="w-16 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+        />
+        <span>–</span>
+        <input
+          v-model.number="sizeMax"
+          type="number"
+          min="0"
+          placeholder="max"
+          class="w-16 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+        />
+        <span>bytes</span>
+        <button
+          v-if="sizeMin !== null || sizeMax !== null"
+          @click="sizeMin = null; sizeMax = null"
+          class="ml-1 text-gray-500 hover:text-gray-300 text-xs"
+          title="Clear size filter"
+        >
+          ✕
+        </button>
       </div>
     </div>
 
@@ -222,7 +292,11 @@ function formatSize(bytes: number): string {
         <svg class="w-12 h-12 mb-3 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
         </svg>
-        <p class="text-sm">{{ isActive ? 'Waiting for frames…' : 'No frames captured' }}</p>
+        <p class="text-sm">
+          {{ totalAll === 0
+              ? (isActive ? 'Waiting for frames…' : 'No frames captured')
+              : 'No frames match the current filters' }}
+        </p>
       </div>
 
       <div v-else class="divide-y divide-gray-800/60">

@@ -367,16 +367,17 @@ defineExpose({ openWSTab })
               <!-- Source IP -->
               <span class="text-xs text-gray-500 flex-shrink-0">{{ log.source_ip || 'N/A' }}</span>
 
-              <!-- WS open-tab button (visible on hover for WS rows) -->
+              <!-- WS open-tab button — always visible for WS rows -->
               <button
                 v-if="log.is_websocket"
                 @click.stop="openWSTab(log)"
-                class="p-1 hover:bg-cyan-900/40 rounded text-gray-500 hover:text-cyan-400 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
-                title="Open WebSocket tab"
+                class="px-1.5 py-0.5 bg-cyan-900/50 hover:bg-cyan-700/60 border border-cyan-700/50 hover:border-cyan-500 rounded text-cyan-400 hover:text-cyan-300 text-xs font-medium transition-colors flex-shrink-0 flex items-center gap-0.5"
+                title="Open WebSocket frame tab"
               >
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                 </svg>
+                Tab
               </button>
 
               <!-- Eye Icon Button -->
