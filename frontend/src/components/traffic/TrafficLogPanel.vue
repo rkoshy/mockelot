@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useServerStore } from '../../stores/server'
 import { ExportLogs } from '../../../wailsjs/go/main/App'
 import RequestInspectorModal from '../inspector/RequestInspectorModal.vue'
@@ -11,15 +11,27 @@ const serverStore = useServerStore()
 const showInspectorModal = ref(false)
 const inspectorLog = ref<models.RequestLogSummary | null>(null)
 
-// Filter logs by selected endpoint, then reverse to show newest first
+// URL filter
+const urlFilter = ref('')
+
+// Filter logs by selected endpoint and URL filter, then reverse to show newest first
 const filteredLogs = computed(() => {
   const endpointId = serverStore.selectedEndpointId
-  if (!endpointId) {
-    return [...serverStore.requestLogs].reverse()
+  const filter = urlFilter.value.trim().toLowerCase()
+
+  let logs = endpointId
+    ? serverStore.requestLogs.filter(log => log.endpoint_id === endpointId)
+    : [...serverStore.requestLogs]
+
+  if (filter) {
+    logs = logs.filter(log => {
+      const path = (log.path || '').toLowerCase()
+      const host = log.target_host ? `${log.target_host}:${log.target_port}`.toLowerCase() : ''
+      return path.includes(filter) || host.includes(filter)
+    })
   }
-  return serverStore.requestLogs
-    .filter(log => log.endpoint_id === endpointId)
-    .reverse()
+
+  return logs.reverse()
 })
 
 function formatTimestamp(timestamp: string): string {
@@ -132,6 +144,25 @@ function closeInspector() {
     <div class="flex items-center justify-between p-3 border-b border-gray-700 flex-shrink-0">
       <h2 class="text-lg font-semibold text-white">Traffic Log</h2>
       <div class="flex items-center gap-2">
+        <!-- URL Filter -->
+        <div class="relative flex items-center">
+          <input
+            v-model="urlFilter"
+            type="text"
+            placeholder="Filter by URL..."
+            class="w-44 pl-2 pr-6 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+          />
+          <button
+            v-if="urlFilter"
+            @click="urlFilter = ''"
+            class="absolute right-1 text-gray-400 hover:text-white"
+            title="Clear filter"
+          >
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
         <span class="text-sm text-gray-400">{{ filteredLogs.length }} requests</span>
         <button
           @click="handleExportJSON"

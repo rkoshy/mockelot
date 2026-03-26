@@ -19,6 +19,13 @@ type EventCallback = (data: any) => void
 
 const serverStore = useServerStore()
 const portInput = ref(8080)
+
+// Keep portInput in sync with config so we always start on the configured port
+watch(() => serverStore.config, (newConfig) => {
+  if (newConfig?.port) {
+    portInput.value = newConfig.port
+  }
+}, { immediate: true })
 const isLoading = ref(false)
 const errorMessage = ref('')
 const showLoadDialog = ref(false)
@@ -160,6 +167,10 @@ const statusText = computed(() => {
   if (!serverStore.isRunning) return 'Stopped'
 
   const config = serverStore.config
+  if (config?.server_mode === 'socks5') {
+    const socks5Port = config.socks5_config?.port || 1080
+    return `Running on SOCKS5 :${socks5Port}`
+  }
   if (config?.https_enabled) {
     return `Running on :${serverStore.port} (HTTP) :${config.https_port || 8443} (HTTPS)`
   }

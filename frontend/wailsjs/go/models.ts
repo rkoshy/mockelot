@@ -727,6 +727,7 @@ export namespace models {
 		}
 	}
 	export class AppConfig {
+	    server_mode?: string;
 	    port: number;
 	    responses?: MethodResponse[];
 	    items?: ResponseItem[];
@@ -753,6 +754,7 @@ export namespace models {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.server_mode = source["server_mode"];
 	        this.port = source["port"];
 	        this.responses = this.convertValues(source["responses"], MethodResponse);
 	        this.items = this.convertValues(source["items"], ResponseItem);
@@ -1103,6 +1105,7 @@ export namespace models {
 	}
 	
 	export class ServerSettings {
+	    server_mode?: string;
 	    port?: number;
 	    http2_enabled?: boolean;
 	    https_enabled?: boolean;
@@ -1121,6 +1124,7 @@ export namespace models {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.server_mode = source["server_mode"];
 	        this.port = source["port"];
 	        this.http2_enabled = source["http2_enabled"];
 	        this.https_enabled = source["https_enabled"];

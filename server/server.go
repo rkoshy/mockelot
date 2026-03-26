@@ -269,8 +269,14 @@ func (s *HTTPServer) StartHTTPS() error {
 func (s *HTTPServer) Start() error {
 	s.configMutex.RLock()
 	httpsEnabled := s.config.HTTPSEnabled
+	serverMode := s.config.ServerMode
 	endpoints := s.config.Endpoints
 	s.configMutex.RUnlock()
+
+	// Default to HTTP mode if not set
+	if serverMode == "" {
+		serverMode = models.ServerModeHTTP
+	}
 
 	// Create cancellable context for container startup (will be used when frontend calls StartContainers)
 	s.startupCtx, s.startupCancel = context.WithCancel(context.Background())
@@ -291,27 +297,31 @@ func (s *HTTPServer) Start() error {
 		s.proxyHandler.StartHealthChecks(proxyEndpoints)
 	}
 
-	// Always start HTTP server
-	if err := s.StartHTTP(); err != nil {
-		return fmt.Errorf("failed to start HTTP server: %w", err)
-	}
+	if serverMode == models.ServerModeSOCKS5 {
+		log.Printf("SOCKS5 mode: skipping HTTP/HTTPS listeners")
+	} else {
+		// Start HTTP server in HTTP mode
+		if err := s.StartHTTP(); err != nil {
+			return fmt.Errorf("failed to start HTTP server: %w", err)
+		}
 
-	// Start HTTPS server if enabled
-	if httpsEnabled {
-		if err := s.StartHTTPS(); err != nil {
-			log.Printf("Failed to start HTTPS server: %v", err)
-			// Don't fail completely if HTTPS fails, HTTP is still running
+		// Start HTTPS server if enabled (only when HTTP mode is active)
+		if httpsEnabled {
+			if err := s.StartHTTPS(); err != nil {
+				log.Printf("Failed to start HTTPS server: %v", err)
+				// Don't fail completely if HTTPS fails, HTTP is still running
+			}
 		}
 	}
 
-	// Start SOCKS5 proxy if enabled
+	// Start SOCKS5 proxy if enabled or if in SOCKS5 mode
 	s.configMutex.RLock()
 	socks5Config := s.config.SOCKS5Config
 	domainTakeover := s.config.DomainTakeover
 	certMode := s.config.CertMode
 	s.configMutex.RUnlock()
 
-	if socks5Config != nil && socks5Config.Enabled {
+	if socks5Config != nil && (socks5Config.Enabled || serverMode == models.ServerModeSOCKS5) {
 		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver)
 
 		// Initialize certificate cache for TLS interception if HTTPS is enabled

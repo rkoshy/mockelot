@@ -34,6 +34,12 @@ const (
 	HeaderValidationModeScript   = "script"   // JavaScript expression
 )
 
+// ServerMode constants for server operation mode
+const (
+	ServerModeHTTP   = "http"   // Start HTTP (and optionally HTTPS) listener
+	ServerModeSOCKS5 = "socks5" // Start only SOCKS5 proxy, no HTTP/HTTPS listener
+)
+
 // CertMode constants for HTTPS certificate modes
 const (
 	CertModeAuto         = "auto"          // Auto-generate CA and server certs
@@ -415,6 +421,7 @@ type UserConfig struct {
 	Endpoints      []Endpoint              `json:"endpoints,omitempty" yaml:"endpoints,omitempty"` // Current: all endpoints (mock, proxy, container)
 
 	// Server Settings (moved from ServerConfig)
+	ServerMode             string    `json:"server_mode,omitempty" yaml:"server_mode,omitempty"`                           // Server mode: "http" or "socks5"
 	Port                   int       `json:"port,omitempty" yaml:"port,omitempty"`                                         // HTTP server port
 	HTTP2Enabled           bool      `json:"http2_enabled,omitempty" yaml:"http2_enabled,omitempty"`                       // HTTP/2 support
 	HTTPSEnabled           bool      `json:"https_enabled,omitempty" yaml:"https_enabled,omitempty"`                       // HTTPS enabled
@@ -465,6 +472,9 @@ func (c *UserConfig) GetAllResponses() []MethodResponse {
 // AppConfig stores the application's configuration (DEPRECATED - split into ServerConfig and UserConfig)
 // Kept for backward compatibility with existing code
 type AppConfig struct {
+	// Server mode
+	ServerMode   string           `json:"server_mode,omitempty" yaml:"server_mode,omitempty"`     // Server mode: "http" or "socks5"
+
 	// HTTP Server
 	Port         int              `json:"port" yaml:"port"`                                       // HTTP server port
 	Responses    []MethodResponse `json:"responses,omitempty" yaml:"responses,omitempty"`         // Legacy: flat response list (for backward compatibility)
@@ -502,6 +512,7 @@ type AppConfig struct {
 // All fields are pointers to distinguish between "not provided" (nil) and "set to zero/false" (non-nil)
 // Exception: slices and structs that are naturally optional (CertPaths, CertNames, CORS)
 type ServerSettings struct {
+	ServerMode             *string                `json:"server_mode,omitempty"`
 	Port                   *int                   `json:"port,omitempty"`
 	HTTP2Enabled           *bool                  `json:"http2_enabled,omitempty"`
 	HTTPSEnabled           *bool                  `json:"https_enabled,omitempty"`

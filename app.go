@@ -2988,6 +2988,9 @@ func (a *App) UpdateServerSettings(settings models.ServerSettings) error {
 	defer a.configMutex.Unlock()
 
 	// Update AppConfig fields (only those provided - nil means don't update)
+	if settings.ServerMode != nil {
+		a.config.ServerMode = *settings.ServerMode
+	}
 	if settings.Port != nil {
 		a.config.Port = *settings.Port
 	}
@@ -3644,6 +3647,7 @@ func (a *App) GetCurrentConfigPath() string {
 func userConfigToAppConfig(userCfg *models.UserConfig, serverCfg *models.AppConfig) *models.AppConfig {
 	// Start with defaults for server settings
 	appCfg := &models.AppConfig{
+		ServerMode:          models.ServerModeHTTP,
 		Port:                8080,
 		HTTPSPort:           8443,
 		HTTP2Enabled:        false,
@@ -3665,6 +3669,9 @@ func userConfigToAppConfig(userCfg *models.UserConfig, serverCfg *models.AppConf
 
 	// Server settings now come from UserConfig (unified format)
 	// Use values from UserConfig if present (non-zero), otherwise keep defaults
+	if userCfg.ServerMode != "" {
+		appCfg.ServerMode = userCfg.ServerMode
+	}
 	if userCfg.Port != 0 {
 		appCfg.Port = userCfg.Port
 	}

@@ -2,8 +2,40 @@
   <div class="flex flex-col min-h-0 h-full overflow-hidden">
     <!-- Scrollable Content Area -->
     <div class="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
+      <!-- Proxy Mode Selector -->
+      <div class="bg-gray-750 border border-gray-600 rounded p-4">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-sm font-semibold text-white">Proxy Mode</span>
+        </div>
+        <div class="flex items-center gap-6">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              v-model="localSettings.serverMode"
+              value="http"
+              class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 focus:ring-blue-500"
+              @change="handleChange"
+            />
+            <span class="text-sm text-gray-200">HTTP</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              v-model="localSettings.serverMode"
+              value="socks5"
+              class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 focus:ring-blue-500"
+              @change="handleChange"
+            />
+            <span class="text-sm text-gray-200">SOCKS5</span>
+          </label>
+        </div>
+        <p v-if="localSettings.serverMode === 'socks5'" class="mt-2 text-xs text-yellow-400">
+          SOCKS5 mode: HTTP and HTTPS listeners will not start. Only the SOCKS5 proxy will be active.
+        </p>
+      </div>
+
       <!-- HTTP Section -->
-      <CollapsibleSection title="HTTP Settings" :defaultOpen="true">
+      <CollapsibleSection v-if="localSettings.serverMode === 'http'" title="HTTP Settings" :defaultOpen="true">
         <div class="space-y-4">
           <!-- HTTP Port and Redirect in row -->
           <div class="flex items-start gap-6">
@@ -53,8 +85,8 @@
         </div>
       </CollapsibleSection>
 
-      <!-- HTTPS Section -->
-      <CollapsibleSection title="HTTPS Settings" :defaultOpen="false">
+      <!-- HTTPS Section (only in HTTP mode) -->
+      <CollapsibleSection v-if="localSettings.serverMode === 'http'" title="HTTPS Settings" :defaultOpen="false">
         <div class="space-y-6">
           <!-- Enable HTTPS -->
           <div class="flex items-center">
@@ -723,21 +755,38 @@
       </CollapsibleSection>
     </div>
 
-    <!-- Locked Footer with SAVE Button -->
+    <!-- Locked Footer with APPLY/RESET Buttons -->
     <div class="flex-shrink-0 border-t border-gray-700 p-4 bg-gray-800">
-      <div class="flex justify-end">
-        <button
-          :disabled="!hasChanges"
-          :class="[
-            'px-4 py-2 rounded font-medium transition-colors',
-            hasChanges
-              ? 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
-              : 'bg-gray-600 text-gray-400 cursor-not-allowed'
-          ]"
-          @click="handleSave"
-        >
-          SAVE
-        </button>
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span v-if="hasChanges" class="text-xs text-yellow-400">Unapplied changes</span>
+        </div>
+        <div class="flex gap-2">
+          <button
+            :disabled="!hasChanges"
+            :class="[
+              'px-4 py-2 rounded font-medium transition-colors',
+              hasChanges
+                ? 'bg-gray-600 hover:bg-gray-500 text-white cursor-pointer'
+                : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+            ]"
+            @click="handleReset"
+          >
+            RESET
+          </button>
+          <button
+            :disabled="!hasChanges"
+            :class="[
+              'px-4 py-2 rounded font-medium transition-colors',
+              hasChanges
+                ? 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
+                : 'bg-gray-600 text-gray-400 cursor-not-allowed'
+            ]"
+            @click="handleSave"
+          >
+            APPLY
+          </button>
+        </div>
       </div>
     </div>
 
@@ -801,6 +850,7 @@ const corsScriptValid = ref(true)
 
 // Local state (editable copy of config)
 const localSettings = ref({
+  serverMode: 'http' as 'http' | 'socks5',
   port: 8080,
   http2Enabled: false,
   httpsEnabled: false,
@@ -1128,6 +1178,7 @@ watch(() => serverStore.config, (newConfig) => {
 
 function loadFromConfig(config: models.AppConfig) {
   localSettings.value = {
+    serverMode: (config.server_mode as 'http' | 'socks5') || 'http',
     port: config.port || 8080,
     http2Enabled: config.http2_enabled || false,
     httpsEnabled: config.https_enabled || false,
@@ -1224,6 +1275,11 @@ function handleChange() {
   // Changes are tracked automatically via computed hasChanges
 }
 
+function handleReset() {
+  localSettings.value = JSON.parse(JSON.stringify(savedSettings.value))
+  domains.value = JSON.parse(JSON.stringify(savedDomains.value))
+}
+
 async function handleSave() {
   if (!hasChanges.value) return
 
@@ -1235,6 +1291,7 @@ async function handleSave() {
 
     // Build ServerSettings object
     const settings: any = {
+      server_mode: localSettings.value.serverMode,
       port: localSettings.value.port,
       http2_enabled: localSettings.value.http2Enabled,
       https_enabled: localSettings.value.httpsEnabled,
