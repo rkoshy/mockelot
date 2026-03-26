@@ -744,6 +744,48 @@
         </div>
       </CollapsibleSection>
 
+      <!-- WebSocket Section -->
+      <CollapsibleSection title="WebSocket" :defaultOpen="false">
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-1">
+              Capture size per message
+            </label>
+            <p class="text-xs text-gray-500 mb-2">
+              Maximum bytes stored per WebSocket frame for inspection and export.
+              Large frames are truncated; binary frames are stored as hex.
+            </p>
+            <div class="flex items-center gap-3">
+              <input
+                v-model.number="localSettings.wsCaptureBytes"
+                type="number"
+                min="64"
+                max="1048576"
+                step="1024"
+                class="w-32 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                @input="handleChange"
+              />
+              <span class="text-xs text-gray-400">bytes (default: 1024)</span>
+              <div class="flex gap-1">
+                <button
+                  v-for="preset in [512, 1024, 4096, 16384, 65536]"
+                  :key="preset"
+                  @click="localSettings.wsCaptureBytes = preset; handleChange()"
+                  :class="[
+                    'px-2 py-0.5 rounded text-xs transition-colors',
+                    localSettings.wsCaptureBytes === preset
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                  ]"
+                >
+                  {{ preset >= 1024 ? (preset / 1024) + 'K' : preset + 'B' }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </CollapsibleSection>
+
       <!-- DNS Section -->
       <CollapsibleSection title="DNS Resolution" :defaultOpen="false">
         <DNSSection
@@ -879,6 +921,7 @@ const localSettings = ref({
     username: '',
     password: '',
   },
+  wsCaptureBytes: 1024,
   dnsOverrides: {
     enabled: false,
     overrides: [] as Array<{
@@ -1207,6 +1250,7 @@ function loadFromConfig(config: models.AppConfig) {
       username: config.socks5_config?.username || '',
       password: config.socks5_config?.password || '',
     },
+    wsCaptureBytes: config.ws_capture_bytes || 1024,
     dnsOverrides: {
       enabled: config.dns_overrides?.enabled || false,
       overrides: config.dns_overrides?.overrides?.map((o: any) => ({
@@ -1314,6 +1358,7 @@ async function handleSave() {
         username: localSettings.value.socks5Config.username,
         password: localSettings.value.socks5Config.password,
       },
+      ws_capture_bytes: localSettings.value.wsCaptureBytes,
       domain_takeover: new models.DomainTakeoverConfig({
         domains: domains.value.map(d => new models.DomainConfig({
           id: d.id,

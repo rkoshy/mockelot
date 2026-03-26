@@ -468,6 +468,9 @@ type UserConfig struct {
 	// Container Configuration
 	ContainerLogLineLimit int `json:"container_log_line_limit,omitempty" yaml:"container_log_line_limit,omitempty"` // Max log lines to retrieve
 
+	// WebSocket Configuration
+	WSCaptureBytes int `json:"ws_capture_bytes,omitempty" yaml:"ws_capture_bytes,omitempty"` // Max bytes captured per WS message (default 1024)
+
 	// Metadata
 	LastModified   time.Time               `json:"last_modified,omitempty" yaml:"last_modified,omitempty"` // Last time configuration was modified
 }
@@ -533,6 +536,9 @@ type AppConfig struct {
 	// Container Configuration
 	ContainerLogLineLimit int `json:"container_log_line_limit,omitempty" yaml:"container_log_line_limit,omitempty"` // Max number of log lines to retrieve (default 5000)
 
+	// WebSocket Configuration
+	WSCaptureBytes int `json:"ws_capture_bytes,omitempty" yaml:"ws_capture_bytes,omitempty"` // Max bytes captured per WS message (default 1024)
+
 	// Selected Endpoint
 	SelectedEndpointId string `json:"selected_endpoint_id,omitempty" yaml:"selected_endpoint_id,omitempty"` // Currently selected endpoint ID
 }
@@ -553,6 +559,7 @@ type ServerSettings struct {
 	CORS                   *CORSConfig            `json:"cors,omitempty"`             // Pointer to distinguish "not provided" from "empty struct"
 	SOCKS5Config           *SOCKS5Config          `json:"socks5_config,omitempty"`
 	DomainTakeover         *DomainTakeoverConfig  `json:"domain_takeover,omitempty"`
+	WSCaptureBytes         *int                   `json:"ws_capture_bytes,omitempty"` // Max bytes captured per WS message (nil = use default)
 }
 
 // GetAllResponses returns all enabled responses in priority order (flattened from items and legacy responses)

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -706,7 +707,12 @@ func forwardBackendWSResponseHeaders(resp *http.Response) http.Header {
 }
 
 // makeWSEvent creates a WebSocketEvent from a gorilla message type + payload.
-func makeWSEvent(msgType int, data []byte, direction string, connStart time.Time) models.WebSocketEvent {
+// captureBytes controls how much data is stored in DataPreview (0 = use default 1024).
+func makeWSEvent(msgType int, data []byte, direction string, connStart time.Time, captureBytes int) models.WebSocketEvent {
+	if captureBytes <= 0 {
+		captureBytes = 1024
+	}
+
 	opcode := models.WSOpcodeText
 	switch msgType {
 	case websocket.TextMessage:
@@ -730,18 +736,37 @@ func makeWSEvent(msgType int, data []byte, direction string, connStart time.Time
 		DataSize:  len(data),
 	}
 
-	if msgType == websocket.TextMessage && len(data) > 0 {
-		preview := string(data)
-		if len(preview) > 200 {
-			preview = preview[:200] + "…"
+	switch msgType {
+	case websocket.TextMessage:
+		if len(data) > 0 {
+			captured := data
+			truncated := len(data) > captureBytes
+			if truncated {
+				captured = data[:captureBytes]
+			}
+			event.DataPreview = string(captured)
+			if truncated {
+				event.DataPreview += fmt.Sprintf("\n… [%d bytes total, showing first %d]", len(data), captureBytes)
+			}
 		}
-		event.DataPreview = preview
-	}
-
-	if msgType == websocket.CloseMessage && len(data) >= 2 {
-		event.CloseCode = int(data[0])<<8 | int(data[1])
-		if len(data) > 2 {
-			event.CloseText = string(data[2:])
+	case websocket.BinaryMessage:
+		if len(data) > 0 {
+			captured := data
+			truncated := len(data) > captureBytes
+			if truncated {
+				captured = data[:captureBytes]
+			}
+			event.DataPreview = hex.EncodeToString(captured)
+			if truncated {
+				event.DataPreview += fmt.Sprintf("\n… [%d bytes total, showing first %d as hex]", len(data), captureBytes)
+			}
+		}
+	case websocket.CloseMessage:
+		if len(data) >= 2 {
+			event.CloseCode = int(data[0])<<8 | int(data[1])
+			if len(data) > 2 {
+				event.CloseText = string(data[2:])
+			}
 		}
 	}
 
@@ -852,6 +877,10 @@ func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientRea
 	}
 
 	// ── Step 4: relay frames bidirectionally ─────────────────────────────────
+	captureBytes := 1024
+	if s.requestLogger != nil {
+		captureBytes = s.requestLogger.GetWSCaptureBytes()
+	}
 	errChan := make(chan error, 2)
 
 	// Client → Backend
@@ -867,7 +896,7 @@ func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientRea
 				return
 			}
 			if s.requestLogger != nil {
-				s.requestLogger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionSend, startTime))
+				s.requestLogger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionSend, startTime, captureBytes))
 			}
 		}
 	}()
@@ -885,7 +914,7 @@ func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientRea
 				return
 			}
 			if s.requestLogger != nil {
-				s.requestLogger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionRecv, startTime))
+				s.requestLogger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionRecv, startTime, captureBytes))
 			}
 		}
 	}()
@@ -1000,6 +1029,10 @@ func (s *SOCKS5Server) handlePlainWebSocket(clientConn net.Conn, clientReader *b
 	}
 
 	// ── Step 4: relay frames ─────────────────────────────────────────────────
+	captureBytes := 1024
+	if s.requestLogger != nil {
+		captureBytes = s.requestLogger.GetWSCaptureBytes()
+	}
 	errChan := make(chan error, 2)
 
 	go func() {
@@ -1014,7 +1047,7 @@ func (s *SOCKS5Server) handlePlainWebSocket(clientConn net.Conn, clientReader *b
 				return
 			}
 			if s.requestLogger != nil {
-				s.requestLogger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionSend, startTime))
+				s.requestLogger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionSend, startTime, captureBytes))
 			}
 		}
 	}()
@@ -1031,7 +1064,7 @@ func (s *SOCKS5Server) handlePlainWebSocket(clientConn net.Conn, clientReader *b
 				return
 			}
 			if s.requestLogger != nil {
-				s.requestLogger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionRecv, startTime))
+				s.requestLogger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionRecv, startTime, captureBytes))
 			}
 		}
 	}()

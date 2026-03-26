@@ -78,6 +78,10 @@ export function ExportLogsAsHAR(arg1, arg2) {
   return window['go']['main']['App']['ExportLogsAsHAR'](arg1, arg2);
 }
 
+export function ExportWSTrace(arg1) {
+  return window['go']['main']['App']['ExportWSTrace'](arg1);
+}
+
 export function FrontendLog(arg1) {
   return window['go']['main']['App']['FrontendLog'](arg1);
 }
@@ -180,6 +184,10 @@ export function GetSelectedEndpointId() {
 
 export function GetServerStatus() {
   return window['go']['main']['App']['GetServerStatus']();
+}
+
+export function GetWSCaptureBytes() {
+  return window['go']['main']['App']['GetWSCaptureBytes']();
 }
 
 export function ImportOpenAPISpecWithDialog(arg1) {

@@ -41,6 +41,8 @@ export function ExportLogsAsCurl(arg1:string,arg2:string):Promise<void>;
 
 export function ExportLogsAsHAR(arg1:string,arg2:string):Promise<void>;
 
+export function ExportWSTrace(arg1:string):Promise<void>;
+
 export function FrontendLog(arg1:string):Promise<void>;
 
 export function GetAllResponseIDsWithErrors():Promise<Array<string>>;
@@ -92,6 +94,8 @@ export function GetScriptErrors(arg1:string):Promise<Array<main.ScriptErrorLog>>
 export function GetSelectedEndpointId():Promise<string>;
 
 export function GetServerStatus():Promise<main.ServerStatus>;
+
+export function GetWSCaptureBytes():Promise<number>;
 
 export function ImportOpenAPISpecWithDialog(arg1:boolean):Promise<models.AppConfig>;
 

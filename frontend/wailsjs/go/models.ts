@@ -746,6 +746,7 @@ export namespace models {
 	    domain_takeover?: DomainTakeoverConfig;
 	    dns_overrides?: DNSOverrideConfig;
 	    container_log_line_limit?: number;
+	    ws_capture_bytes?: number;
 	    selected_endpoint_id?: string;
 	
 	    static createFrom(source: any = {}) {
@@ -772,6 +773,7 @@ export namespace models {
 	        this.domain_takeover = this.convertValues(source["domain_takeover"], DomainTakeoverConfig);
 	        this.dns_overrides = this.convertValues(source["dns_overrides"], DNSOverrideConfig);
 	        this.container_log_line_limit = source["container_log_line_limit"];
+	        this.ws_capture_bytes = source["ws_capture_bytes"];
 	        this.selected_endpoint_id = source["selected_endpoint_id"];
 	    }
 	
@@ -1179,6 +1181,7 @@ export namespace models {
 	    cors?: CORSConfig;
 	    socks5_config?: SOCKS5Config;
 	    domain_takeover?: DomainTakeoverConfig;
+	    ws_capture_bytes?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServerSettings(source);
@@ -1198,6 +1201,7 @@ export namespace models {
 	        this.cors = this.convertValues(source["cors"], CORSConfig);
 	        this.socks5_config = this.convertValues(source["socks5_config"], SOCKS5Config);
 	        this.domain_takeover = this.convertValues(source["domain_takeover"], DomainTakeoverConfig);
+	        this.ws_capture_bytes = source["ws_capture_bytes"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

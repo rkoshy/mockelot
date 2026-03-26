@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -2065,6 +2066,9 @@ func (a *App) saveConfigToPath(path string) error {
 		// Container configuration
 		ContainerLogLineLimit: a.config.ContainerLogLineLimit,
 
+		// WebSocket configuration
+		WSCaptureBytes: a.config.WSCaptureBytes,
+
 		// Metadata
 		LastModified:   time.Now(),
 	}
@@ -2647,6 +2651,91 @@ func (a *App) ClearRequestLogs() {
 	runtime.EventsEmit(a.ctx, "logs:cleared", nil)
 }
 
+// ExportWSTrace exports a WebSocket connection's full frame trace to a user-chosen file.
+// The output format is human-readable text: metadata header, then each frame with its
+// timestamp, direction, opcode, size, and captured data, separated by a ruled line.
+func (a *App) ExportWSTrace(connectionID string) error {
+	a.logMutex.RLock()
+	var found *models.RequestLog
+	for i := range a.requestLogs {
+		if a.requestLogs[i].ID == connectionID {
+			cp := a.requestLogs[i]
+			found = &cp
+			break
+		}
+	}
+	a.logMutex.RUnlock()
+
+	if found == nil {
+		return fmt.Errorf("WebSocket connection %s not found", connectionID)
+	}
+
+	// Build default filename from timestamp + path
+	safeTime := strings.NewReplacer(":", "-", "T", "_").Replace(found.WSOpenedAt)
+	if safeTime == "" {
+		safeTime = strings.NewReplacer(":", "-", "T", "_").Replace(found.Timestamp)
+	}
+	safePath := strings.ReplaceAll(strings.TrimPrefix(found.ClientRequest.Path, "/"), "/", "_")
+	filename := fmt.Sprintf("ws-trace-%s-%s.txt", safeTime, safePath)
+	if safePath == "" {
+		filename = fmt.Sprintf("ws-trace-%s.txt", safeTime)
+	}
+
+	savePath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		DefaultFilename: filename,
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Text Files (*.txt)", Pattern: "*.txt"},
+		},
+	})
+	if err != nil || savePath == "" {
+		return nil // user cancelled
+	}
+
+	var buf bytes.Buffer
+	sep := strings.Repeat("─", 80) + "\n"
+
+	buf.WriteString("# WebSocket Trace\n")
+	buf.WriteString(fmt.Sprintf("# URL:     %s\n", found.ClientRequest.FullURL))
+	buf.WriteString(fmt.Sprintf("# Opened:  %s\n", found.WSOpenedAt))
+	if found.WSClosedAt != "" {
+		buf.WriteString(fmt.Sprintf("# Closed:  %s", found.WSClosedAt))
+		if found.WSCloseCode != 0 {
+			buf.WriteString(fmt.Sprintf("  (code %d", found.WSCloseCode))
+			if found.WSCloseReason != "" {
+				buf.WriteString(fmt.Sprintf(" — %s", found.WSCloseReason))
+			}
+			buf.WriteString(")")
+		}
+		buf.WriteString("\n")
+	}
+	buf.WriteString(fmt.Sprintf("# Frames:  ↑%d sent  ↓%d received\n", found.WSFramesSent, found.WSFramesRecv))
+	buf.WriteString(fmt.Sprintf("# Bytes:   %d total\n", found.WSBytesTotal))
+	buf.WriteString("\n")
+
+	for _, ev := range found.WebSocketEvents {
+		dirLabel := "CLIENT→SERVER"
+		if ev.Direction == models.WSDirectionRecv {
+			dirLabel = "SERVER→CLIENT"
+		}
+		buf.WriteString(sep)
+		buf.WriteString(fmt.Sprintf("%s  %-8s  %s  %d bytes  +%dms\n",
+			ev.Timestamp, ev.Opcode, dirLabel, ev.DataSize, ev.OffsetMs))
+		if ev.DataPreview != "" {
+			buf.WriteString("\n")
+			buf.WriteString(ev.DataPreview)
+			buf.WriteString("\n")
+		}
+		if ev.CloseCode != 0 {
+			buf.WriteString(fmt.Sprintf("\nClose code: %d  Reason: %s\n", ev.CloseCode, ev.CloseText))
+		}
+		buf.WriteString("\n")
+	}
+	buf.WriteString(sep)
+	buf.WriteString("# End of trace\n")
+
+	return os.WriteFile(savePath, buf.Bytes(), 0644)
+}
+
 // ExportLogs exports logs in the specified format
 func (a *App) ExportLogs(format string) error {
 	a.logMutex.RLock()
@@ -3028,6 +3117,9 @@ func (a *App) UpdateServerSettings(settings models.ServerSettings) error {
 	if settings.SOCKS5Config != nil {
 		a.config.SOCKS5Config = settings.SOCKS5Config
 	}
+	if settings.WSCaptureBytes != nil {
+		a.config.WSCaptureBytes = *settings.WSCaptureBytes
+	}
 	if settings.DomainTakeover != nil {
 		a.config.DomainTakeover = settings.DomainTakeover
 		// Recreate synthetic overlay endpoints for the new domain configuration
@@ -3257,6 +3349,18 @@ func (a *App) LogRequest(log models.RequestLog) {
 	a.requestLogQueueMutex.Lock()
 	a.requestLogSummaryQueue = append(a.requestLogSummaryQueue, summary)
 	a.requestLogQueueMutex.Unlock()
+}
+
+// GetWSCaptureBytes implements the server.RequestLogger interface.
+// Returns the configured max bytes to capture per WS message, defaulting to 1024.
+func (a *App) GetWSCaptureBytes() int {
+	a.configMutex.RLock()
+	n := a.config.WSCaptureBytes
+	a.configMutex.RUnlock()
+	if n <= 0 {
+		return 1024
+	}
+	return n
 }
 
 // AppendWebSocketEvent implements the server.RequestLogger interface.
@@ -3782,6 +3886,7 @@ func userConfigToAppConfig(userCfg *models.UserConfig, serverCfg *models.AppConf
 		SOCKS5Config:          userCfg.SOCKS5Config,
 		DomainTakeover:        userCfg.DomainTakeover,
 		ContainerLogLineLimit: userCfg.ContainerLogLineLimit,
+		WSCaptureBytes:        userCfg.WSCaptureBytes,
 	}
 
 	// Server settings now come from UserConfig (unified format)

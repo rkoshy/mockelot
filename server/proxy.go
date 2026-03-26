@@ -578,6 +578,10 @@ func (p *ProxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request, e
 	}
 
 	// Bidirectional forwarding with frame logging
+	captureBytes := 1024
+	if p.logger != nil {
+		captureBytes = p.logger.GetWSCaptureBytes()
+	}
 	errChan := make(chan error, 2)
 
 	// Client -> Backend
@@ -593,7 +597,7 @@ func (p *ProxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request, e
 				return
 			}
 			if p.logger != nil {
-				p.logger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionSend, startTime))
+				p.logger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionSend, startTime, captureBytes))
 			}
 		}
 	}()
@@ -611,7 +615,7 @@ func (p *ProxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request, e
 				return
 			}
 			if p.logger != nil {
-				p.logger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionRecv, startTime))
+				p.logger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionRecv, startTime, captureBytes))
 			}
 		}
 	}()

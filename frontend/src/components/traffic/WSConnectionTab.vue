@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useServerStore } from '../../stores/server'
+import { ExportWSTrace } from '../../../wailsjs/go/main/App'
 import type { models } from '../../../wailsjs/go/models'
 
 interface Props {
@@ -109,6 +110,22 @@ function toggleExpand(id: string) {
   expandedFrameId.value = expandedFrameId.value === id ? null : id
 }
 
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    // fallback: select text
+  }
+}
+
+async function handleExportTrace() {
+  try {
+    await ExportWSTrace(props.logSummary.id)
+  } catch (e) {
+    console.error('ExportWSTrace failed:', e)
+  }
+}
+
 function formatOffset(ms: number): string {
   if (ms < 1000) return `+${ms}ms`
   return `+${(ms / 1000).toFixed(3)}s`
@@ -156,6 +173,14 @@ function formatSize(bytes: number): string {
           title="Inspect upgrade handshake"
         >
           Upgrade Request
+        </button>
+        <button
+          @click="handleExportTrace"
+          :disabled="filteredFrames.length === 0"
+          class="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Export full trace to file"
+        >
+          Export Trace
         </button>
       </div>
 
@@ -232,7 +257,19 @@ function formatSize(bytes: number): string {
 
           <!-- Expanded data -->
           <div v-if="expandedFrameId === frame.id && frame.data_preview" class="px-4 pb-3">
-            <pre class="bg-gray-900 rounded p-3 text-xs text-gray-300 whitespace-pre-wrap break-all overflow-auto max-h-64">{{ frame.data_preview }}</pre>
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-xs text-gray-500 font-mono">
+                {{ frame.opcode === 'BINARY' ? 'hex' : 'text' }} · {{ frame.data_size }} bytes total
+              </span>
+              <button
+                @click.stop="copyToClipboard(frame.data_preview)"
+                class="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 transition-colors"
+                title="Copy to clipboard"
+              >
+                Copy
+              </button>
+            </div>
+            <pre class="bg-gray-900 rounded p-3 text-xs text-gray-300 whitespace-pre-wrap break-all overflow-auto max-h-96">{{ frame.data_preview }}</pre>
           </div>
         </div>
       </div>
