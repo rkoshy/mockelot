@@ -1015,6 +1015,13 @@ export namespace models {
 	    socks5_info?: SOCKS5RequestInfo;
 	    is_websocket?: boolean;
 	    websocket_events?: WebSocketEvent[];
+	    ws_opened_at?: string;
+	    ws_closed_at?: string;
+	    ws_close_code?: number;
+	    ws_close_reason?: string;
+	    ws_frames_sent?: number;
+	    ws_frames_recv?: number;
+	    ws_bytes_total?: number;
 	    // Go type: struct { Method string "json:\"method\""; FullURL string "json:\"full_url\""; Path string "json:\"path\""; QueryParams map[string][]string "json:\"query_params,omitempty\""; Headers map[string][]string "json:\"headers,omitempty\""; Body string "json:\"body,omitempty\""; Protocol string "json:\"protocol,omitempty\""; SourceIP string "json:\"source_ip\""; UserAgent string "json:\"user_agent,omitempty\"" }
 	    client_request: any;
 	    // Go type: struct { StatusCode *int "json:\"status_code,omitempty\""; StatusText string "json:\"status_text,omitempty\""; Headers map[string][]string "json:\"headers,omitempty\""; Body string "json:\"body,omitempty\""; DelayMs *int64 "json:\"delay_ms,omitempty\""; RTTMs *int64 "json:\"rtt_ms,omitempty\"" }
@@ -1039,6 +1046,13 @@ export namespace models {
 	        this.socks5_info = this.convertValues(source["socks5_info"], SOCKS5RequestInfo);
 	        this.is_websocket = source["is_websocket"];
 	        this.websocket_events = this.convertValues(source["websocket_events"], WebSocketEvent);
+	        this.ws_opened_at = source["ws_opened_at"];
+	        this.ws_closed_at = source["ws_closed_at"];
+	        this.ws_close_code = source["ws_close_code"];
+	        this.ws_close_reason = source["ws_close_reason"];
+	        this.ws_frames_sent = source["ws_frames_sent"];
+	        this.ws_frames_recv = source["ws_frames_recv"];
+	        this.ws_bytes_total = source["ws_bytes_total"];
 	        this.client_request = this.convertValues(source["client_request"], Object);
 	        this.client_response = this.convertValues(source["client_response"], Object);
 	        this.backend_request = this.convertValues(source["backend_request"], Object);
@@ -1083,6 +1097,13 @@ export namespace models {
 	    target_host?: string;
 	    target_port?: number;
 	    is_websocket?: boolean;
+	    ws_is_open: boolean;
+	    ws_frames_sent?: number;
+	    ws_frames_recv?: number;
+	    ws_bytes_total?: number;
+	    ws_close_code?: number;
+	    ws_opened_at?: string;
+	    ws_closed_at?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new RequestLogSummary(source);
@@ -1109,6 +1130,13 @@ export namespace models {
 	        this.target_host = source["target_host"];
 	        this.target_port = source["target_port"];
 	        this.is_websocket = source["is_websocket"];
+	        this.ws_is_open = source["ws_is_open"];
+	        this.ws_frames_sent = source["ws_frames_sent"];
+	        this.ws_frames_recv = source["ws_frames_recv"];
+	        this.ws_bytes_total = source["ws_bytes_total"];
+	        this.ws_close_code = source["ws_close_code"];
+	        this.ws_opened_at = source["ws_opened_at"];
+	        this.ws_closed_at = source["ws_closed_at"];
 	    }
 	}
 	

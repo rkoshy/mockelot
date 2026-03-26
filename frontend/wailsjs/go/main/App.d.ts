@@ -23,6 +23,8 @@ export function ClearRequestLogs():Promise<void>;
 
 export function ClearScriptErrors(arg1:string):Promise<void>;
 
+export function CloseWebSocketConnection(arg1:string,arg2:number,arg3:string,arg4:Error):Promise<void>;
+
 export function DeleteContainer(arg1:string):Promise<void>;
 
 export function DeleteEndpoint(arg1:string):Promise<void>;

@@ -568,6 +568,18 @@ func (s *SOCKS5Server) shouldIntercept(domain string) bool {
 	return false
 }
 
+// extractWSCloseInfo extracts the WebSocket close code and reason from a relay error.
+// Returns (0, "") for non-close errors (TCP reset, timeout, etc.).
+func extractWSCloseInfo(err error) (code int, reason string) {
+	if err == nil {
+		return websocket.CloseNormalClosure, ""
+	}
+	if ce, ok := err.(*websocket.CloseError); ok {
+		return ce.Code, ce.Text
+	}
+	return 0, ""
+}
+
 // isWebSocketUpgrade returns true when r carries a WebSocket upgrade request.
 func isWebSocketUpgrade(r *http.Request) bool {
 	return strings.ToLower(r.Header.Get("Upgrade")) == "websocket" &&
@@ -878,8 +890,19 @@ func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientRea
 		}
 	}()
 
+	// Wait for the first relay goroutine to fail, then close both connections to
+	// force the second goroutine to exit. Drain both errors before recording the
+	// close event so no AppendWebSocketEvent calls race with CloseWebSocketConnection.
 	relayErr := <-errChan
-	log.Printf("SOCKS5 WSS [%s] tunnel closed after %.1fs: %v", targetAddr, time.Since(startTime).Seconds(), relayErr)
+	clientWS.Close()
+	backendWS.Close()
+	<-errChan // wait for the second goroutine
+
+	closeCode, closeReason := extractWSCloseInfo(relayErr)
+	log.Printf("SOCKS5 WSS [%s] tunnel closed after %.1fs: %v (code=%d)", targetAddr, time.Since(startTime).Seconds(), relayErr, closeCode)
+	if s.requestLogger != nil {
+		s.requestLogger.CloseWebSocketConnection(connID, closeCode, closeReason, relayErr)
+	}
 }
 
 // handlePlainWebSocket relays a WebSocket connection detected inside a plain-HTTP SOCKS5 tunnel.
@@ -1014,7 +1037,15 @@ func (s *SOCKS5Server) handlePlainWebSocket(clientConn net.Conn, clientReader *b
 	}()
 
 	relayErr := <-errChan
-	log.Printf("SOCKS5 WS [%s] tunnel closed after %.1fs: %v", targetAddr, time.Since(startTime).Seconds(), relayErr)
+	clientWS.Close()
+	backendWS.Close()
+	<-errChan
+
+	closeCode, closeReason := extractWSCloseInfo(relayErr)
+	log.Printf("SOCKS5 WS [%s] tunnel closed after %.1fs: %v (code=%d)", targetAddr, time.Since(startTime).Seconds(), relayErr, closeCode)
+	if s.requestLogger != nil {
+		s.requestLogger.CloseWebSocketConnection(connID, closeCode, closeReason, relayErr)
+	}
 }
 
 // handleTunnel processes HTTP/HTTPS requests through the SOCKS5 tunnel

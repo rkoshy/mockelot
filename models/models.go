@@ -603,6 +603,14 @@ type RequestLogSummary struct {
 	TargetHost       string `json:"target_host,omitempty"`           // For SOCKS5 logs: target host (domain or IP)
 	TargetPort       int    `json:"target_port,omitempty"`           // For SOCKS5 logs: target port
 	IsWebSocket      bool   `json:"is_websocket,omitempty"`          // true when this entry is a WebSocket upgrade (101)
+	// WebSocket live-tap fields — updated continuously while the connection is open
+	WSIsOpen      bool   `json:"ws_is_open"`                      // true while the WebSocket connection is active (no omitempty — false must serialize)
+	WSFramesSent  int    `json:"ws_frames_sent,omitempty"`         // Running count of client→backend frames
+	WSFramesRecv  int    `json:"ws_frames_recv,omitempty"`         // Running count of backend→client frames
+	WSBytesTotal  int64  `json:"ws_bytes_total,omitempty"`         // Total bytes across all frames
+	WSCloseCode   int    `json:"ws_close_code,omitempty"`          // WebSocket close code (0 if not a clean close)
+	WSOpenedAt    string `json:"ws_opened_at,omitempty"`           // ISO8601 timestamp when upgrade completed
+	WSClosedAt    string `json:"ws_closed_at,omitempty"`           // ISO8601 timestamp when connection closed
 }
 
 // RequestLog represents a detailed log of an incoming HTTP request and response
@@ -623,6 +631,14 @@ type RequestLog struct {
 	// WebSocket connection data (only set when IsWebSocket == true)
 	IsWebSocket     bool             `json:"is_websocket,omitempty"`
 	WebSocketEvents []WebSocketEvent `json:"websocket_events,omitempty"`
+	// WebSocket running state — updated by AppendWebSocketEvent and CloseWebSocketConnection
+	WSOpenedAt    string `json:"ws_opened_at,omitempty"`
+	WSClosedAt    string `json:"ws_closed_at,omitempty"`
+	WSCloseCode   int    `json:"ws_close_code,omitempty"`
+	WSCloseReason string `json:"ws_close_reason,omitempty"`
+	WSFramesSent  int    `json:"ws_frames_sent,omitempty"`
+	WSFramesRecv  int    `json:"ws_frames_recv,omitempty"`
+	WSBytesTotal  int64  `json:"ws_bytes_total,omitempty"`
 
 	// Client side: Client → Server
 	ClientRequest struct {

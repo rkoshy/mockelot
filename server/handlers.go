@@ -18,6 +18,7 @@ type RequestLogger interface {
 	LogRequest(log models.RequestLog)
 	UpdateRequestLog(log models.RequestLog)
 	AppendWebSocketEvent(connectionID string, event models.WebSocketEvent)
+	CloseWebSocketConnection(connectionID string, code int, reason string, relayErr error)
 }
 
 type ScriptErrorLogger interface {

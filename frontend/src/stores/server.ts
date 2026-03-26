@@ -87,17 +87,16 @@ export const useServerStore = defineStore('server', () => {
     requestLogs.value.find(log => log.id === selectedLogId.value) || null
   )
 
-  // Get full log details from cache or fetch from backend
-  async function getLogDetails(id: string): Promise<models.RequestLog | null> {
-    // Check cache first
-    if (requestLogCache.value.has(id)) {
+  // Get full log details from cache or fetch from backend.
+  // Pass force=true to bypass the cache (required for live WebSocket connections
+  // whose frame list changes between calls).
+  async function getLogDetails(id: string, force = false): Promise<models.RequestLog | null> {
+    if (!force && requestLogCache.value.has(id)) {
       return requestLogCache.value.get(id)!
     }
 
-    // Fetch from backend
     try {
       const fullLog = await GetRequestLogDetails(id)
-      // Cache it
       requestLogCache.value.set(id, fullLog)
       return fullLog
     } catch (error) {

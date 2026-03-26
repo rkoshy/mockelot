@@ -66,8 +66,9 @@ type App struct {
 	configMutex            sync.RWMutex                   // Protects config and savedConfig
 	requestLogs            []models.RequestLog
 	logMutex               sync.RWMutex
-	requestLogSummaryQueue []models.RequestLogSummary // Queue of request log summaries for frontend polling
-	requestLogQueueMutex   sync.Mutex                 // Mutex for thread-safe request log queue access
+	requestLogSummaryQueue []models.RequestLogSummary   // Queue of request log summaries for frontend polling
+	requestLogQueueMutex   sync.Mutex                   // Mutex for thread-safe request log queue access
+	wsLastSummaryUpdate    map[string]time.Time          // Throttle map: last time a WS summary was enqueued per connection
 	status                 ServerStatus
 	eventQueue             []Event    // Queue of events for frontend polling
 	eventQueueMutex        sync.Mutex // Mutex for thread-safe event queue access
@@ -100,6 +101,7 @@ func NewApp(logRequestMatching bool) *App {
 		serverConfigMgr:        config.NewServerConfigManager(""),
 		requestLogs:            make([]models.RequestLog, 0),
 		requestLogSummaryQueue: make([]models.RequestLogSummary, 0),
+		wsLastSummaryUpdate:    make(map[string]time.Time),
 		status: ServerStatus{
 			Running: false,
 			Port:    8080,
@@ -2635,9 +2637,13 @@ func (a *App) GetRequestLogByID(id string) *models.RequestLog {
 // ClearRequestLogs clears all request logs
 func (a *App) ClearRequestLogs() {
 	a.logMutex.Lock()
-	defer a.logMutex.Unlock()
-
 	a.requestLogs = make([]models.RequestLog, 0)
+	a.logMutex.Unlock()
+
+	a.requestLogQueueMutex.Lock()
+	a.wsLastSummaryUpdate = make(map[string]time.Time)
+	a.requestLogQueueMutex.Unlock()
+
 	runtime.EventsEmit(a.ctx, "logs:cleared", nil)
 }
 
@@ -3202,66 +3208,158 @@ func (a *App) ValidateCORSHeaderExpression(expression string) error {
 	return server.ValidateHeaderExpression(expression)
 }
 
+// maxWSEvents is the maximum number of WebSocket frame events retained per connection.
+// Older events are evicted using copy-based ring eviction to allow GC to reclaim memory.
+const maxWSEvents = 10000
+
 // LogRequest implements the server.RequestLogger interface
 func (a *App) LogRequest(log models.RequestLog) {
-	a.logMutex.Lock()
-	a.requestLogs = append(a.requestLogs, log)
-	a.logMutex.Unlock()
+	var summary models.RequestLogSummary
 
-	// Create lightweight summary for frontend
-	summary := models.RequestLogSummary{
-		ID:         log.ID,
-		Timestamp:  log.Timestamp,
-		EndpointID: log.EndpointID,
-		ResponseID: log.ResponseID,
-		Method:     log.ClientRequest.Method,
-		Path:       log.ClientRequest.Path,
-		SourceIP:   log.ClientRequest.SourceIP,
-		ClientStatus: log.ClientResponse.StatusCode,
-		ClientRTT:  log.ClientResponse.RTTMs,
-		HasBackend: log.BackendRequest != nil || log.BackendResponse != nil,
-		ClientBodySize: len(log.ClientRequest.Body),
-		ValidationFailed: log.ValidationFailed,
-		ResponseFailed:   log.ResponseFailed,
-	}
-
-	// Add backend info if present
-	if log.BackendResponse != nil {
-		summary.BackendStatus = log.BackendResponse.StatusCode
-		summary.BackendRTT = log.BackendResponse.RTTMs
-	}
-
-	// Add SOCKS5 info if present
-	if log.SOCKS5Info != nil {
-		summary.TargetHost = log.SOCKS5Info.TargetHost
-		summary.TargetPort = log.SOCKS5Info.TargetPort
-	}
-
-	// Mark WebSocket upgrade entries
 	if log.IsWebSocket {
-		summary.IsWebSocket = true
+		// For WebSocket connections, stamp the open time and build the live-tap summary.
+		log.WSOpenedAt = log.Timestamp
+		a.logMutex.Lock()
+		a.requestLogs = append(a.requestLogs, log)
+		summary = a.buildWSSummary(&a.requestLogs[len(a.requestLogs)-1])
+		a.logMutex.Unlock()
+	} else {
+		a.logMutex.Lock()
+		a.requestLogs = append(a.requestLogs, log)
+		a.logMutex.Unlock()
+
+		// Create lightweight summary for regular HTTP requests
+		summary = models.RequestLogSummary{
+			ID:               log.ID,
+			Timestamp:        log.Timestamp,
+			EndpointID:       log.EndpointID,
+			ResponseID:       log.ResponseID,
+			Method:           log.ClientRequest.Method,
+			Path:             log.ClientRequest.Path,
+			SourceIP:         log.ClientRequest.SourceIP,
+			ClientStatus:     log.ClientResponse.StatusCode,
+			ClientRTT:        log.ClientResponse.RTTMs,
+			HasBackend:       log.BackendRequest != nil || log.BackendResponse != nil,
+			ClientBodySize:   len(log.ClientRequest.Body),
+			ValidationFailed: log.ValidationFailed,
+			ResponseFailed:   log.ResponseFailed,
+		}
+		if log.BackendResponse != nil {
+			summary.BackendStatus = log.BackendResponse.StatusCode
+			summary.BackendRTT = log.BackendResponse.RTTMs
+		}
+		if log.SOCKS5Info != nil {
+			summary.TargetHost = log.SOCKS5Info.TargetHost
+			summary.TargetPort = log.SOCKS5Info.TargetPort
+		}
 	}
 
-	// Set pending status
-	summary.Pending = false // By default, logs are complete
-
-	// Queue summary for frontend polling (more efficient than individual events during high traffic)
 	a.requestLogQueueMutex.Lock()
 	a.requestLogSummaryQueue = append(a.requestLogSummaryQueue, summary)
 	a.requestLogQueueMutex.Unlock()
 }
 
 // AppendWebSocketEvent implements the server.RequestLogger interface.
-// It appends a single WebSocket frame event to an existing request log identified by connectionID.
+// It appends a frame event, updates running counters, and enqueues a throttled
+// summary update so the traffic log row reflects live activity.
 func (a *App) AppendWebSocketEvent(connectionID string, event models.WebSocketEvent) {
+	var summary *models.RequestLogSummary
+
 	a.logMutex.Lock()
 	for i := range a.requestLogs {
 		if a.requestLogs[i].ID == connectionID {
-			a.requestLogs[i].WebSocketEvents = append(a.requestLogs[i].WebSocketEvents, event)
+			l := &a.requestLogs[i]
+			// Ring eviction: use copy so the GC can reclaim dropped elements.
+			if len(l.WebSocketEvents) >= maxWSEvents {
+				copy(l.WebSocketEvents[0:], l.WebSocketEvents[1:])
+				l.WebSocketEvents[maxWSEvents-1] = event
+			} else {
+				l.WebSocketEvents = append(l.WebSocketEvents, event)
+			}
+			// Update running counters.
+			if event.Direction == models.WSDirectionSend {
+				l.WSFramesSent++
+			} else {
+				l.WSFramesRecv++
+			}
+			l.WSBytesTotal += int64(event.DataSize)
+			// Build summary while holding logMutex for a consistent snapshot.
+			s := a.buildWSSummary(l)
+			summary = &s
 			break
 		}
 	}
 	a.logMutex.Unlock()
+
+	// Throttled enqueue: at most one summary update per connection per 150ms.
+	if summary != nil {
+		now := time.Now()
+		a.requestLogQueueMutex.Lock()
+		if now.Sub(a.wsLastSummaryUpdate[connectionID]) >= 150*time.Millisecond {
+			a.wsLastSummaryUpdate[connectionID] = now
+			a.requestLogSummaryQueue = append(a.requestLogSummaryQueue, *summary)
+		}
+		a.requestLogQueueMutex.Unlock()
+	}
+}
+
+// CloseWebSocketConnection implements the server.RequestLogger interface.
+// Called after both relay goroutines have exited to record the final connection state.
+func (a *App) CloseWebSocketConnection(connectionID string, code int, reason string, relayErr error) {
+	var summary *models.RequestLogSummary
+
+	a.logMutex.Lock()
+	for i := range a.requestLogs {
+		if a.requestLogs[i].ID == connectionID {
+			l := &a.requestLogs[i]
+			l.WSClosedAt = time.Now().Format(time.RFC3339)
+			l.WSCloseCode = code
+			l.WSCloseReason = reason
+			s := a.buildWSSummary(l) // WSIsOpen will be false (WSClosedAt is set)
+			summary = &s
+			break
+		}
+	}
+	a.logMutex.Unlock()
+
+	if summary != nil {
+		// Always enqueue the close summary — no throttle, always deliver.
+		a.requestLogQueueMutex.Lock()
+		a.requestLogSummaryQueue = append(a.requestLogSummaryQueue, *summary)
+		delete(a.wsLastSummaryUpdate, connectionID) // clean up throttle entry
+		a.requestLogQueueMutex.Unlock()
+	}
+}
+
+// buildWSSummary builds a RequestLogSummary from a live WebSocket RequestLog.
+// Must be called with logMutex held for a consistent snapshot.
+func (a *App) buildWSSummary(l *models.RequestLog) models.RequestLogSummary {
+	summary := models.RequestLogSummary{
+		ID:           l.ID,
+		Timestamp:    l.Timestamp,
+		EndpointID:   l.EndpointID,
+		ResponseID:   l.ResponseID,
+		Method:       l.ClientRequest.Method,
+		Path:         l.ClientRequest.Path,
+		SourceIP:     l.ClientRequest.SourceIP,
+		ClientStatus: l.ClientResponse.StatusCode,
+		IsWebSocket:  true,
+		HasBackend:   l.BackendRequest != nil || l.BackendResponse != nil,
+		// WS live-tap fields
+		WSIsOpen:     l.WSClosedAt == "",
+		WSFramesSent: l.WSFramesSent,
+		WSFramesRecv: l.WSFramesRecv,
+		WSBytesTotal: l.WSBytesTotal,
+		WSCloseCode:  l.WSCloseCode,
+		WSOpenedAt:   l.WSOpenedAt,
+		WSClosedAt:   l.WSClosedAt,
+	}
+	if l.SOCKS5Info != nil {
+		summary.TargetHost = l.SOCKS5Info.TargetHost
+		summary.TargetPort = l.SOCKS5Info.TargetPort
+		summary.HasBackend = true // SOCKS5 WS always has a real backend
+	}
+	return summary
 }
 
 // UpdateRequestLog updates an existing request log (used for two-phase logging)

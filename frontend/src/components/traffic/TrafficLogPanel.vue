@@ -149,6 +149,13 @@ function formatRTT(rtt: number | undefined): string {
   return `${rtt}ms`
 }
 
+function formatBytes(bytes: number | undefined): string {
+  if (!bytes) return '0B'
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / 1048576).toFixed(1)}MB`
+}
+
 // Abbreviate a WS path for display in a tab label
 function wsTabLabel(log: models.RequestLogSummary): string {
   const path = log.path || log.target_host || 'ws'
@@ -317,15 +324,20 @@ defineExpose({ openWSTab })
               </span>
 
               <!-- Method / WS badge -->
-              <span v-if="log.is_websocket" class="text-xs font-bold w-14 flex-shrink-0 text-cyan-400">
+              <span v-if="log.is_websocket" class="text-xs font-bold w-14 flex-shrink-0 text-cyan-400 flex items-center gap-1">
                 WS
+                <span v-if="log.ws_is_open" class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse flex-shrink-0" title="Connection open" />
               </span>
               <span v-else :class="['text-xs font-bold w-14 flex-shrink-0', getMethodColor(log.method || 'GET')]">
                 {{ log.method || 'N/A' }}
               </span>
 
-              <!-- Status -->
-              <span :class="['text-xs font-mono w-16 flex-shrink-0', getStatusColor(log.client_status || 0)]">
+              <!-- Status / WS frame counts -->
+              <span v-if="log.is_websocket" class="text-xs font-mono w-16 flex-shrink-0">
+                <span class="text-violet-400">↑{{ log.ws_frames_sent ?? 0 }}</span>
+                <span class="text-teal-400"> ↓{{ log.ws_frames_recv ?? 0 }}</span>
+              </span>
+              <span v-else :class="['text-xs font-mono w-16 flex-shrink-0', getStatusColor(log.client_status || 0)]">
                 {{ formatStatus(log) }}
               </span>
 
@@ -338,8 +350,11 @@ defineExpose({ openWSTab })
                 {{ getFailureBadgeText(log) }}
               </span>
 
-              <!-- RTT -->
-              <span class="text-xs text-gray-400 font-mono w-14 flex-shrink-0 text-right">
+              <!-- RTT / WS total bytes -->
+              <span v-if="log.is_websocket" class="text-xs text-gray-400 font-mono w-14 flex-shrink-0 text-right">
+                {{ formatBytes(log.ws_bytes_total) }}
+              </span>
+              <span v-else class="text-xs text-gray-400 font-mono w-14 flex-shrink-0 text-right">
                 {{ formatRTT(log.client_rtt) }}
               </span>
 

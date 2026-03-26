@@ -616,7 +616,16 @@ func (p *ProxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request, e
 		}
 	}()
 
-	<-errChan // Wait for first error
+	// Drain both goroutines before recording close so no AppendWebSocketEvent races CloseWebSocketConnection.
+	relayErr := <-errChan
+	clientConn.Close()
+	backendConn.Close()
+	<-errChan
+
+	if p.logger != nil {
+		closeCode, closeReason := extractWSCloseInfo(relayErr)
+		p.logger.CloseWebSocketConnection(connID, closeCode, closeReason, relayErr)
+	}
 }
 
 // isWebSocketUpgrade checks if the request is a WebSocket upgrade
