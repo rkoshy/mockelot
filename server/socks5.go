@@ -592,6 +592,25 @@ func (s *SOCKS5Server) resolveTarget(targetAddr string) string {
 	return targetAddr
 }
 
+// prefixConn wraps a net.Conn, prepending bytes that were already buffered in a
+// bufio.Reader before the connection was handed to the WebSocket upgrader.
+// All net.Conn methods (Write, Close, SetDeadline, …) delegate to the inner Conn.
+type prefixConn struct {
+	net.Conn
+	prefix *bytes.Reader // drained-ahead bytes; nil once exhausted
+}
+
+func (c *prefixConn) Read(p []byte) (int, error) {
+	if c.prefix != nil && c.prefix.Len() > 0 {
+		n, _ := c.prefix.Read(p)
+		if n > 0 {
+			return n, nil // serve prefix bytes; fall through to Conn once exhausted
+		}
+	}
+	c.prefix = nil
+	return c.Conn.Read(p)
+}
+
 // socks5ResponseHijacker wraps a raw net.Conn + bufio.Reader so that the gorilla
 // WebSocket upgrader can perform the HTTP→WS upgrade inside a SOCKS5 tunnel where
 // there is no real http.ResponseWriter.
@@ -605,23 +624,29 @@ func (h *socks5ResponseHijacker) Header() http.Header { return h.header }
 func (h *socks5ResponseHijacker) Write(b []byte) (int, error) { return h.conn.Write(b) }
 func (h *socks5ResponseHijacker) WriteHeader(_ int)           {}
 func (h *socks5ResponseHijacker) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	// gorilla/websocket's Upgrader checks brw.Reader.Buffered() > 0 and closes the
-	// connection if any bytes are already buffered ("client sent data before handshake
-	// is complete"). Because h.reader is a bufio.Reader that read-ahead from the TLS
-	// stream (default 4 KiB buffer), it may contain bytes from the first WebSocket
-	// frame if the OS delivered it in the same TLS record as the HTTP upgrade headers.
+	// gorilla's Upgrade() does two things that interact with what we return here:
 	//
-	// Fix: drain whatever is buffered, then present a fresh bufio.Reader that chains
-	// the drained bytes with the underlying connection, so gorilla sees 0 buffered bytes
-	// but doesn't lose any data.
-	var readSource io.Reader = h.conn
+	//   1. Checks brw.Reader.Buffered() > 0 → closes conn if true.
+	//   2. Calls bufioReaderSize(netConn, brw.Reader) which internally calls
+	//      brw.Reader.Reset(netConn).  This replaces whatever the bufio.Reader was
+	//      wrapping with netConn (the first return value).
+	//
+	// A previous fix drained h.reader's buffered bytes into an io.MultiReader and
+	// returned h.conn as netConn.  That was still broken: step 2 resets brw.Reader
+	// to h.conn, discarding the MultiReader and losing the drained bytes.
+	//
+	// Correct fix: if there are buffered bytes, return a *prefixConn as netConn.
+	// Then step 2 resets brw.Reader to the *prefixConn — whose Read() still serves
+	// the drained bytes first before falling through to the real connection.
+	// Writes and all other net.Conn operations delegate to the inner conn unchanged.
+	netConn := net.Conn(h.conn)
 	if n := h.reader.Buffered(); n > 0 {
 		buf := make([]byte, n)
-		h.reader.Read(buf) // reads exactly n bytes already in memory – no new I/O
-		readSource = io.MultiReader(bytes.NewReader(buf), h.conn)
+		h.reader.Read(buf) // reads exactly n in-memory bytes — no new I/O
+		netConn = &prefixConn{Conn: h.conn, prefix: bytes.NewReader(buf)}
 	}
-	brw := bufio.NewReadWriter(bufio.NewReaderSize(readSource, 4096), bufio.NewWriter(h.conn))
-	return h.conn, brw, nil
+	brw := bufio.NewReadWriter(bufio.NewReaderSize(netConn, 4096), bufio.NewWriter(h.conn))
+	return netConn, brw, nil
 }
 
 // forwardWSHeaders builds the header set to send with the backend WebSocket dial.
@@ -725,33 +750,37 @@ func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientRea
 		s.requestLogger.LogRequest(wsLog)
 	}
 
-	// Upgrade the client-side connection to WebSocket using the hijackable writer.
-	hijacker := &socks5ResponseHijacker{conn: clientConn, reader: clientReader, header: make(http.Header)}
-	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
-	clientWS, err := upgrader.Upgrade(hijacker, req, nil)
-	if err != nil {
-		log.Printf("SOCKS5 WS client upgrade failed for %s: %v", targetAddr, err)
-		return
-	}
-	defer clientWS.Close()
-
-	// Dial the real backend WebSocket server (using original hostname for proper TLS SNI).
+	// ── Step 1: dial the backend FIRST ────────────────────────────────────────
+	// We intentionally dial before upgrading the client so that if the backend
+	// is unreachable the client receives an HTTP 502 (never sees onopen) rather
+	// than a WebSocket close frame immediately after onopen.
 	backendURL := fmt.Sprintf("wss://%s:%d%s", targetAddr, targetPort, req.URL.Path)
 	if req.URL.RawQuery != "" {
 		backendURL += "?" + req.URL.RawQuery
 	}
-	// Forward headers the backend may require for auth / subprotocol negotiation.
 	backendHeaders := forwardWSHeaders(req)
+	log.Printf("SOCKS5 WSS [%s] dialling backend %s", targetAddr, backendURL)
 	backendWS, _, err := websocket.DefaultDialer.Dial(backendURL, backendHeaders)
 	if err != nil {
-		log.Printf("SOCKS5 WS backend dial failed for %s: %v", backendURL, err)
-		clientWS.WriteMessage(websocket.CloseMessage,
-			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "Backend connection failed"))
+		log.Printf("SOCKS5 WSS [%s] backend dial FAILED: %v", targetAddr, err)
+		// Client hasn't been upgraded yet — send a plain HTTP error response.
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
 		return
 	}
 	defer backendWS.Close()
+	log.Printf("SOCKS5 WSS [%s] backend connected", targetAddr)
 
-	log.Printf("SOCKS5 WSS tunnel established: %s", backendURL)
+	// ── Step 2: upgrade the client connection ──────────────────────────────
+	log.Printf("SOCKS5 WSS [%s] upgrading client connection (buffered=%d)", targetAddr, clientReader.Buffered())
+	hijacker := &socks5ResponseHijacker{conn: clientConn, reader: clientReader, header: make(http.Header)}
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	clientWS, err := upgrader.Upgrade(hijacker, req, nil)
+	if err != nil {
+		log.Printf("SOCKS5 WSS [%s] client upgrade FAILED: %v", targetAddr, err)
+		return
+	}
+	defer clientWS.Close()
+	log.Printf("SOCKS5 WSS [%s] tunnel established", targetAddr)
 
 	errChan := make(chan error, 2)
 
@@ -791,8 +820,8 @@ func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientRea
 		}
 	}()
 
-	<-errChan
-	log.Printf("SOCKS5 WSS tunnel closed: %s (%.1fs)", backendURL, time.Since(startTime).Seconds())
+	relayErr := <-errChan
+	log.Printf("SOCKS5 WSS [%s] tunnel closed after %.1fs: %v", targetAddr, time.Since(startTime).Seconds(), relayErr)
 }
 
 // handlePlainWebSocket relays a WebSocket connection detected inside a plain-HTTP SOCKS5 tunnel.
@@ -823,30 +852,33 @@ func (s *SOCKS5Server) handlePlainWebSocket(clientConn net.Conn, clientReader *b
 		s.requestLogger.LogRequest(wsLog)
 	}
 
-	hijacker := &socks5ResponseHijacker{conn: clientConn, reader: clientReader, header: make(http.Header)}
-	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
-	clientWS, err := upgrader.Upgrade(hijacker, req, nil)
-	if err != nil {
-		log.Printf("SOCKS5 WS client upgrade failed for %s: %v", targetAddr, err)
-		return
-	}
-	defer clientWS.Close()
-
+	// ── Step 1: dial backend first ─────────────────────────────────────────
 	backendURL := fmt.Sprintf("ws://%s:%d%s", targetAddr, targetPort, req.URL.Path)
 	if req.URL.RawQuery != "" {
 		backendURL += "?" + req.URL.RawQuery
 	}
 	backendHeaders := forwardWSHeaders(req)
+	log.Printf("SOCKS5 WS [%s] dialling backend %s", targetAddr, backendURL)
 	backendWS, _, err := websocket.DefaultDialer.Dial(backendURL, backendHeaders)
 	if err != nil {
-		log.Printf("SOCKS5 WS backend dial failed for %s: %v", backendURL, err)
-		clientWS.WriteMessage(websocket.CloseMessage,
-			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "Backend connection failed"))
+		log.Printf("SOCKS5 WS [%s] backend dial FAILED: %v", targetAddr, err)
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
 		return
 	}
 	defer backendWS.Close()
+	log.Printf("SOCKS5 WS [%s] backend connected", targetAddr)
 
-	log.Printf("SOCKS5 WS tunnel established: %s", backendURL)
+	// ── Step 2: upgrade the client ─────────────────────────────────────────
+	log.Printf("SOCKS5 WS [%s] upgrading client connection (buffered=%d)", targetAddr, clientReader.Buffered())
+	hijacker := &socks5ResponseHijacker{conn: clientConn, reader: clientReader, header: make(http.Header)}
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	clientWS, err := upgrader.Upgrade(hijacker, req, nil)
+	if err != nil {
+		log.Printf("SOCKS5 WS [%s] client upgrade FAILED: %v", targetAddr, err)
+		return
+	}
+	defer clientWS.Close()
+	log.Printf("SOCKS5 WS [%s] tunnel established", targetAddr)
 
 	errChan := make(chan error, 2)
 
@@ -884,8 +916,8 @@ func (s *SOCKS5Server) handlePlainWebSocket(clientConn net.Conn, clientReader *b
 		}
 	}()
 
-	<-errChan
-	log.Printf("SOCKS5 WS tunnel closed: %s (%.1fs)", backendURL, time.Since(startTime).Seconds())
+	relayErr := <-errChan
+	log.Printf("SOCKS5 WS [%s] tunnel closed after %.1fs: %v", targetAddr, time.Since(startTime).Seconds(), relayErr)
 }
 
 // handleTunnel processes HTTP/HTTPS requests through the SOCKS5 tunnel
