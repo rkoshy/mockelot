@@ -317,6 +317,43 @@ func (h *ResponseHandler) canHandleCORSPreflightForEndpoint(endpoint *models.End
 	}
 }
 
+// FindEndpointID returns the ID of the first enabled endpoint that matches r's
+// domain and path prefix, or "system-socks5-proxy" if no endpoint matches.
+// Used by the SOCKS5 WebSocket handler to log frames under the correct endpoint tab.
+func (h *ResponseHandler) FindEndpointID(r *http.Request) string {
+	h.configMutex.RLock()
+	defer h.configMutex.RUnlock()
+
+	requestPath := r.URL.Path
+	requestDomain := extractDomain(r)
+
+	for i := range h.config.Endpoints {
+		endpoint := &h.config.Endpoints[i]
+		if !endpoint.IsEnabled() {
+			continue
+		}
+		if !h.matchesDomain(endpoint, requestDomain) {
+			continue
+		}
+		var prefixMatches bool
+		if strings.HasPrefix(endpoint.PathPrefix, "^") {
+			re, err := h.compileRegex(endpoint.PathPrefix)
+			if err == nil {
+				prefixMatches = re.MatchString(requestPath)
+			}
+		} else if endpoint.PathPrefix == "/" {
+			prefixMatches = true
+		} else {
+			prefixMatches = requestPath == endpoint.PathPrefix ||
+				strings.HasPrefix(requestPath, endpoint.PathPrefix+"/")
+		}
+		if prefixMatches {
+			return endpoint.ID
+		}
+	}
+	return "system-socks5-proxy"
+}
+
 func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	// Read request body
 	bodyBytes, _ := io.ReadAll(r.Body)

@@ -659,12 +659,16 @@ func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientRea
 	startTime := time.Now()
 	status101 := http.StatusSwitchingProtocols
 
+	// Resolve the endpoint that owns this request so the log appears under the
+	// correct endpoint tab rather than the generic SOCKS5 proxy tab.
+	endpointID := s.responseHandler.FindEndpointID(req)
+
 	// Log the WS upgrade as its own entry so it appears in the traffic log.
 	if s.requestLogger != nil {
 		wsLog := models.RequestLog{
 			ID:          connID,
 			Timestamp:   startTime.Format(time.RFC3339),
-			EndpointID:  "system-socks5-proxy",
+			EndpointID:  endpointID,
 			IsWebSocket: true,
 			SOCKS5Info: &models.SOCKS5RequestInfo{
 				TargetHost:    targetAddr,
@@ -759,11 +763,13 @@ func (s *SOCKS5Server) handlePlainWebSocket(clientConn net.Conn, clientReader *b
 	startTime := time.Now()
 	status101 := http.StatusSwitchingProtocols
 
+	endpointID := s.responseHandler.FindEndpointID(req)
+
 	if s.requestLogger != nil {
 		wsLog := models.RequestLog{
 			ID:          connID,
 			Timestamp:   startTime.Format(time.RFC3339),
-			EndpointID:  "system-socks5-proxy",
+			EndpointID:  endpointID,
 			IsWebSocket: true,
 			SOCKS5Info: &models.SOCKS5RequestInfo{
 				TargetHost: targetAddr,

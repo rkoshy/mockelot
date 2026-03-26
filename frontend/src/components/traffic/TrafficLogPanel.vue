@@ -15,9 +15,6 @@ const inspectorLog = ref<models.RequestLogSummary | null>(null)
 // URL filter
 const urlFilter = ref('')
 
-// Filter bar visibility
-const showFilters = ref(false)
-
 // Method filter state
 const methodFilters = ref<Record<string, boolean>>({
   GET: true,
@@ -231,52 +228,16 @@ defineExpose({ openWSTab })
 
     <!-- ── TRAFFIC LOG TAB ── -->
     <template v-if="activeTab === 'traffic'">
-      <!-- Header -->
-      <div class="flex items-center justify-between p-3 border-b border-gray-700 flex-shrink-0">
-        <div class="flex items-center gap-2">
-          <h2 class="text-lg font-semibold text-white">Traffic Log</h2>
-          <!-- Filter toggle -->
-          <button
-            @click="showFilters = !showFilters"
-            :class="[
-              'px-2 py-1 rounded text-xs transition-colors',
-              showFilters ? 'bg-blue-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-            ]"
-          >
-            {{ showFilters ? '▲ Filters' : '▼ Filters' }}
-          </button>
-        </div>
-        <div class="flex items-center gap-2">
-          <!-- URL Filter -->
-          <div class="relative flex items-center">
-            <input
-              v-model="urlFilter"
-              type="text"
-              placeholder="Filter by URL..."
-              class="w-44 pl-2 pr-6 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
-            />
-            <button
-              v-if="urlFilter"
-              @click="urlFilter = ''"
-              class="absolute right-1 text-gray-400 hover:text-white"
-              title="Clear filter"
-            >
-              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-          <span class="text-sm text-gray-400">{{ filteredLogs.length }} requests</span>
-          <button @click="handleExportJSON" :disabled="filteredLogs.length === 0" class="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">Export JSON</button>
-          <button @click="handleExportCSV" :disabled="filteredLogs.length === 0" class="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">Export CSV</button>
-          <button @click="serverStore.clearLogs" :disabled="filteredLogs.length === 0" class="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-xs text-white disabled:opacity-50 disabled:cursor-not-allowed">Clear</button>
-        </div>
-      </div>
+      <!-- Header (title + inline method filters + URL filter + actions — wraps on narrow windows) -->
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 border-b border-gray-700 flex-shrink-0">
+        <!-- Title -->
+        <h2 class="text-sm font-semibold text-white whitespace-nowrap">Traffic Log</h2>
 
-      <!-- Filter bar (collapsible) -->
-      <div v-if="showFilters" class="px-3 py-2 border-b border-gray-700 bg-gray-850 flex-shrink-0">
-        <div class="flex items-center gap-3 flex-wrap">
-          <span class="text-xs text-gray-500 font-medium">Methods:</span>
+        <!-- Divider -->
+        <span class="text-gray-700 hidden sm:inline">|</span>
+
+        <!-- Method filter checkboxes -->
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
           <label
             v-for="method in ALL_METHODS"
             :key="method"
@@ -291,11 +252,37 @@ defineExpose({ openWSTab })
               {{ method }}
             </span>
           </label>
-          <div class="ml-auto flex gap-1">
-            <button @click="setAllFilters(true)" class="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300">All</button>
-            <button @click="setAllFilters(false)" class="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300">None</button>
-          </div>
+          <button @click="setAllFilters(true)"  class="px-1.5 py-0.5 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-400">All</button>
+          <button @click="setAllFilters(false)" class="px-1.5 py-0.5 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-400">None</button>
         </div>
+
+        <!-- Spacer -->
+        <div class="flex-1 min-w-0"></div>
+
+        <!-- URL Filter -->
+        <div class="relative flex items-center">
+          <input
+            v-model="urlFilter"
+            type="text"
+            placeholder="Filter by URL..."
+            class="w-40 pl-2 pr-6 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+          />
+          <button
+            v-if="urlFilter"
+            @click="urlFilter = ''"
+            class="absolute right-1 text-gray-400 hover:text-white"
+            title="Clear filter"
+          >
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <span class="text-xs text-gray-400 whitespace-nowrap">{{ filteredLogs.length }} reqs</span>
+        <button @click="handleExportJSON" :disabled="filteredLogs.length === 0" class="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">JSON</button>
+        <button @click="handleExportCSV"  :disabled="filteredLogs.length === 0" class="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">CSV</button>
+        <button @click="serverStore.clearLogs" :disabled="filteredLogs.length === 0" class="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-xs text-white disabled:opacity-50 disabled:cursor-not-allowed">Clear</button>
       </div>
 
       <!-- Log List -->
