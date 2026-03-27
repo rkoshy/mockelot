@@ -67,6 +67,23 @@ watch(() => serverStore.requestLogs, (logs) => {
   }
 }, { deep: false })
 
+// WS tabs visible for the currently selected endpoint.
+// When no endpoint is selected (showing all), all WS tabs are visible.
+const visibleWSTabs = computed(() => {
+  const endpointId = serverStore.selectedEndpointId
+  if (!endpointId) return [...wsConnectionTabs.value.entries()]
+  return [...wsConnectionTabs.value.entries()].filter(([, wsLog]) => wsLog.endpoint_id === endpointId)
+})
+
+// When the endpoint selection changes, hide any active WS tab that belongs
+// to a different endpoint and fall back to the Traffic Log tab.
+watch(() => serverStore.selectedEndpointId, () => {
+  if (activeTab.value !== 'traffic') {
+    const stillVisible = visibleWSTabs.value.some(([id]) => id === activeTab.value)
+    if (!stillVisible) activeTab.value = 'traffic'
+  }
+})
+
 // Filter logs
 const filteredLogs = computed(() => {
   const endpointId = serverStore.selectedEndpointId
@@ -201,9 +218,9 @@ defineExpose({ openWSTab })
         Traffic Log
       </button>
 
-      <!-- WS connection tabs -->
+      <!-- WS connection tabs (only for the selected endpoint) -->
       <div
-        v-for="[id, wsLog] in wsConnectionTabs"
+        v-for="[id, wsLog] in visibleWSTabs"
         :key="id"
         :class="[
           'flex items-center gap-1 px-3 py-2 flex-shrink-0 border-b-2 cursor-pointer transition-colors',
@@ -398,7 +415,7 @@ defineExpose({ openWSTab })
     </template>
 
     <!-- ── WS CONNECTION TABS ── -->
-    <template v-for="[id, wsLog] in wsConnectionTabs" :key="id">
+    <template v-for="[id, wsLog] in visibleWSTabs" :key="id">
       <WSConnectionTab
         v-if="activeTab === id"
         :log-summary="wsLog"
