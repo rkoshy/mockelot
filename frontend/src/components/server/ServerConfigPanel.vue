@@ -882,7 +882,8 @@ onUnmounted(() => {
             <!-- Proxy-specific info -->
             <template v-if="serverStore.currentEndpoint.type === 'proxy' && serverStore.currentEndpoint.proxy_config">
               <span class="mx-2">•</span>
-              <span class="font-medium text-gray-300">Backend:</span> {{ serverStore.currentEndpoint.proxy_config.backend_url }}
+              <span class="font-medium text-gray-300">Backend:</span>
+              {{ (serverStore.currentEndpoint.proxy_config.backend_url ?? '').replace(/^\/\//, '') }}
             </template>
             <!-- Container-specific info -->
             <template v-if="serverStore.currentEndpoint.type === 'container' && serverStore.currentEndpoint.container_config">
@@ -1130,11 +1131,18 @@ onUnmounted(() => {
               <span class="text-white font-mono">{{ serverStore.currentEndpoint.path_prefix }}</span>
             </div>
             <template v-if="serverStore.currentEndpoint.type === 'proxy' && serverStore.currentEndpoint.proxy_config">
-              <div class="flex justify-between">
-                <span class="text-gray-400">Backend URL:</span>
-                <span class="text-white font-mono">{{ serverStore.currentEndpoint.proxy_config.backend_url }}</span>
+              <div class="flex justify-between items-start gap-4">
+                <span class="text-gray-400 flex-shrink-0">Backend:</span>
+                <div class="text-right">
+                  <span class="text-white font-mono text-sm">
+                    {{ (serverStore.currentEndpoint.proxy_config.backend_url ?? '').replace(/^\/\//, '') }}
+                  </span>
+                  <div v-if="isOverlayEndpoint(serverStore.currentEndpoint)" class="text-xs text-gray-500 mt-0.5">
+                    http · https · ws · wss as appropriate
+                  </div>
+                </div>
               </div>
-              <div class="flex justify-between">
+              <div v-if="!isOverlayEndpoint(serverStore.currentEndpoint)" class="flex justify-between">
                 <span class="text-gray-400">Timeout:</span>
                 <span class="text-white">{{ serverStore.currentEndpoint.proxy_config.timeout_seconds || 30 }}s</span>
               </div>
