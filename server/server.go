@@ -37,13 +37,12 @@ type HTTPServer struct {
 	overlaySimModes    sync.Map           // shared fault-injection map for overlay endpoints
 }
 
-// SetOverlaySimulationMode sets fault-injection mode for a system-overlay-* endpoint.
-// The mode is applied to all ResponseHandler instances that share this map.
-func (s *HTTPServer) SetOverlaySimulationMode(endpointID, mode string) {
-	if mode == "" || mode == OverlaySimNormal {
+// SetOverlaySimulationMode sets fault-injection config for a system-overlay-* endpoint.
+func (s *HTTPServer) SetOverlaySimulationMode(endpointID string, cfg models.OverlaySimConfig) {
+	if cfg.Mode == "" || cfg.Mode == OverlaySimNormal {
 		s.overlaySimModes.Delete(endpointID)
 	} else {
-		s.overlaySimModes.Store(endpointID, mode)
+		s.overlaySimModes.Store(endpointID, cfg)
 	}
 }
 

@@ -925,6 +925,22 @@ export namespace models {
 	    }
 	}
 	
+	export class OverlaySimConfig {
+	    mode: string;
+	    timeout_secs?: number;
+	    status_code?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new OverlaySimConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mode = source["mode"];
+	        this.timeout_secs = source["timeout_secs"];
+	        this.status_code = source["status_code"];
+	    }
+	}
 	
 	export class RecentFile {
 	    path: string;

@@ -3380,12 +3380,10 @@ func (a *App) RegisterWSConnection(connectionID string, terminate func(), setBlo
 	a.wsHandlesMu.Unlock()
 }
 
-// SetOverlaySimulationMode sets the fault-injection mode for a system-overlay-* endpoint.
-// mode must be one of: "" / "normal" (pass-through), "timeout" (30s delay → 504),
-// "dns_error" (immediate 502).
-func (a *App) SetOverlaySimulationMode(endpointID string, mode string) error {
+// SetOverlaySimulationMode sets fault-injection config for a system-overlay-* endpoint.
+func (a *App) SetOverlaySimulationMode(endpointID string, cfg models.OverlaySimConfig) error {
 	if a.server != nil {
-		a.server.SetOverlaySimulationMode(endpointID, mode)
+		a.server.SetOverlaySimulationMode(endpointID, cfg)
 	}
 	return nil
 }

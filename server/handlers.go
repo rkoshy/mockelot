@@ -41,8 +41,9 @@ type CORSPreflightMatch struct {
 // OverlaySimMode constants for fault injection on overlay endpoints.
 const (
 	OverlaySimNormal   = "normal"    // pass through (default)
-	OverlaySimTimeout  = "timeout"   // simulate 30s connection timeout → 504
+	OverlaySimTimeout  = "timeout"   // simulate connection timeout → 504
 	OverlaySimDNSError = "dns_error" // simulate DNS resolution failure → 502
+	OverlaySimOther    = "other"     // return a custom HTTP status code
 )
 
 type ResponseHandler struct {
@@ -548,16 +549,28 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 		// Dispatch based on endpoint type
 		h.configMutex.RUnlock()
 
-		// Fault injection for overlay endpoints (TIMEOUT / DNS ERROR simulation).
+		// Fault injection for overlay endpoints.
 		if strings.HasPrefix(matchedEndpoint.ID, "system-overlay-") && h.overlaySimModes != nil {
-			if rawMode, ok := h.overlaySimModes.Load(matchedEndpoint.ID); ok {
-				switch rawMode.(string) {
+			if raw, ok := h.overlaySimModes.Load(matchedEndpoint.ID); ok {
+				cfg := raw.(models.OverlaySimConfig)
+				switch cfg.Mode {
 				case OverlaySimTimeout:
-					time.Sleep(30 * time.Second)
+					secs := cfg.TimeoutSecs
+					if secs <= 0 {
+						secs = 30
+					}
+					time.Sleep(time.Duration(secs) * time.Second)
 					http.Error(w, "504 Gateway Timeout — simulated by Mockelot", http.StatusGatewayTimeout)
 					return
 				case OverlaySimDNSError:
 					http.Error(w, "502 Bad Gateway — DNS resolution failed (simulated by Mockelot)", http.StatusBadGateway)
+					return
+				case OverlaySimOther:
+					code := cfg.StatusCode
+					if code < 100 || code > 599 {
+						code = http.StatusBadGateway
+					}
+					http.Error(w, http.StatusText(code)+" — simulated by Mockelot", code)
 					return
 				}
 			}

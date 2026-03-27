@@ -34,6 +34,14 @@ const (
 	HeaderValidationModeScript   = "script"   // JavaScript expression
 )
 
+// OverlaySimConfig configures fault-injection for a system-overlay-* endpoint.
+// All fields are optional — zero values use the handler's defaults.
+type OverlaySimConfig struct {
+	Mode        string `json:"mode"`                   // "normal"|"timeout"|"dns_error"|"other"
+	TimeoutSecs int    `json:"timeout_secs,omitempty"` // for "timeout" mode (default 30 s)
+	StatusCode  int    `json:"status_code,omitempty"`  // for "other" mode
+}
+
 // WebSocket opcode name constants
 const (
 	WSOpcodeText         = "TEXT"

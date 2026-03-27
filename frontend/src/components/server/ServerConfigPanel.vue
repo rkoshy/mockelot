@@ -11,7 +11,8 @@ import TrafficLogPanel from '../traffic/TrafficLogPanel.vue'
 import ServerTab from './tabs/ServerTab.vue'
 import SOCKS5DomainsPanel from '../socks5/SOCKS5DomainsPanel.vue'
 import { models } from '../../types/models'
-import { StartContainer, StopContainer, DeleteContainer, SetOverlaySimulationMode } from '../../../wailsjs/go/main/App'
+import { StartContainer, StopContainer, DeleteContainer } from '../../../wailsjs/go/main/App'
+import OverlaySimPanel from './OverlaySimPanel.vue'
 
 const serverStore = useServerStore()
 
@@ -296,18 +297,6 @@ function getOverlayDisplayName(endpoint: models.Endpoint): string {
     return endpoint.name.substring(9)
   }
   return endpoint.name || ''
-}
-
-// Overlay simulation mode — in-memory per endpointID, reset on page reload
-const overlaySimModes = ref<Record<string, string>>({})
-
-async function setOverlaySimMode(endpointID: string, mode: string) {
-  overlaySimModes.value[endpointID] = mode
-  try {
-    await SetOverlaySimulationMode(endpointID, mode)
-  } catch (e) {
-    console.error('SetOverlaySimulationMode failed:', e)
-  }
 }
 
 // System endpoint helpers - show server info for SOCKS5 and Rejections
@@ -986,42 +975,10 @@ onUnmounted(() => {
       <div class="max-w-2xl mx-auto space-y-4">
 
         <!-- Overlay Simulation Mode selector (only for system-overlay-* endpoints) -->
-        <div
+        <OverlaySimPanel
           v-if="isOverlayEndpoint(serverStore.currentEndpoint)"
-          class="p-4 bg-gray-800 rounded border border-gray-700"
-        >
-          <div class="flex items-center justify-between">
-            <div>
-              <h3 class="text-sm font-semibold text-white">Simulation Mode</h3>
-              <p class="text-xs text-gray-400 mt-0.5">
-                Simulate network failures for this overlay domain
-              </p>
-            </div>
-            <select
-              :value="overlaySimModes[serverStore.currentEndpoint.id] || 'normal'"
-              @change="setOverlaySimMode(serverStore.currentEndpoint.id, ($event.target as HTMLSelectElement).value)"
-              :class="[
-                'px-3 py-1.5 rounded text-sm font-medium border transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500',
-                (overlaySimModes[serverStore.currentEndpoint.id] || 'normal') === 'normal'
-                  ? 'bg-gray-700 border-gray-600 text-gray-200'
-                  : 'bg-orange-900/50 border-orange-600 text-orange-300'
-              ]"
-            >
-              <option value="normal">NORMAL</option>
-              <option value="timeout">TIMEOUT (30s → 504)</option>
-              <option value="dns_error">DNS ERROR (→ 502)</option>
-            </select>
-          </div>
-          <div
-            v-if="(overlaySimModes[serverStore.currentEndpoint.id] || 'normal') !== 'normal'"
-            class="mt-2 px-3 py-1.5 bg-orange-900/30 border border-orange-700/50 rounded text-xs text-orange-300"
-          >
-            ⚠ All traffic to <span class="font-mono">{{ getOverlayDisplayName(serverStore.currentEndpoint) }}</span>
-            will receive a simulated
-            {{ overlaySimModes[serverStore.currentEndpoint.id] === 'timeout' ? '504 Gateway Timeout' : '502 DNS Error' }}
-            response.
-          </div>
-        </div>
+          :endpoint="serverStore.currentEndpoint"
+        />
 
         <!-- Endpoint Type Info -->
         <div class="p-4 bg-gray-800 rounded border border-gray-700">
