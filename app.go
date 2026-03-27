@@ -1011,7 +1011,7 @@ func (a *App) ensureDomainTakeoverEndpoints() {
 			enabled := true
 			connectSecs := domain.ConnectTimeoutSecs
 			if connectSecs <= 0 {
-				connectSecs = 30
+				connectSecs = 5
 			}
 			expectedOverlays[endpointID] = models.Endpoint{
 				ID:              endpointID,

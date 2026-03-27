@@ -17,7 +17,7 @@ const timeoutSecs = ref(30)
 const statusCode  = ref(503)
 
 // ── Proxy timeout state (persisted via SetOverlayTimeouts) ────────────────
-const connectTimeoutSecs = ref(props.endpoint.proxy_config?.connect_timeout_seconds || 30)
+const connectTimeoutSecs = ref(props.endpoint.proxy_config?.connect_timeout_seconds || 5)
 const totalTimeoutSecs   = ref(props.endpoint.proxy_config?.timeout_seconds ?? 0)
 
 // ── Dropdown visibility ───────────────────────────────────────────────────

@@ -154,7 +154,7 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, endpoin
 	// Connection (dial) timeout — how long to wait for TCP+TLS to complete.
 	connectTimeout := time.Duration(cfg.ConnectTimeoutSeconds) * time.Second
 	if connectTimeout <= 0 {
-		connectTimeout = 30 * time.Second // safe default
+		connectTimeout = 5 * time.Second // safe default
 	}
 
 	// Total request timeout — how long the full round-trip may take.
