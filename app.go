@@ -3380,6 +3380,16 @@ func (a *App) RegisterWSConnection(connectionID string, terminate func(), setBlo
 	a.wsHandlesMu.Unlock()
 }
 
+// SetOverlaySimulationMode sets the fault-injection mode for a system-overlay-* endpoint.
+// mode must be one of: "" / "normal" (pass-through), "timeout" (30s delay → 504),
+// "dns_error" (immediate 502).
+func (a *App) SetOverlaySimulationMode(endpointID string, mode string) error {
+	if a.server != nil {
+		a.server.SetOverlaySimulationMode(endpointID, mode)
+	}
+	return nil
+}
+
 // TerminateWSConnection force-closes both sides of a live WebSocket relay.
 func (a *App) TerminateWSConnection(connectionID string) error {
 	a.wsHandlesMu.Lock()

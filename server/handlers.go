@@ -38,6 +38,13 @@ type CORSPreflightMatch struct {
 	Group        *models.ResponseGroup   // The group containing the response (if any)
 }
 
+// OverlaySimMode constants for fault injection on overlay endpoints.
+const (
+	OverlaySimNormal   = "normal"    // pass through (default)
+	OverlaySimTimeout  = "timeout"   // simulate 30s connection timeout → 504
+	OverlaySimDNSError = "dns_error" // simulate DNS resolution failure → 502
+)
+
 type ResponseHandler struct {
 	config             *models.AppConfig
 	configMutex        sync.RWMutex
@@ -50,9 +57,10 @@ type ResponseHandler struct {
 	regexCache         map[string]*regexp.Regexp // Cache for compiled regexes
 	regexCacheMutex    sync.RWMutex              // Mutex for regex cache
 	logRequestMatching bool                      // Enable verbose request matching logs
+	overlaySimModes    *sync.Map                 // endpointID → OverlaySimMode constant; shared with HTTPServer
 }
 
-func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptErrorLogger ScriptErrorLogger, proxyHandler *ProxyHandler, containerHandler *ContainerHandler, logRequestMatching bool, dnsResolver *DNSResolver) *ResponseHandler {
+func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptErrorLogger ScriptErrorLogger, proxyHandler *ProxyHandler, containerHandler *ContainerHandler, logRequestMatching bool, dnsResolver *DNSResolver, overlaySimModes *sync.Map) *ResponseHandler {
 	overlayHandler := NewOverlayHandler(proxyHandler, dnsResolver)
 	return &ResponseHandler{
 		config:             config,
@@ -64,6 +72,7 @@ func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptEr
 		overlayHandler:     overlayHandler,
 		regexCache:         make(map[string]*regexp.Regexp),
 		logRequestMatching: logRequestMatching,
+		overlaySimModes:    overlaySimModes,
 	}
 }
 
@@ -538,6 +547,22 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 
 		// Dispatch based on endpoint type
 		h.configMutex.RUnlock()
+
+		// Fault injection for overlay endpoints (TIMEOUT / DNS ERROR simulation).
+		if strings.HasPrefix(matchedEndpoint.ID, "system-overlay-") && h.overlaySimModes != nil {
+			if rawMode, ok := h.overlaySimModes.Load(matchedEndpoint.ID); ok {
+				switch rawMode.(string) {
+				case OverlaySimTimeout:
+					time.Sleep(30 * time.Second)
+					http.Error(w, "504 Gateway Timeout — simulated by Mockelot", http.StatusGatewayTimeout)
+					return
+				case OverlaySimDNSError:
+					http.Error(w, "502 Bad Gateway — DNS resolution failed (simulated by Mockelot)", http.StatusBadGateway)
+					return
+				}
+			}
+		}
+
 		switch matchedEndpoint.Type {
 		case models.EndpointTypeMock:
 			h.handleMockRequest(w, r, matchedEndpoint, translatedPath, bodyBytes)

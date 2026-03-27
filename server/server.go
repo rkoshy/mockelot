@@ -34,6 +34,17 @@ type HTTPServer struct {
 	startupCancel      context.CancelFunc // Cancel function for startup
 	logRequestMatching bool               // Enable verbose request matching logs
 	dnsResolver        *DNSResolver       // DNS resolver with override support
+	overlaySimModes    sync.Map           // shared fault-injection map for overlay endpoints
+}
+
+// SetOverlaySimulationMode sets fault-injection mode for a system-overlay-* endpoint.
+// The mode is applied to all ResponseHandler instances that share this map.
+func (s *HTTPServer) SetOverlaySimulationMode(endpointID, mode string) {
+	if mode == "" || mode == OverlaySimNormal {
+		s.overlaySimModes.Delete(endpointID)
+	} else {
+		s.overlaySimModes.Store(endpointID, mode)
+	}
 }
 
 func NewHTTPServer(config *models.AppConfig, requestLogger RequestLogger, scriptErrorLogger ScriptErrorLogger, eventSender EventSender, containerHandler *ContainerHandler, proxyHandler *ProxyHandler, logRequestMatching bool) *HTTPServer {
@@ -89,7 +100,7 @@ func (s *HTTPServer) StartHTTP() error {
 		handler = HTTPSRedirectHandler(httpsPort)
 	} else {
 		// Use normal response handler
-		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver)
+		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver, &s.overlaySimModes)
 		handler = http.HandlerFunc(responseHandler.HandleRequest)
 	}
 
@@ -228,7 +239,7 @@ func (s *HTTPServer) StartHTTPS() error {
 	}
 
 	// Create response handler
-	responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver)
+	responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver, &s.overlaySimModes)
 
 	// Create HTTPS server
 	s.httpsServer = &http.Server{
@@ -322,7 +333,7 @@ func (s *HTTPServer) Start() error {
 	s.configMutex.RUnlock()
 
 	if socks5Config != nil && (socks5Config.Enabled || serverMode == models.ServerModeSOCKS5) {
-		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver)
+		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver, &s.overlaySimModes)
 
 		// Initialize certificate cache for TLS interception if HTTPS is enabled
 		// This allows SOCKS5 to intercept HTTPS connections for domains in the takeover list

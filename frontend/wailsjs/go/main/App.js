@@ -282,6 +282,10 @@ export function SetItems(arg1) {
   return window['go']['main']['App']['SetItems'](arg1);
 }
 
+export function SetOverlaySimulationMode(arg1, arg2) {
+  return window['go']['main']['App']['SetOverlaySimulationMode'](arg1, arg2);
+}
+
 export function SetResponses(arg1) {
   return window['go']['main']['App']['SetResponses'](arg1);
 }

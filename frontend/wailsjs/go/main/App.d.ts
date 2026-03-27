@@ -143,6 +143,8 @@ export function SendEvent(arg1:string,arg2:any):Promise<void>;
 
 export function SetItems(arg1:Array<models.ResponseItem>):Promise<void>;
 
+export function SetOverlaySimulationMode(arg1:string,arg2:string):Promise<void>;
+
 export function SetResponses(arg1:Array<models.MethodResponse>):Promise<void>;
 
 export function SetSelectedEndpointId(arg1:string):Promise<void>;
