@@ -13,6 +13,7 @@ import SOCKS5DomainsPanel from '../socks5/SOCKS5DomainsPanel.vue'
 import { models } from '../../types/models'
 import { StartContainer, StopContainer, DeleteContainer } from '../../../wailsjs/go/main/App'
 import OverlaySimPanel from './OverlaySimPanel.vue'
+import EndpointNavigator from './EndpointNavigator.vue'
 
 const serverStore = useServerStore()
 
@@ -65,34 +66,7 @@ const endpointToDelete = ref<string>('')
 const consoleEndpointId = ref<string>('')
 const consoleEndpointName = ref<string>('')
 
-// Tab scroll state
-const tabScrollContainer = ref<HTMLElement | null>(null)
-const canScrollLeft = ref(false)
-const canScrollRight = ref(false)
 let resizeObserver: ResizeObserver | null = null
-
-function updateScrollButtons() {
-  const el = tabScrollContainer.value
-  if (!el) return
-  canScrollLeft.value = el.scrollLeft > 0
-  canScrollRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
-}
-
-function scrollTabs(direction: 'left' | 'right') {
-  const el = tabScrollContainer.value
-  if (!el) return
-  const amount = 200
-  el.scrollBy({ left: direction === 'left' ? -amount : amount, behavior: 'smooth' })
-}
-
-function onTabWheel(event: WheelEvent) {
-  const el = tabScrollContainer.value
-  if (!el) return
-  if (event.deltaY !== 0) {
-    event.preventDefault()
-    el.scrollLeft += event.deltaY
-  }
-}
 
 // Drag and drop state
 const draggedIndex = ref<number | null>(null)
@@ -152,7 +126,7 @@ function onDragEnd() {
   dragOverIndex.value = null
 }
 
-// Tab drag and drop state (for reordering endpoint tabs)
+// Tab drag and drop state (kept for EndpointNavigator compat)
 const tabDraggedIndex = ref<number | null>(null)
 const tabDragOverIndex = ref<number | null>(null)
 
@@ -201,6 +175,26 @@ function onTabDrop(index: number, endpoint: models.Endpoint, event: DragEvent) {
 function onTabDragEnd() {
   tabDraggedIndex.value = null
   tabDragOverIndex.value = null
+}
+
+// Navigator event handlers
+function onNavSelect(id: string) {
+  if (id === 'server') {
+    selectedTab.value = 'server'
+  } else {
+    selectEndpoint(id)
+  }
+}
+
+function onNavSettings(endpoint: models.Endpoint) {
+  selectEndpoint(endpoint.id)
+  showEndpointSettingsDialog.value = true
+}
+
+function onNavDelete(endpoint: models.Endpoint) {
+  selectEndpoint(endpoint.id)
+  endpointToDelete.value = endpoint.name ?? ''
+  showDeleteConfirmDialog.value = true
 }
 
 function selectEndpoint(id: string) {
@@ -593,22 +587,8 @@ function handleCancelImport() {
   showImportDialog.value = false
 }
 
-// Watch sorted endpoints to update scroll buttons when tabs change
-watch(sortedEndpoints, () => {
-  nextTick(() => updateScrollButtons())
-})
-
 // Register for container progress events (for inline progress indicator)
 onMounted(() => {
-  // Set up tab scroll observer
-  const el = tabScrollContainer.value
-  if (el) {
-    el.addEventListener('scroll', updateScrollButtons)
-    resizeObserver = new ResizeObserver(updateScrollButtons)
-    resizeObserver.observe(el)
-    updateScrollButtons()
-  }
-
   if (registerEventListener) {
     unregisterProgressListener = registerEventListener('ctr:progress', (data: any) => {
       if (data.endpoint_id) {
@@ -641,17 +621,26 @@ onUnmounted(() => {
     resizeObserver.disconnect()
     resizeObserver = null
   }
-  const el = tabScrollContainer.value
-  if (el) {
-    el.removeEventListener('scroll', updateScrollButtons)
-  }
 })
 </script>
 
 <template>
-  <div class="h-full flex flex-col">
-    <!-- Horizontal Tab Bar -->
-    <div class="flex items-stretch border-b border-gray-700 flex-shrink-0 bg-gray-800">
+  <div class="h-full flex flex-row overflow-hidden">
+    <!-- Vertical Endpoint Navigator -->
+    <EndpointNavigator
+      :endpoints="sortedEndpoints"
+      :selected-id="selectedTab"
+      @select="onNavSelect"
+      @add-endpoint="showAddEndpointDialog = true"
+      @settings="onNavSettings"
+      @delete-ep="onNavDelete"
+    />
+
+    <!-- Main content column (endpoint controls + panels) -->
+    <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+
+    <!-- Horizontal tab bar removed — replaced by EndpointNavigator sidebar -->
+    <!-- <div class="flex items-stretch ...">
       <!-- SERVER Tab (fixed, outside scroll area) -->
       <div
         :class="[
@@ -829,7 +818,7 @@ onUnmounted(() => {
         </svg>
         Endpoint
       </button>
-    </div>
+    --> <!-- end removed tab bar -->
 
     <!-- Endpoint Controls (only for mock endpoints, not system endpoints) -->
     <div v-if="serverStore.currentEndpoint?.type === 'mock' && !serverStore.currentEndpoint?.is_system" class="flex items-center justify-between p-3 border-b border-gray-700 flex-shrink-0">
@@ -1328,5 +1317,6 @@ onUnmounted(() => {
       @secondary="handleReplaceImport"
       @cancel="handleCancelImport"
     />
-  </div>
+    </div><!-- end main content column -->
+  </div><!-- end outer flex-row -->
 </template>
