@@ -203,8 +203,9 @@ type StatusTranslation struct {
 
 // ProxyConfig contains reverse proxy configuration
 type ProxyConfig struct {
-	BackendURL       string                `json:"backend_url" yaml:"backend_url"`
-	TimeoutSeconds   int                   `json:"timeout_seconds" yaml:"timeout_seconds"` // Default: 30
+	BackendURL             string `json:"backend_url" yaml:"backend_url"`
+	ConnectTimeoutSeconds  int    `json:"connect_timeout_seconds,omitempty" yaml:"connect_timeout_seconds,omitempty"` // TCP dial timeout (default 30s)
+	TimeoutSeconds         int    `json:"timeout_seconds" yaml:"timeout_seconds"`                                     // Total request timeout; 0 = unlimited
 
 	// Path translation uses endpoint's TranslationMode, TranslatePattern, TranslateReplace
 
@@ -415,6 +416,9 @@ type DomainConfig struct {
 	Pattern     string `json:"pattern" yaml:"pattern"`                           // Regex pattern (e.g., "api\\.example\\.com")
 	OverlayMode bool   `json:"overlay_mode" yaml:"overlay_mode"`                 // Pass through to real server if no endpoint matches
 	Enabled     bool   `json:"enabled" yaml:"enabled"`                           // Whether this domain is enabled
+	// Per-overlay timeouts (0 = use default)
+	ConnectTimeoutSecs int `json:"connect_timeout_secs,omitempty" yaml:"connect_timeout_secs,omitempty"` // TCP connection timeout (default 30s)
+	TotalTimeoutSecs   int `json:"total_timeout_secs,omitempty" yaml:"total_timeout_secs,omitempty"`   // Full request timeout (default 0 = unlimited)
 }
 
 // DomainTakeoverConfig contains the list of domains to intercept via SOCKS5

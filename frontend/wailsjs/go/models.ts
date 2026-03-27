@@ -169,6 +169,8 @@ export namespace models {
 	    pattern: string;
 	    overlay_mode: boolean;
 	    enabled: boolean;
+	    connect_timeout_secs?: number;
+	    total_timeout_secs?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new DomainConfig(source);
@@ -180,6 +182,8 @@ export namespace models {
 	        this.pattern = source["pattern"];
 	        this.overlay_mode = source["overlay_mode"];
 	        this.enabled = source["enabled"];
+	        this.connect_timeout_secs = source["connect_timeout_secs"];
+	        this.total_timeout_secs = source["total_timeout_secs"];
 	    }
 	}
 	export class DomainTakeoverConfig {
@@ -422,6 +426,7 @@ export namespace models {
 	}
 	export class ProxyConfig {
 	    backend_url: string;
+	    connect_timeout_seconds?: number;
 	    timeout_seconds: number;
 	    inbound_headers?: HeaderManipulation[];
 	    outbound_headers?: HeaderManipulation[];
@@ -439,6 +444,7 @@ export namespace models {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.backend_url = source["backend_url"];
+	        this.connect_timeout_seconds = source["connect_timeout_seconds"];
 	        this.timeout_seconds = source["timeout_seconds"];
 	        this.inbound_headers = this.convertValues(source["inbound_headers"], HeaderManipulation);
 	        this.outbound_headers = this.convertValues(source["outbound_headers"], HeaderManipulation);

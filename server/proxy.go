@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -52,8 +53,10 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, endpoin
 		return
 	}
 
-	// Build backend URL with capture group substitution
-	backendURLStr := p.substituteCaptureGroups(cfg.BackendURL, captureGroups)
+	// Build backend URL with capture group substitution.
+	// resolveBackendURL handles scheme-relative URLs ("//host") used by overlay endpoints
+	// so the correct scheme (http/https) is inferred from the incoming request.
+	backendURLStr := resolveBackendURL(p.substituteCaptureGroups(cfg.BackendURL, captureGroups), r, false)
 	backendURL, err := url.Parse(backendURLStr)
 	if err != nil {
 		http.Error(w, "Invalid backend URL", http.StatusInternalServerError)
@@ -148,19 +151,34 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, endpoin
 		backendQueryParams[key] = valuesCopy
 	}
 
-	// Set timeout
-	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
-	if timeout == 0 {
-		timeout = 30 * time.Second
+	// Connection (dial) timeout — how long to wait for TCP+TLS to complete.
+	connectTimeout := time.Duration(cfg.ConnectTimeoutSeconds) * time.Second
+	if connectTimeout <= 0 {
+		connectTimeout = 30 * time.Second // safe default
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), timeout)
-	defer cancel()
-	proxyReq = proxyReq.WithContext(ctx)
+
+	// Total request timeout — how long the full round-trip may take.
+	// 0 means unlimited (useful for long-running transactions / streaming).
+	totalTimeout := time.Duration(cfg.TimeoutSeconds) * time.Second
+
+	// Only install a context deadline when a total timeout is configured.
+	reqCtx := r.Context()
+	if totalTimeout > 0 {
+		var cancel context.CancelFunc
+		reqCtx, cancel = context.WithTimeout(reqCtx, totalTimeout)
+		defer cancel()
+	}
+	proxyReq = proxyReq.WithContext(reqCtx)
 
 	// Execute backend request and measure timing
 	// Note: Don't follow redirects - pass them through to the client
 	client := &http.Client{
-		Timeout: timeout,
+		Timeout: totalTimeout, // 0 = no client-level timeout
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout: connectTimeout,
+			}).DialContext,
+		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse // Don't follow redirects, return redirect response to client
 		},
@@ -542,8 +560,9 @@ func (p *ProxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request, e
 	}
 	defer clientConn.Close()
 
-	// Connect to backend WebSocket with capture group substitution
-	backendURL := p.substituteCaptureGroups(endpoint.ProxyConfig.BackendURL, captureGroups)
+	// Connect to backend WebSocket with capture group substitution.
+	// resolveBackendURL handles scheme-relative URLs; forWebSocket=true selects ws/wss.
+	backendURL := resolveBackendURL(p.substituteCaptureGroups(endpoint.ProxyConfig.BackendURL, captureGroups), r, true)
 	backendURL = strings.Replace(backendURL, "http://", "ws://", 1)
 	backendURL = strings.Replace(backendURL, "https://", "wss://", 1)
 	backendURL += translatedPath
@@ -644,6 +663,30 @@ func (p *ProxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request, e
 		closeCode, closeReason := extractWSCloseInfo(relayErr)
 		p.logger.CloseWebSocketConnection(connID, closeCode, closeReason, relayErr)
 	}
+}
+
+// resolveBackendURL resolves a possibly scheme-relative backend URL ("//host/path")
+// to the correct absolute URL by inferring the scheme from the incoming request.
+// This allows overlay endpoints to serve http, https, ws, and wss without requiring
+// a separate BackendURL per protocol.
+func resolveBackendURL(rawURL string, r *http.Request, forWebSocket bool) string {
+	if !strings.HasPrefix(rawURL, "//") {
+		return rawURL // already has an explicit scheme
+	}
+	// Determine scheme from the incoming request's TLS state and URL scheme
+	isTLS := r.TLS != nil || r.URL.Scheme == "https"
+	var scheme string
+	switch {
+	case forWebSocket && isTLS:
+		scheme = "wss"
+	case forWebSocket:
+		scheme = "ws"
+	case isTLS:
+		scheme = "https"
+	default:
+		scheme = "http"
+	}
+	return scheme + ":" + rawURL
 }
 
 // isWebSocketUpgrade checks if the request is a WebSocket upgrade

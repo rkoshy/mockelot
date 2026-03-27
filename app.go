@@ -1009,6 +1009,10 @@ func (a *App) ensureDomainTakeoverEndpoints() {
 
 			// Create overlay proxy endpoint
 			enabled := true
+			connectSecs := domain.ConnectTimeoutSecs
+			if connectSecs <= 0 {
+				connectSecs = 30
+			}
 			expectedOverlays[endpointID] = models.Endpoint{
 				ID:              endpointID,
 				Name:            "Overlay: " + domain.Pattern,
@@ -1023,9 +1027,12 @@ func (a *App) ensureDomainTakeoverEndpoints() {
 				},
 				Type: models.EndpointTypeProxy,
 				ProxyConfig: &models.ProxyConfig{
-					BackendURL:        "https://" + domain.Pattern,
-					TimeoutSeconds:    30,
-					StatusPassthrough: true,
+					// Scheme-relative URL: the proxy handler infers http/https/ws/wss
+					// from the incoming request so the overlay works for all four protocols.
+					BackendURL:            "//" + domain.Pattern,
+					ConnectTimeoutSeconds: connectSecs,
+					TimeoutSeconds:        domain.TotalTimeoutSecs, // 0 = unlimited
+					StatusPassthrough:     true,
 				},
 			}
 		}
@@ -3378,6 +3385,43 @@ func (a *App) RegisterWSConnection(connectionID string, terminate func(), setBlo
 	a.wsHandlesMu.Lock()
 	a.wsHandles[connectionID] = wsHandle{terminate: terminate, setBlocked: setBlocked}
 	a.wsHandlesMu.Unlock()
+}
+
+// SetOverlayTimeouts updates the connect and total timeouts for an overlay domain.
+// endpointID is the synthetic endpoint ID ("system-overlay-*").
+// connectSecs is the TCP dial timeout (0 → keep default 30s).
+// totalSecs is the full request timeout (0 → unlimited).
+func (a *App) SetOverlayTimeouts(endpointID string, connectSecs int, totalSecs int) error {
+	const overlayPrefix = "system-overlay-"
+	if !strings.HasPrefix(endpointID, overlayPrefix) {
+		return fmt.Errorf("not an overlay endpoint: %s", endpointID)
+	}
+
+	a.configMutex.Lock()
+	defer a.configMutex.Unlock()
+
+	if a.config.DomainTakeover == nil {
+		return fmt.Errorf("no domain takeover config")
+	}
+
+	found := false
+	for i := range a.config.DomainTakeover.Domains {
+		d := &a.config.DomainTakeover.Domains[i]
+		if overlayPrefix+sanitizeForID(d.Pattern) == endpointID {
+			d.ConnectTimeoutSecs = connectSecs
+			d.TotalTimeoutSecs = totalSecs
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("domain not found for overlay endpoint %s", endpointID)
+	}
+
+	a.ensureDomainTakeoverEndpoints()
+	runtime.EventsEmit(a.ctx, "endpoints:updated", a.config.Endpoints)
+	runtime.EventsEmit(a.ctx, "config:dirty", true)
+	return nil
 }
 
 // SetOverlaySimulationMode sets fault-injection config for a system-overlay-* endpoint.

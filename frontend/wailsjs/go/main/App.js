@@ -286,6 +286,10 @@ export function SetOverlaySimulationMode(arg1, arg2) {
   return window['go']['main']['App']['SetOverlaySimulationMode'](arg1, arg2);
 }
 
+export function SetOverlayTimeouts(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetOverlayTimeouts'](arg1, arg2, arg3);
+}
+
 export function SetResponses(arg1) {
   return window['go']['main']['App']['SetResponses'](arg1);
 }

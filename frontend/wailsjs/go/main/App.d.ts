@@ -145,6 +145,8 @@ export function SetItems(arg1:Array<models.ResponseItem>):Promise<void>;
 
 export function SetOverlaySimulationMode(arg1:string,arg2:models.OverlaySimConfig):Promise<void>;
 
+export function SetOverlayTimeouts(arg1:string,arg2:number,arg3:number):Promise<void>;
+
 export function SetResponses(arg1:Array<models.MethodResponse>):Promise<void>;
 
 export function SetSelectedEndpointId(arg1:string):Promise<void>;
