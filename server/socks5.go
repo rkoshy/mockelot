@@ -582,6 +582,30 @@ func extractWSCloseInfo(err error) (code int, reason string) {
 	return 0, ""
 }
 
+// writeSimResponse writes a plain HTTP error response to conn based on the
+// overlay simulation config.  Used when a WebSocket upgrade is intercepted
+// before HandleRequest runs (which is where the normal sim-mode check lives).
+func writeSimResponse(conn net.Conn, cfg models.OverlaySimConfig) {
+	switch cfg.Mode {
+	case OverlaySimTimeout:
+		secs := cfg.TimeoutSecs
+		if secs <= 0 {
+			secs = 30
+		}
+		time.Sleep(time.Duration(secs) * time.Second)
+		fmt.Fprintf(conn, "HTTP/1.1 504 Gateway Timeout\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+	case OverlaySimDNSError:
+		fmt.Fprintf(conn, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+	case OverlaySimOther:
+		code := cfg.StatusCode
+		if code < 100 || code > 599 {
+			code = http.StatusBadGateway
+		}
+		fmt.Fprintf(conn, "HTTP/1.1 %d %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+			code, http.StatusText(code))
+	}
+}
+
 // isWebSocketUpgrade returns true when r carries a WebSocket upgrade request.
 func isWebSocketUpgrade(r *http.Request) bool {
 	return strings.ToLower(r.Header.Get("Upgrade")) == "websocket" &&
@@ -1185,8 +1209,14 @@ func (s *SOCKS5Server) handleInterceptedHTTPS(conn net.Conn, targetAddr string, 
 			req.Host = targetAddr
 		}
 
-		// WebSocket upgrade: hand off to dedicated WS handler and stop the HTTP loop.
+		// WebSocket upgrade: check simulation mode first, then hand off.
+		// HandleRequest is bypassed for WS connections, so the sim check must happen here.
 		if isWebSocketUpgrade(req) {
+			if cfg, ok := s.responseHandler.CheckOverlaySimMode(req); ok {
+				log.Printf("SOCKS5 WSS [%s] simulation mode %q applied to WS upgrade", targetAddr, cfg.Mode)
+				writeSimResponse(tlsConn, cfg)
+				return
+			}
 			s.handleInterceptedWebSocket(tlsConn, reader, req, targetAddr, targetPort)
 			return
 		}
@@ -1323,8 +1353,13 @@ func (s *SOCKS5Server) handleHTTP(conn net.Conn, targetAddr string, targetPort u
 			req.Host = targetAddr
 		}
 
-		// WebSocket upgrade: hand off to dedicated WS handler and stop the HTTP loop.
+		// WebSocket upgrade: check simulation mode first, then hand off.
 		if isWebSocketUpgrade(req) {
+			if cfg, ok := s.responseHandler.CheckOverlaySimMode(req); ok {
+				log.Printf("SOCKS5 WS [%s] simulation mode %q applied to WS upgrade", targetAddr, cfg.Mode)
+				writeSimResponse(conn, cfg)
+				return
+			}
 			s.handlePlainWebSocket(conn, reader, req, targetAddr, targetPort)
 			return
 		}

@@ -332,6 +332,26 @@ func (h *ResponseHandler) canHandleCORSPreflightForEndpoint(endpoint *models.End
 	}
 }
 
+// CheckOverlaySimMode returns the active OverlaySimConfig for the request's matched
+// overlay endpoint (and true) when a non-normal simulation is configured.
+// This is called from the SOCKS5 WebSocket handlers, which bypass HandleRequest
+// entirely and therefore would otherwise skip the simulation-mode check.
+func (h *ResponseHandler) CheckOverlaySimMode(r *http.Request) (models.OverlaySimConfig, bool) {
+	endpointID := h.FindEndpointID(r)
+	if !strings.HasPrefix(endpointID, "system-overlay-") || h.overlaySimModes == nil {
+		return models.OverlaySimConfig{}, false
+	}
+	raw, ok := h.overlaySimModes.Load(endpointID)
+	if !ok {
+		return models.OverlaySimConfig{}, false
+	}
+	cfg := raw.(models.OverlaySimConfig)
+	if cfg.Mode == "" || cfg.Mode == OverlaySimNormal {
+		return models.OverlaySimConfig{}, false
+	}
+	return cfg, true
+}
+
 // FindEndpointID returns the ID of the first enabled endpoint that matches r's
 // domain and path prefix, or "system-socks5-proxy" if no endpoint matches.
 // Used by the SOCKS5 WebSocket handler to log frames under the correct endpoint tab.
