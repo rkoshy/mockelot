@@ -242,6 +242,10 @@ export function RegenerateCA() {
   return window['go']['main']['App']['RegenerateCA']();
 }
 
+export function RegisterWSConnection(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RegisterWSConnection'](arg1, arg2, arg3);
+}
+
 export function RemoveRecentFile(arg1) {
   return window['go']['main']['App']['RemoveRecentFile'](arg1);
 }
@@ -286,6 +290,10 @@ export function SetSelectedEndpointId(arg1) {
   return window['go']['main']['App']['SetSelectedEndpointId'](arg1);
 }
 
+export function SetWSConnectionBlocked(arg1, arg2) {
+  return window['go']['main']['App']['SetWSConnectionBlocked'](arg1, arg2);
+}
+
 export function StartContainer(arg1) {
   return window['go']['main']['App']['StartContainer'](arg1);
 }
@@ -304,6 +312,10 @@ export function StopContainer(arg1) {
 
 export function StopServer() {
   return window['go']['main']['App']['StopServer']();
+}
+
+export function TerminateWSConnection(arg1) {
+  return window['go']['main']['App']['TerminateWSConnection'](arg1);
 }
 
 export function TestContainerConfig(arg1) {

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"mockelot/models"
@@ -582,6 +583,15 @@ func (p *ProxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request, e
 	if p.logger != nil {
 		captureBytes = p.logger.GetWSCaptureBytes()
 	}
+
+	var blocked atomic.Bool
+	if p.logger != nil {
+		p.logger.RegisterWSConnection(connID,
+			func() { clientConn.Close(); backendConn.Close() },
+			func(b bool) { blocked.Store(b) },
+		)
+	}
+
 	errChan := make(chan error, 2)
 
 	// Client -> Backend
@@ -592,9 +602,11 @@ func (p *ProxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request, e
 				errChan <- err
 				return
 			}
-			if err := backendConn.WriteMessage(msgType, msg); err != nil {
-				errChan <- err
-				return
+			if !blocked.Load() {
+				if err := backendConn.WriteMessage(msgType, msg); err != nil {
+					errChan <- err
+					return
+				}
 			}
 			if p.logger != nil {
 				p.logger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionSend, startTime, captureBytes))
@@ -610,9 +622,11 @@ func (p *ProxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request, e
 				errChan <- err
 				return
 			}
-			if err := clientConn.WriteMessage(msgType, msg); err != nil {
-				errChan <- err
-				return
+			if !blocked.Load() {
+				if err := clientConn.WriteMessage(msgType, msg); err != nil {
+					errChan <- err
+					return
+				}
 			}
 			if p.logger != nil {
 				p.logger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionRecv, startTime, captureBytes))

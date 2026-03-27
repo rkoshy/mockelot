@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useServerStore } from '../../stores/server'
-import { ExportWSTrace } from '../../../wailsjs/go/main/App'
+import { ExportWSTrace, TerminateWSConnection, SetWSConnectionBlocked } from '../../../wailsjs/go/main/App'
 import type { models } from '../../../wailsjs/go/models'
 
 interface Props {
@@ -141,6 +141,30 @@ async function handleExportTrace() {
   }
 }
 
+// ── TERMINATE and BLOCKED ─────────────────────────────────────────────────
+const isBlocked = ref(false)
+
+async function handleTerminate() {
+  try {
+    await TerminateWSConnection(props.logSummary.id)
+  } catch (e) {
+    console.error('TerminateWSConnection failed:', e)
+  }
+}
+
+async function handleSetBlocked(blocked: boolean) {
+  isBlocked.value = blocked
+  try {
+    await SetWSConnectionBlocked(props.logSummary.id, blocked)
+  } catch (e) {
+    console.error('SetWSConnectionBlocked failed:', e)
+    isBlocked.value = !blocked // revert on failure
+  }
+}
+
+// Reset blocked state when the connection is (re-)opened
+watch(isActive, (open) => { if (open) isBlocked.value = false })
+
 function formatOffset(ms: number): string {
   if (ms < 1000) return `+${ms}ms`
   return `+${(ms / 1000).toFixed(3)}s`
@@ -181,6 +205,33 @@ function formatSize(bytes: number): string {
         </span>
 
         <span class="text-sm text-cyan-300 font-mono truncate flex-1">{{ connectionURL }}</span>
+
+        <!-- BLOCKED toggle — only when connection is active -->
+        <label
+          v-if="isActive"
+          class="flex items-center gap-1.5 cursor-pointer select-none flex-shrink-0"
+          title="Block all frame forwarding (connections stay open, traffic is dropped)"
+        >
+          <input
+            type="checkbox"
+            :checked="isBlocked"
+            @change="handleSetBlocked(($event.target as HTMLInputElement).checked)"
+            class="w-3.5 h-3.5 rounded accent-orange-500"
+          />
+          <span :class="['text-xs font-medium', isBlocked ? 'text-orange-400' : 'text-gray-400']">
+            {{ isBlocked ? 'BLOCKED' : 'BLOCK' }}
+          </span>
+        </label>
+
+        <!-- TERMINATE button — only when connection is active -->
+        <button
+          v-if="isActive"
+          @click="handleTerminate"
+          class="px-2 py-1 bg-red-800/60 hover:bg-red-700/80 border border-red-700/60 hover:border-red-500 rounded text-xs text-red-300 hover:text-red-200 font-medium transition-colors flex-shrink-0"
+          title="Force-close this WebSocket connection (both client and backend sides)"
+        >
+          TERMINATE
+        </button>
 
         <button
           @click="emit('openInspector', logSummary)"

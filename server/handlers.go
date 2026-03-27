@@ -20,6 +20,9 @@ type RequestLogger interface {
 	AppendWebSocketEvent(connectionID string, event models.WebSocketEvent)
 	CloseWebSocketConnection(connectionID string, code int, reason string, relayErr error)
 	GetWSCaptureBytes() int
+	// RegisterWSConnection stores control callbacks so the frontend can terminate
+	// or block a live WebSocket relay without touching the relay goroutines directly.
+	RegisterWSConnection(connectionID string, terminate func(), setBlocked func(bool))
 }
 
 type ScriptErrorLogger interface {

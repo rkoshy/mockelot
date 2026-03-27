@@ -123,6 +123,8 @@ export function PullDockerImage(arg1:string):Promise<void>;
 
 export function RegenerateCA():Promise<void>;
 
+export function RegisterWSConnection(arg1:string,arg2:any,arg3:any):Promise<void>;
+
 export function RemoveRecentFile(arg1:string):Promise<void>;
 
 export function ReorderEndpoints(arg1:Array<string>):Promise<void>;
@@ -145,6 +147,8 @@ export function SetResponses(arg1:Array<models.MethodResponse>):Promise<void>;
 
 export function SetSelectedEndpointId(arg1:string):Promise<void>;
 
+export function SetWSConnectionBlocked(arg1:string,arg2:boolean):Promise<void>;
+
 export function StartContainer(arg1:string):Promise<void>;
 
 export function StartContainers():Promise<void>;
@@ -154,6 +158,8 @@ export function StartServer(arg1:number):Promise<void>;
 export function StopContainer(arg1:string):Promise<void>;
 
 export function StopServer():Promise<void>;
+
+export function TerminateWSConnection(arg1:string):Promise<void>;
 
 export function TestContainerConfig(arg1:Record<string, any>):Promise<void>;
 

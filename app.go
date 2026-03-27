@@ -70,6 +70,8 @@ type App struct {
 	requestLogSummaryQueue []models.RequestLogSummary   // Queue of request log summaries for frontend polling
 	requestLogQueueMutex   sync.Mutex                   // Mutex for thread-safe request log queue access
 	wsLastSummaryUpdate    map[string]time.Time          // Throttle map: last time a WS summary was enqueued per connection
+	wsHandles              map[string]wsHandle            // Live WS connection control handles
+	wsHandlesMu            sync.Mutex                    // Protects wsHandles
 	status                 ServerStatus
 	eventQueue             []Event    // Queue of events for frontend polling
 	eventQueueMutex        sync.Mutex // Mutex for thread-safe event queue access
@@ -103,6 +105,7 @@ func NewApp(logRequestMatching bool) *App {
 		requestLogs:            make([]models.RequestLog, 0),
 		requestLogSummaryQueue: make([]models.RequestLogSummary, 0),
 		wsLastSummaryUpdate:    make(map[string]time.Time),
+		wsHandles:              make(map[string]wsHandle),
 		status: ServerStatus{
 			Running: false,
 			Port:    8080,
@@ -1060,10 +1063,18 @@ func (a *App) ensureDomainTakeoverEndpoints() {
 	// Build final array: user endpoints + overlay endpoints + SOCKS5 + rejections
 	a.config.Endpoints = userEndpoints
 
-	// Add overlay endpoints (DisplayOrder 999997)
-	for id, overlay := range expectedOverlays {
+	// Add overlay endpoints sorted alphabetically by domain name so the
+	// sidebar order is stable regardless of Go map iteration order.
+	overlayList := make([]models.Endpoint, 0, len(expectedOverlays))
+	for _, overlay := range expectedOverlays {
+		overlayList = append(overlayList, overlay)
+	}
+	sort.Slice(overlayList, func(i, j int) bool {
+		return overlayList[i].Name < overlayList[j].Name
+	})
+	for _, overlay := range overlayList {
 		a.config.Endpoints = append(a.config.Endpoints, overlay)
-		log.Printf("Ensured overlay proxy endpoint for domain: %s", id)
+		log.Printf("Ensured overlay proxy endpoint for domain: %s", overlay.ID)
 	}
 
 	// Add SOCKS5 endpoint (DisplayOrder 999998, if it exists)
@@ -2648,6 +2659,10 @@ func (a *App) ClearRequestLogs() {
 	a.wsLastSummaryUpdate = make(map[string]time.Time)
 	a.requestLogQueueMutex.Unlock()
 
+	a.wsHandlesMu.Lock()
+	a.wsHandles = make(map[string]wsHandle)
+	a.wsHandlesMu.Unlock()
+
 	runtime.EventsEmit(a.ctx, "logs:cleared", nil)
 }
 
@@ -3351,6 +3366,44 @@ func (a *App) LogRequest(log models.RequestLog) {
 	a.requestLogQueueMutex.Unlock()
 }
 
+// wsHandle stores control callbacks for a live WebSocket relay.
+type wsHandle struct {
+	terminate  func()      // closes both client and backend WS connections
+	setBlocked func(bool)  // enables/disables frame relay without closing
+}
+
+// RegisterWSConnection implements the server.RequestLogger interface.
+// Called by the relay goroutines once both WS connections are established.
+func (a *App) RegisterWSConnection(connectionID string, terminate func(), setBlocked func(bool)) {
+	a.wsHandlesMu.Lock()
+	a.wsHandles[connectionID] = wsHandle{terminate: terminate, setBlocked: setBlocked}
+	a.wsHandlesMu.Unlock()
+}
+
+// TerminateWSConnection force-closes both sides of a live WebSocket relay.
+func (a *App) TerminateWSConnection(connectionID string) error {
+	a.wsHandlesMu.Lock()
+	h, ok := a.wsHandles[connectionID]
+	a.wsHandlesMu.Unlock()
+	if ok {
+		h.terminate()
+	}
+	return nil
+}
+
+// SetWSConnectionBlocked enables or disables frame forwarding for a live relay.
+// While blocked, frames are read from both sides but not forwarded, keeping
+// the connections alive while halting data flow.
+func (a *App) SetWSConnectionBlocked(connectionID string, blocked bool) error {
+	a.wsHandlesMu.Lock()
+	h, ok := a.wsHandles[connectionID]
+	a.wsHandlesMu.Unlock()
+	if ok {
+		h.setBlocked(blocked)
+	}
+	return nil
+}
+
 // GetWSCaptureBytes implements the server.RequestLogger interface.
 // Returns the configured max bytes to capture per WS message, defaulting to 1024.
 func (a *App) GetWSCaptureBytes() int {
@@ -3433,6 +3486,11 @@ func (a *App) CloseWebSocketConnection(connectionID string, code int, reason str
 		delete(a.wsLastSummaryUpdate, connectionID) // clean up throttle entry
 		a.requestLogQueueMutex.Unlock()
 	}
+
+	// Remove the control handle — connection is gone.
+	a.wsHandlesMu.Lock()
+	delete(a.wsHandles, connectionID)
+	a.wsHandlesMu.Unlock()
 }
 
 // buildWSSummary builds a RequestLogSummary from a live WebSocket RequestLog.

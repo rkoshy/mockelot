@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -881,6 +882,15 @@ func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientRea
 	if s.requestLogger != nil {
 		captureBytes = s.requestLogger.GetWSCaptureBytes()
 	}
+
+	var blocked atomic.Bool // false = relay frames; true = read-and-drop
+	if s.requestLogger != nil {
+		s.requestLogger.RegisterWSConnection(connID,
+			func() { clientWS.Close(); backendWS.Close() },
+			func(b bool) { blocked.Store(b) },
+		)
+	}
+
 	errChan := make(chan error, 2)
 
 	// Client → Backend
@@ -891,9 +901,11 @@ func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientRea
 				errChan <- err
 				return
 			}
-			if err := backendWS.WriteMessage(msgType, msg); err != nil {
-				errChan <- err
-				return
+			if !blocked.Load() {
+				if err := backendWS.WriteMessage(msgType, msg); err != nil {
+					errChan <- err
+					return
+				}
 			}
 			if s.requestLogger != nil {
 				s.requestLogger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionSend, startTime, captureBytes))
@@ -909,9 +921,11 @@ func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientRea
 				errChan <- err
 				return
 			}
-			if err := clientWS.WriteMessage(msgType, msg); err != nil {
-				errChan <- err
-				return
+			if !blocked.Load() {
+				if err := clientWS.WriteMessage(msgType, msg); err != nil {
+					errChan <- err
+					return
+				}
 			}
 			if s.requestLogger != nil {
 				s.requestLogger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionRecv, startTime, captureBytes))
@@ -919,13 +933,10 @@ func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientRea
 		}
 	}()
 
-	// Wait for the first relay goroutine to fail, then close both connections to
-	// force the second goroutine to exit. Drain both errors before recording the
-	// close event so no AppendWebSocketEvent calls race with CloseWebSocketConnection.
 	relayErr := <-errChan
 	clientWS.Close()
 	backendWS.Close()
-	<-errChan // wait for the second goroutine
+	<-errChan
 
 	closeCode, closeReason := extractWSCloseInfo(relayErr)
 	log.Printf("SOCKS5 WSS [%s] tunnel closed after %.1fs: %v (code=%d)", targetAddr, time.Since(startTime).Seconds(), relayErr, closeCode)
@@ -1033,6 +1044,15 @@ func (s *SOCKS5Server) handlePlainWebSocket(clientConn net.Conn, clientReader *b
 	if s.requestLogger != nil {
 		captureBytes = s.requestLogger.GetWSCaptureBytes()
 	}
+
+	var blocked atomic.Bool
+	if s.requestLogger != nil {
+		s.requestLogger.RegisterWSConnection(connID,
+			func() { clientWS.Close(); backendWS.Close() },
+			func(b bool) { blocked.Store(b) },
+		)
+	}
+
 	errChan := make(chan error, 2)
 
 	go func() {
@@ -1042,9 +1062,11 @@ func (s *SOCKS5Server) handlePlainWebSocket(clientConn net.Conn, clientReader *b
 				errChan <- err
 				return
 			}
-			if err := backendWS.WriteMessage(msgType, msg); err != nil {
-				errChan <- err
-				return
+			if !blocked.Load() {
+				if err := backendWS.WriteMessage(msgType, msg); err != nil {
+					errChan <- err
+					return
+				}
 			}
 			if s.requestLogger != nil {
 				s.requestLogger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionSend, startTime, captureBytes))
@@ -1059,9 +1081,11 @@ func (s *SOCKS5Server) handlePlainWebSocket(clientConn net.Conn, clientReader *b
 				errChan <- err
 				return
 			}
-			if err := clientWS.WriteMessage(msgType, msg); err != nil {
-				errChan <- err
-				return
+			if !blocked.Load() {
+				if err := clientWS.WriteMessage(msgType, msg); err != nil {
+					errChan <- err
+					return
+				}
 			}
 			if s.requestLogger != nil {
 				s.requestLogger.AppendWebSocketEvent(connID, makeWSEvent(msgType, msg, models.WSDirectionRecv, startTime, captureBytes))
