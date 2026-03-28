@@ -12,6 +12,8 @@ import {
   GetRequestLogs,
   ClearRequestLogs,
   ClearRequestLogsForEndpoint,
+  ClearInactiveRequestLogs,
+  ClearInactiveRequestLogsForEndpoint,
   ClearWSFrames,
   ImportOpenAPISpecWithDialog,
   GetCACertInfo,
@@ -299,6 +301,34 @@ export const useServerStore = defineStore('server', () => {
       }
     } catch (error) {
       console.error('Failed to clear logs for endpoint:', error)
+    }
+  }
+
+  async function clearInactiveLogs() {
+    try {
+      await ClearInactiveRequestLogs()
+      requestLogs.value = requestLogs.value.filter(log => log.is_websocket && log.ws_is_open)
+      if (selectedLogId.value) {
+        const still = requestLogs.value.find(l => l.id === selectedLogId.value)
+        if (!still) selectedLogId.value = null
+      }
+    } catch (error) {
+      console.error('Failed to clear inactive logs:', error)
+    }
+  }
+
+  async function clearInactiveLogsForEndpoint(endpointId: string) {
+    try {
+      await ClearInactiveRequestLogsForEndpoint(endpointId)
+      requestLogs.value = requestLogs.value.filter(log =>
+        log.endpoint_id !== endpointId || (log.is_websocket && log.ws_is_open)
+      )
+      if (selectedLogId.value) {
+        const still = requestLogs.value.find(l => l.id === selectedLogId.value)
+        if (!still) selectedLogId.value = null
+      }
+    } catch (error) {
+      console.error('Failed to clear inactive logs for endpoint:', error)
     }
   }
 
@@ -889,6 +919,8 @@ export const useServerStore = defineStore('server', () => {
     refreshLogs,
     clearLogs,
     clearLogsForEndpoint,
+    clearInactiveLogs,
+    clearInactiveLogsForEndpoint,
     selectLog,
     importOpenAPISpec,
     // Endpoint Actions

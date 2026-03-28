@@ -19,6 +19,10 @@ export function AppendWebSocketEvent(arg1:string,arg2:models.WebSocketEvent):Pro
 
 export function CancelContainerStart(arg1:string):Promise<void>;
 
+export function ClearInactiveRequestLogs():Promise<void>;
+
+export function ClearInactiveRequestLogsForEndpoint(arg1:string):Promise<void>;
+
 export function ClearRequestLogs():Promise<void>;
 
 export function ClearRequestLogsForEndpoint(arg1:string):Promise<void>;

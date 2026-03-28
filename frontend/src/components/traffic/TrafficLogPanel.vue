@@ -4,6 +4,7 @@ import { useServerStore } from '../../stores/server'
 import { ExportLogs } from '../../../wailsjs/go/main/App'
 import RequestInspectorModal from '../inspector/RequestInspectorModal.vue'
 import WSConnectionTab from './WSConnectionTab.vue'
+import ConfirmDialog from '../dialogs/ConfirmDialog.vue'
 import type { models } from '../../../wailsjs/go/models'
 
 const serverStore = useServerStore()
@@ -197,6 +198,57 @@ function closeInspector() {
   showInspectorModal.value = false
 }
 
+// ── Smart Clear (WS-aware) ───────────────────────────────────────────────
+const showClearDialog = ref(false)
+const activeWSCount = ref(0)
+
+function handleClear() {
+  // Count active WS connections in the scope being cleared
+  const endpointId = serverStore.selectedEndpointId
+  const scopedLogs = endpointId
+    ? serverStore.requestLogs.filter(l => l.endpoint_id === endpointId)
+    : serverStore.requestLogs
+  const activeWS = scopedLogs.filter(l => l.is_websocket && l.ws_is_open).length
+
+  if (activeWS === 0) {
+    // No active WS — clear immediately
+    if (endpointId) {
+      serverStore.clearLogsForEndpoint(endpointId)
+    } else {
+      serverStore.clearLogs()
+    }
+    return
+  }
+
+  // Active WS exist — show confirmation dialog
+  activeWSCount.value = activeWS
+  showClearDialog.value = true
+}
+
+function handleClearAll() {
+  showClearDialog.value = false
+  const endpointId = serverStore.selectedEndpointId
+  if (endpointId) {
+    serverStore.clearLogsForEndpoint(endpointId)
+  } else {
+    serverStore.clearLogs()
+  }
+}
+
+function handleClearInactive() {
+  showClearDialog.value = false
+  const endpointId = serverStore.selectedEndpointId
+  if (endpointId) {
+    serverStore.clearInactiveLogsForEndpoint(endpointId)
+  } else {
+    serverStore.clearInactiveLogs()
+  }
+}
+
+function handleClearCancel() {
+  showClearDialog.value = false
+}
+
 // Expose openWSTab so the inspector modal can call it
 defineExpose({ openWSTab })
 </script>
@@ -301,7 +353,7 @@ defineExpose({ openWSTab })
         <button @click="handleExportJSON" :disabled="filteredLogs.length === 0" class="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">JSON</button>
         <button @click="handleExportCSV"  :disabled="filteredLogs.length === 0" class="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">CSV</button>
         <button
-          @click="serverStore.selectedEndpointId ? serverStore.clearLogsForEndpoint(serverStore.selectedEndpointId) : serverStore.clearLogs()"
+          @click="handleClear"
           :disabled="filteredLogs.length === 0"
           class="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-xs text-white disabled:opacity-50 disabled:cursor-not-allowed"
         >{{ serverStore.selectedEndpointId ? 'Clear' : 'Clear All' }}</button>
@@ -428,6 +480,19 @@ defineExpose({ openWSTab })
       :log="inspectorLog"
       @close="closeInspector"
       @open-ws-tab="openWSTab"
+    />
+
+    <!-- Clear Confirmation Dialog (shown when active WS connections exist) -->
+    <ConfirmDialog
+      :show="showClearDialog"
+      title="Clear Traffic Logs"
+      :message="`There ${activeWSCount === 1 ? 'is 1 active WebSocket connection' : 'are ' + activeWSCount + ' active WebSocket connections'}.\n\nINACTIVE — Clear historical logs and closed connections. Keep active WS connections.\n\nALL — Clear everything including active WebSocket connections.`"
+      primary-text="All"
+      secondary-text="Inactive"
+      cancel-text="Cancel"
+      @primary="handleClearAll"
+      @secondary="handleClearInactive"
+      @cancel="handleClearCancel"
     />
   </div>
 </template>

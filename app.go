@@ -2709,6 +2709,80 @@ func (a *App) ClearRequestLogsForEndpoint(endpointID string) {
 	runtime.EventsEmit(a.ctx, "logs:cleared:endpoint", endpointID)
 }
 
+// ClearInactiveRequestLogs clears all non-active-WS logs globally.
+// Active WebSocket connections (WSIsOpen == true) are preserved.
+func (a *App) ClearInactiveRequestLogs() {
+	a.logMutex.Lock()
+	removedWSIDs := make(map[string]bool)
+	kept := make([]models.RequestLog, 0)
+	for _, log := range a.requestLogs {
+		if log.IsWebSocket && log.WSClosedAt == "" {
+			kept = append(kept, log) // Keep active WS
+			continue
+		}
+		if log.IsWebSocket {
+			removedWSIDs[log.ID] = true
+		}
+	}
+	a.requestLogs = kept
+	a.logMutex.Unlock()
+
+	if len(removedWSIDs) > 0 {
+		a.requestLogQueueMutex.Lock()
+		for id := range removedWSIDs {
+			delete(a.wsLastSummaryUpdate, id)
+		}
+		a.requestLogQueueMutex.Unlock()
+
+		a.wsHandlesMu.Lock()
+		for id := range removedWSIDs {
+			delete(a.wsHandles, id)
+		}
+		a.wsHandlesMu.Unlock()
+	}
+
+	runtime.EventsEmit(a.ctx, "logs:cleared", nil)
+}
+
+// ClearInactiveRequestLogsForEndpoint clears non-active-WS logs for a specific endpoint.
+// Active WebSocket connections (WSIsOpen == true) for this endpoint are preserved.
+func (a *App) ClearInactiveRequestLogsForEndpoint(endpointID string) {
+	a.logMutex.Lock()
+	removedWSIDs := make(map[string]bool)
+	kept := make([]models.RequestLog, 0, len(a.requestLogs))
+	for _, log := range a.requestLogs {
+		if log.EndpointID != endpointID {
+			kept = append(kept, log) // Different endpoint, keep
+			continue
+		}
+		if log.IsWebSocket && log.WSClosedAt == "" {
+			kept = append(kept, log) // Active WS for this endpoint, keep
+			continue
+		}
+		if log.IsWebSocket {
+			removedWSIDs[log.ID] = true
+		}
+	}
+	a.requestLogs = kept
+	a.logMutex.Unlock()
+
+	if len(removedWSIDs) > 0 {
+		a.requestLogQueueMutex.Lock()
+		for id := range removedWSIDs {
+			delete(a.wsLastSummaryUpdate, id)
+		}
+		a.requestLogQueueMutex.Unlock()
+
+		a.wsHandlesMu.Lock()
+		for id := range removedWSIDs {
+			delete(a.wsHandles, id)
+		}
+		a.wsHandlesMu.Unlock()
+	}
+
+	runtime.EventsEmit(a.ctx, "logs:cleared:endpoint", endpointID)
+}
+
 // ClearWSFrames clears all captured WebSocket frames for a specific connection,
 // while keeping the connection log entry itself intact.
 func (a *App) ClearWSFrames(connectionID string) error {

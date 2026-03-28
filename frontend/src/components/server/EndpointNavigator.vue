@@ -99,9 +99,9 @@ function displayName(ep: models.Endpoint): string {
 }
 
 function typeLabel(ep: models.Endpoint): { text: string; cls: string } {
-  if (isOverlay(ep))              return { text: '●', cls: 'text-orange-400' }
-  if (ep.type === 'proxy')        return { text: '→', cls: 'text-blue-400'   }
-  if (ep.type === 'container')    return { text: '□', cls: 'text-purple-400' }
+  if (isOverlay(ep))              return { text: 'O', cls: 'text-orange-400' }
+  if (ep.type === 'proxy')        return { text: 'P', cls: 'text-blue-400'   }
+  if (ep.type === 'container')    return { text: 'C', cls: 'text-purple-400' }
   if (ep.id === 'system-socks5-proxy') return { text: '✦', cls: 'text-yellow-400' }
   if (ep.id === 'system-rejections')   return { text: '✗', cls: 'text-red-400'    }
   return { text: 'M', cls: 'text-green-400' }
@@ -129,6 +129,32 @@ function statusDot(ep: models.Endpoint): { show: boolean; cls: string; pulse: bo
     if (hasOpenWS) return { show: true, cls: 'bg-green-400', pulse: true, title: 'WSS connection open' }
   }
   return { show: false, cls: '', pulse: false, title: '' }
+}
+
+// ── Activity indicator (up/down arrow showing traffic recency) ────────────
+const activityTick = ref(0)
+let activityTimer: ReturnType<typeof setInterval> | null = null
+onMounted(() => { activityTimer = setInterval(() => activityTick.value++, 1000) })
+onUnmounted(() => { if (activityTimer) clearInterval(activityTimer) })
+
+function activityDot(ep: models.Endpoint): { show: boolean; cls: string; title: string } {
+  // Touch activityTick to create reactive dependency for time-based updates
+  void activityTick.value
+
+  const epId = ep.id ?? ''
+  const logs = serverStore.requestLogs
+  let latestTime = 0
+  for (const l of logs) {
+    if (l.endpoint_id !== epId) continue
+    const t = new Date(l.timestamp).getTime()
+    if (t > latestTime) latestTime = t
+  }
+  if (latestTime === 0) return { show: false, cls: '', title: '' }
+
+  const elapsed = Date.now() - latestTime
+  if (elapsed <= 5000)  return { show: true, cls: 'text-green-400',  title: 'Active traffic' }
+  if (elapsed <= 60000) return { show: true, cls: 'text-yellow-400', title: 'Recent traffic' }
+  return { show: true, cls: 'text-gray-500', title: 'Historical traffic' }
 }
 
 // ── Keyboard navigation ───────────────────────────────────────────────────
@@ -296,7 +322,11 @@ function itemCls(id: string, isDragging = false): string {
         >
           <span :class="['flex-shrink-0 text-xs font-bold w-3 text-center', typeLabel(ep).cls]">{{ typeLabel(ep).text }}</span>
           <span class="flex-1 truncate">{{ displayName(ep) }}</span>
-          <span v-if="statusDot(ep).show" :class="['w-1.5 h-1.5 rounded-full flex-shrink-0', statusDot(ep).cls, statusDot(ep).pulse ? 'animate-pulse' : '']" :title="statusDot(ep).title" />
+          <!-- Indicators (fixed-width container) -->
+          <div class="flex items-center gap-1 flex-shrink-0 w-8 justify-end">
+            <svg v-if="activityDot(ep).show" :class="['w-3 h-3', activityDot(ep).cls]" :title="activityDot(ep).title" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 18V6M5 9l3-3 3 3" /><path d="M16 6v12M13 15l3 3 3-3" /></svg>
+            <span :class="['w-1.5 h-1.5 rounded-full', statusDot(ep).show ? statusDot(ep).cls : 'invisible', statusDot(ep).pulse ? 'animate-pulse' : '']" :title="statusDot(ep).title" />
+          </div>
         </div>
       </template>
 
@@ -333,6 +363,11 @@ function itemCls(id: string, isDragging = false): string {
             >
               <span class="flex-shrink-0 text-xs font-bold w-3 text-center text-green-400">M</span>
               <span class="flex-1 truncate font-mono text-[11px]">{{ ep.path_prefix }}</span>
+              <!-- Indicators (fixed-width container) -->
+              <div class="flex items-center gap-1 flex-shrink-0 w-8 justify-end">
+                <svg v-if="activityDot(ep).show" :class="['w-3 h-3', activityDot(ep).cls]" :title="activityDot(ep).title" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 18V6M5 9l3-3 3 3" /><path d="M16 6v12M13 15l3 3 3-3" /></svg>
+                <span class="w-1.5 h-1.5 invisible" />
+              </div>
               <!-- Hover actions -->
               <div class="hidden group-hover:flex items-center gap-0.5 flex-shrink-0 pointer-events-auto z-10">
                 <button @click.stop="emit('deleteEp', ep)" class="p-0.5 rounded hover:bg-red-900/50 text-red-400" title="Delete">
@@ -352,9 +387,12 @@ function itemCls(id: string, isDragging = false): string {
           </button>
           <div v-show="!collapsed.proxy">
             <div v-for="ep in proxyEps" :key="ep.id" :id="`nav-item-${ep.id}`" :class="itemCls(ep.id ?? '', draggedId === ep.id)" role="listitem" :aria-current="selectedId === ep.id ? 'true' : undefined" :draggable="true" @click="emit('select', ep.id ?? '')" @dragstart="onDragStart(ep, $event)" @dragover="onDragOver(ep, $event)" @drop="onDrop(ep)" @dragend="onDragEnd">
-              <span class="flex-shrink-0 text-xs font-bold w-3 text-center text-blue-400">→</span>
+              <span class="flex-shrink-0 text-xs font-bold w-3 text-center text-blue-400">P</span>
               <span class="flex-1 truncate">{{ ep.name }}</span>
-              <span v-if="statusDot(ep).show" :class="['w-1.5 h-1.5 rounded-full flex-shrink-0', statusDot(ep).cls, statusDot(ep).pulse ? 'animate-pulse' : '']" :title="statusDot(ep).title" />
+              <div class="flex items-center gap-1 flex-shrink-0 w-8 justify-end">
+                <svg v-if="activityDot(ep).show" :class="['w-3 h-3', activityDot(ep).cls]" :title="activityDot(ep).title" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 18V6M5 9l3-3 3 3" /><path d="M16 6v12M13 15l3 3 3-3" /></svg>
+                <span :class="['w-1.5 h-1.5 rounded-full', statusDot(ep).show ? statusDot(ep).cls : 'invisible', statusDot(ep).pulse ? 'animate-pulse' : '']" :title="statusDot(ep).title" />
+              </div>
               <div class="hidden group-hover:flex items-center gap-0.5 flex-shrink-0">
                 <button @click.stop="emit('deleteEp', ep)" class="p-0.5 rounded hover:bg-red-900/50 text-red-400"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
               </div>
@@ -371,9 +409,12 @@ function itemCls(id: string, isDragging = false): string {
           </button>
           <div v-show="!collapsed.container">
             <div v-for="ep in containerEps" :key="ep.id" :id="`nav-item-${ep.id}`" :class="itemCls(ep.id ?? '', draggedId === ep.id)" role="listitem" :aria-current="selectedId === ep.id ? 'true' : undefined" :draggable="true" @click="emit('select', ep.id ?? '')" @dragstart="onDragStart(ep, $event)" @dragover="onDragOver(ep, $event)" @drop="onDrop(ep)" @dragend="onDragEnd">
-              <span class="flex-shrink-0 text-xs font-bold w-3 text-center text-purple-400">□</span>
+              <span class="flex-shrink-0 text-xs font-bold w-3 text-center text-purple-400">C</span>
               <span class="flex-1 truncate">{{ ep.name }}</span>
-              <span v-if="statusDot(ep).show" :class="['w-1.5 h-1.5 rounded-full flex-shrink-0', statusDot(ep).cls, statusDot(ep).pulse ? 'animate-pulse' : '']" :title="statusDot(ep).title" />
+              <div class="flex items-center gap-1 flex-shrink-0 w-8 justify-end">
+                <svg v-if="activityDot(ep).show" :class="['w-3 h-3', activityDot(ep).cls]" :title="activityDot(ep).title" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 18V6M5 9l3-3 3 3" /><path d="M16 6v12M13 15l3 3 3-3" /></svg>
+                <span :class="['w-1.5 h-1.5 rounded-full', statusDot(ep).show ? statusDot(ep).cls : 'invisible', statusDot(ep).pulse ? 'animate-pulse' : '']" :title="statusDot(ep).title" />
+              </div>
               <div class="hidden group-hover:flex items-center gap-0.5 flex-shrink-0">
                 <button @click.stop="emit('deleteEp', ep)" class="p-0.5 rounded hover:bg-red-900/50 text-red-400"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
               </div>
@@ -390,9 +431,12 @@ function itemCls(id: string, isDragging = false): string {
           </button>
           <div v-show="!collapsed.overlays">
             <div v-for="ep in overlayEps" :key="ep.id" :id="`nav-item-${ep.id}`" :class="itemCls(ep.id ?? '')" role="listitem" :aria-current="selectedId === ep.id ? 'true' : undefined" @click="emit('select', ep.id ?? '')">
-              <span class="flex-shrink-0 text-xs font-bold w-3 text-center text-orange-400">●</span>
+              <span class="flex-shrink-0 text-xs font-bold w-3 text-center text-orange-400">O</span>
               <span class="flex-1 truncate font-mono text-[11px]">{{ displayName(ep) }}</span>
-              <span v-if="statusDot(ep).show" class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse flex-shrink-0" title="WSS open" />
+              <div class="flex items-center gap-1 flex-shrink-0 w-8 justify-end">
+                <svg v-if="activityDot(ep).show" :class="['w-3 h-3', activityDot(ep).cls]" :title="activityDot(ep).title" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 18V6M5 9l3-3 3 3" /><path d="M16 6v12M13 15l3 3 3-3" /></svg>
+                <span :class="['w-1.5 h-1.5 rounded-full', statusDot(ep).show ? statusDot(ep).cls : 'invisible', statusDot(ep).pulse ? 'animate-pulse' : '']" :title="statusDot(ep).title" />
+              </div>
             </div>
           </div>
         </template>
@@ -403,6 +447,10 @@ function itemCls(id: string, isDragging = false): string {
           <div v-for="ep in systemEps" :key="ep.id" :id="`nav-item-${ep.id}`" :class="itemCls(ep.id ?? '')" role="listitem" :aria-current="selectedId === ep.id ? 'true' : undefined" @click="emit('select', ep.id ?? '')">
             <span :class="['flex-shrink-0 text-xs font-bold w-3 text-center', typeLabel(ep).cls]">{{ typeLabel(ep).text }}</span>
             <span class="flex-1 truncate">{{ ep.name }}</span>
+            <div class="flex items-center gap-1 flex-shrink-0 w-8 justify-end">
+              <svg v-if="activityDot(ep).show" :class="['w-3 h-3', activityDot(ep).cls]" :title="activityDot(ep).title" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 18V6M5 9l3-3 3 3" /><path d="M16 6v12M13 15l3 3 3-3" /></svg>
+              <span class="w-1.5 h-1.5 invisible" />
+            </div>
           </div>
         </template>
 

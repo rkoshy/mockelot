@@ -34,6 +34,14 @@ export function CancelContainerStart(arg1) {
   return window['go']['main']['App']['CancelContainerStart'](arg1);
 }
 
+export function ClearInactiveRequestLogs() {
+  return window['go']['main']['App']['ClearInactiveRequestLogs']();
+}
+
+export function ClearInactiveRequestLogsForEndpoint(arg1) {
+  return window['go']['main']['App']['ClearInactiveRequestLogsForEndpoint'](arg1);
+}
+
 export function ClearRequestLogs() {
   return window['go']['main']['App']['ClearRequestLogs']();
 }
