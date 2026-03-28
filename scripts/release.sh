@@ -40,9 +40,19 @@ if git tag -l "$VERSION_TAG" | grep -q "$VERSION_TAG"; then
     exit 1
 fi
 
+# --- Create local tag BEFORE building so git-describe returns the correct version ---
+# (Laminar CI jobs use `git describe --tags` which needs the tag to exist)
+# The tag is only pushed after a successful build + user confirmation.
+log_info "Creating local tag ${VERSION_TAG} (for build versioning)..."
+git tag -a "$VERSION_TAG" -m "Release ${VERSION_TAG}"
+
 # --- Build all platforms ---
 log_info "Starting builds for ${VERSION_TAG}..."
-"${SCRIPT_DIR}/build-all.sh" --laminar
+if ! "${SCRIPT_DIR}/build-all.sh" --laminar; then
+    log_error "Build failed — removing local tag ${VERSION_TAG}"
+    git tag -d "$VERSION_TAG" 2>/dev/null
+    exit 1
+fi
 
 # --- Build .deb packages ---
 log_info "Building .deb packages..."
@@ -101,11 +111,8 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 0
 fi
 
-# --- Tag and push ---
-log_info "Creating tag ${VERSION_TAG}..."
-git tag -a "$VERSION_TAG" -m "Release ${VERSION_TAG}
-
-${RELEASE_NOTES}"
+# --- Push tag and code ---
+log_info "Pushing ${VERSION_TAG}..."
 git push origin main 2>/dev/null || git push origin HEAD
 git push origin "$VERSION_TAG"
 log_success "Tag ${VERSION_TAG} pushed."
