@@ -1,9 +1,14 @@
 <script lang="ts" setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { TestProxyConnection, GetDefaultContainerHeaders } from '../../../wailsjs/go/main/App'
 import HeaderManipulationList from './HeaderManipulationList.vue'
 import StatusTranslationList from './StatusTranslationList.vue'
 import { models } from '../../../wailsjs/go/models'
+import { Codemirror } from 'vue-codemirror'
+import { javascript } from '@codemirror/lang-javascript'
+import { oneDark } from '@codemirror/theme-one-dark'
+import { indentSelection } from '@codemirror/commands'
+import type { EditorView } from '@codemirror/view'
 
 const props = defineProps<{
   config: models.ProxyConfig
@@ -80,6 +85,47 @@ async function testConnection() {
     testingConnection.value = false
   }
 }
+
+// CodeMirror extensions and fullscreen state
+const cmExtensions = [javascript(), oneDark]
+const isBodyFullscreen = ref(false)
+const cmView = ref<EditorView | null>(null)
+
+function handleCmReady(payload: { view: EditorView }) {
+  cmView.value = payload.view
+}
+
+function formatBodyTransform() {
+  const view = cmView.value
+  if (!view) return
+  // Select all then indent
+  const len = view.state.doc.length
+  view.dispatch({ selection: { anchor: 0, head: len } })
+  indentSelection(view)
+  // Collapse selection to end
+  view.dispatch({ selection: { anchor: view.state.selection.main.head } })
+}
+
+function toggleBodyFullscreen() {
+  isBodyFullscreen.value = !isBodyFullscreen.value
+}
+
+watch(isBodyFullscreen, (fs) => {
+  document.body.style.overflow = fs ? 'hidden' : ''
+})
+
+function onBodyEditorKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && isBodyFullscreen.value) {
+    e.stopImmediatePropagation()
+    isBodyFullscreen.value = false
+  }
+}
+
+onMounted(() => document.addEventListener('keydown', onBodyEditorKeydown))
+onUnmounted(() => {
+  document.removeEventListener('keydown', onBodyEditorKeydown)
+  document.body.style.overflow = ''
+})
 
 // Reset to default headers
 async function resetToDefaults() {
@@ -303,21 +349,72 @@ async function resetToDefaults() {
 
       <!-- Body Transformation -->
       <div class="border-t border-gray-700 pt-6">
-        <label class="block text-sm font-medium text-gray-300 mb-2">
-          Body Transformation (JavaScript)
-        </label>
-        <textarea
-          v-model="bodyTransform"
-          @blur="emitUpdate"
-          rows="8"
-          class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white font-mono text-sm
-                 focus:outline-none focus:border-blue-500"
-          placeholder="// Optional: Transform response body&#10;// Available: body (string), contentType (string), JSON.parse, JSON.stringify&#10;&#10;const data = JSON.parse(body);&#10;data.modified = true;&#10;JSON.stringify(data)"
-        />
+        <div class="flex items-center justify-between mb-2">
+          <label class="text-sm font-medium text-gray-300">
+            Body Transformation (JavaScript)
+          </label>
+          <div class="flex gap-1">
+            <button
+              @click="formatBodyTransform"
+              class="px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded text-xs text-gray-300 transition-colors"
+              title="Re-indent code"
+            >Format</button>
+            <button
+              @click="toggleBodyFullscreen"
+              class="px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded text-xs text-gray-300 transition-colors flex items-center gap-1"
+              title="Fullscreen editor"
+            >
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+              </svg>
+              Fullscreen
+            </button>
+          </div>
+        </div>
+        <div class="border border-gray-600 rounded overflow-hidden">
+          <Codemirror
+            v-model="bodyTransform"
+            :extensions="cmExtensions"
+            @change="emitUpdate"
+            @ready="handleCmReady"
+            placeholder="// Optional: Transform response body&#10;// Available: body (string), contentType (string)&#10;&#10;const data = JSON.parse(body);&#10;data.modified = true;&#10;JSON.stringify(data)"
+            :style="{ height: '200px' }"
+          />
+        </div>
         <p class="mt-1 text-xs text-gray-400">
           Optional JavaScript to transform the response body. Return the modified body as a string.
         </p>
       </div>
+
+      <!-- Fullscreen editor overlay -->
+      <Teleport to="body">
+        <Transition name="fs-editor">
+          <div v-if="isBodyFullscreen" class="fixed inset-0 z-50 bg-gray-900 flex flex-col">
+            <div class="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700 flex-shrink-0">
+              <span class="text-sm text-white font-medium">Body Transformation (JavaScript)</span>
+              <div class="flex gap-2">
+                <button
+                  @click="formatBodyTransform"
+                  class="px-3 py-1 bg-gray-600 hover:bg-gray-500 rounded text-xs text-gray-300 transition-colors"
+                >Format</button>
+                <button
+                  @click="toggleBodyFullscreen"
+                  class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-xs text-white transition-colors"
+                >Close Fullscreen</button>
+              </div>
+            </div>
+            <div class="flex-1">
+              <Codemirror
+                v-model="bodyTransform"
+                :extensions="cmExtensions"
+                @change="emitUpdate"
+                @ready="handleCmReady"
+                :style="{ height: '100%' }"
+              />
+            </div>
+          </div>
+        </Transition>
+      </Teleport>
     </div>
 
     <!-- Health Tab -->
@@ -380,3 +477,8 @@ async function resetToDefaults() {
     </div>
   </div>
 </template>
+
+<style scoped>
+.fs-editor-enter-active, .fs-editor-leave-active { transition: opacity 0.15s ease; }
+.fs-editor-enter-from, .fs-editor-leave-to { opacity: 0; }
+</style>

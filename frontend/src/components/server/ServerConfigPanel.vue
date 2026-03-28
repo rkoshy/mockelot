@@ -13,7 +13,12 @@ import SOCKS5DomainsPanel from '../socks5/SOCKS5DomainsPanel.vue'
 import { models } from '../../types/models'
 import { StartContainer, StopContainer, DeleteContainer } from '../../../wailsjs/go/main/App'
 import OverlaySimPanel from './OverlaySimPanel.vue'
+import ProxySimPanel from './ProxySimPanel.vue'
 import EndpointNavigator from './EndpointNavigator.vue'
+import ProxyConfigPanel from '../dialogs/ProxyConfigPanel.vue'
+import ContainerConfigPanel from '../dialogs/ContainerConfigPanel.vue'
+import CustomSelect from '../common/CustomSelect.vue'
+import DomainFilterInput from '../common/DomainFilterInput.vue'
 
 const serverStore = useServerStore()
 
@@ -30,6 +35,11 @@ const selectedTab = ref<'server' | string>('server')  // Default to Server tab
 // Reset to Server tab when a new config file is loaded
 watch(() => serverStore.currentFilePath, () => {
   selectedTab.value = 'server'
+})
+
+// Close drawer when switching to Server tab
+watch(selectedTab, (tab) => {
+  if (tab === 'server') showSettingsDrawer.value = false
 })
 
 // Inject event registration function from HeaderBar
@@ -51,9 +61,8 @@ interface ContainerProgress {
 const containerProgress = ref<Record<string, ContainerProgress>>({})
 let unregisterProgressListener: (() => void) | null = null
 
-// Resizable divider state
-const dividerPosition = ref(550) // pixels
-const isDraggingDivider = ref(false)
+// Settings drawer state
+const showSettingsDrawer = ref(false)
 
 // Dialog state
 const showAddEndpointDialog = ref(false)
@@ -280,6 +289,110 @@ function handleCancelEndpointSettings() {
   showEndpointSettingsDialog.value = false
 }
 
+// ── Inline endpoint editing ──────────────────────────────────────────────
+const inlineActiveTab = ref<'general' | 'proxy' | 'container'>('general')
+
+// Dropdown options for inline editor
+const translationModeOptions = [
+  { value: 'none', label: 'None - Use path as-is' },
+  { value: 'strip', label: 'Strip - Remove prefix before matching' },
+  { value: 'translate', label: 'Translate - Regex match/replace' }
+]
+
+const domainFilterModeOptions = [
+  { value: 'any', label: 'Any Domain', description: 'Match requests from any domain (including direct HTTP)' },
+  { value: 'all', label: 'All SOCKS5 Domains', description: 'Only match requests from domains in SOCKS5 Domain Takeover' },
+  { value: 'specific', label: 'Specific Domains', description: 'Only match requests from specific domain patterns' }
+]
+
+const inlineName = ref('')
+const inlinePathPrefix = ref('/')
+const inlineTranslationMode = ref('none')
+const inlineTranslatePattern = ref('')
+const inlineTranslateReplace = ref('')
+const inlineEnabled = ref(true)
+const inlineDomainFilterMode = ref('any')
+const inlineDomainFilterPatterns = ref<string[]>([])
+const inlineProxyConfig = ref<models.ProxyConfig | null>(null)
+const inlineContainerConfig = ref<models.ContainerConfig | null>(null)
+
+// Load inline editor state when the selected endpoint ID changes (not on every reactive tick)
+let lastLoadedEndpointId = ''
+watch(() => serverStore.currentEndpoint?.id, (newId) => {
+  const ep = serverStore.currentEndpoint
+  if (!ep || !newId) return
+  if (newId === lastLoadedEndpointId) return  // Same endpoint, skip reload
+  lastLoadedEndpointId = newId
+  inlineName.value = ep.name || ''
+  inlinePathPrefix.value = ep.path_prefix || '/'
+  inlineTranslationMode.value = ep.translation_mode || 'none'
+  inlineTranslatePattern.value = ep.translate_pattern || ''
+  inlineTranslateReplace.value = ep.translate_replace || ''
+  inlineEnabled.value = ep.enabled !== false
+  inlineDomainFilterMode.value = ep.domain_filter?.mode || 'any'
+  inlineDomainFilterPatterns.value = ep.domain_filter?.patterns || []
+  inlineProxyConfig.value = ep.proxy_config || null
+  inlineContainerConfig.value = ep.container_config || null
+  inlineActiveTab.value = 'general'
+}, { immediate: true })
+
+let inlineSaveTimer: ReturnType<typeof setTimeout> | null = null
+function debouncedInlineSave() {
+  if (inlineSaveTimer) clearTimeout(inlineSaveTimer)
+  inlineSaveTimer = setTimeout(saveInlineEndpoint, 500)
+}
+
+async function saveInlineEndpoint() {
+  const ep = serverStore.currentEndpoint
+  if (!ep || !inlineName.value.trim() || !inlinePathPrefix.value.trim()) return
+
+  const domainFilter = inlineDomainFilterMode.value !== 'any' ? new models.DomainFilter({
+    mode: inlineDomainFilterMode.value,
+    patterns: inlineDomainFilterMode.value === 'specific' ? inlineDomainFilterPatterns.value : []
+  }) : undefined
+
+  const updated = new models.Endpoint({
+    id: ep.id,
+    name: inlineName.value.trim(),
+    path_prefix: inlinePathPrefix.value.trim(),
+    translation_mode: inlineTranslationMode.value,
+    translate_pattern: inlineTranslationMode.value === 'translate' ? inlineTranslatePattern.value.trim() : '',
+    translate_replace: inlineTranslationMode.value === 'translate' ? inlineTranslateReplace.value.trim() : '',
+    enabled: inlineEnabled.value,
+    type: ep.type,
+    items: ep.items,
+    proxy_config: inlineProxyConfig.value || undefined,
+    container_config: inlineContainerConfig.value || undefined,
+    domain_filter: domainFilter
+  })
+
+  try {
+    await serverStore.updateEndpointById(updated)
+  } catch (error) {
+    console.error('Failed to save inline endpoint:', error)
+  }
+}
+
+function handleInlineProxyConfigUpdate(config: models.ProxyConfig) {
+  const ep = serverStore.currentEndpoint
+  if (!ep) return
+
+  if (ep.type === 'proxy') {
+    inlineProxyConfig.value = config
+  } else if (ep.type === 'container' && inlineContainerConfig.value) {
+    inlineContainerConfig.value = new models.ContainerConfig({
+      ...inlineContainerConfig.value,
+      proxy_config: config
+    })
+  }
+  debouncedInlineSave()
+}
+
+function handleInlineContainerConfigUpdate(config: models.ContainerConfig) {
+  inlineContainerConfig.value = config
+  debouncedInlineSave()
+}
+
 // Overlay endpoint helpers
 function isOverlayEndpoint(endpoint: models.Endpoint): boolean {
   return endpoint.id?.startsWith('system-overlay-') || false
@@ -488,38 +601,11 @@ function handleCloseConsole() {
   showContainerConsoleDialog.value = false
 }
 
-// Resizable divider handlers
-function startDragging(event: MouseEvent) {
-  isDraggingDivider.value = true
-  event.preventDefault()
-
-  const container = event.currentTarget as HTMLElement
-  const containerRect = container.parentElement?.getBoundingClientRect()
-
-  const onMouseMove = (e: MouseEvent) => {
-    if (!isDraggingDivider.value || !containerRect) return
-
-    const relativeX = e.clientX - containerRect.left
-
-    // Clamp between 200px and container width - 200px
-    const minWidth = 200
-    const maxWidth = containerRect.width - 200
-    dividerPosition.value = Math.max(minWidth, Math.min(maxWidth, relativeX))
+// Drawer keyboard handler (Escape to close)
+function onDrawerKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && showSettingsDrawer.value) {
+    showSettingsDrawer.value = false
   }
-
-  const onMouseUp = () => {
-    isDraggingDivider.value = false
-    document.removeEventListener('mousemove', onMouseMove)
-    document.removeEventListener('mouseup', onMouseUp)
-  }
-
-  document.addEventListener('mousemove', onMouseMove)
-  document.addEventListener('mouseup', onMouseUp)
-}
-
-// Open endpoint settings - endpoint is already selected since button is only visible for selected endpoint
-function openEndpointSettings(_endpoint: models.Endpoint) {
-  showEndpointSettingsDialog.value = true
 }
 
 // Container stats wrappers
@@ -587,8 +673,9 @@ function handleCancelImport() {
   showImportDialog.value = false
 }
 
-// Register for container progress events (for inline progress indicator)
+// Register for container progress events and drawer keydown
 onMounted(() => {
+  document.addEventListener('keydown', onDrawerKeydown)
   if (registerEventListener) {
     unregisterProgressListener = registerEventListener('ctr:progress', (data: any) => {
       if (data.endpoint_id) {
@@ -613,6 +700,7 @@ onMounted(() => {
 
 // Cleanup on unmount
 onUnmounted(() => {
+  document.removeEventListener('keydown', onDrawerKeydown)
   if (unregisterProgressListener) {
     unregisterProgressListener()
     unregisterProgressListener = null
@@ -640,47 +728,12 @@ onUnmounted(() => {
     <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
 
 
-    <!-- Endpoint Controls (only for mock endpoints, not system endpoints) -->
-    <div v-if="serverStore.currentEndpoint?.type === 'mock' && !serverStore.currentEndpoint?.is_system" class="flex items-center justify-between p-3 border-b border-gray-700 flex-shrink-0">
-      <div class="flex gap-2">
-        <button
-          @click="serverStore.addNewGroup"
-          class="px-3 py-1 bg-blue-800 hover:bg-blue-700 rounded text-sm text-white font-medium flex items-center gap-1"
-          title="Add a new group to organize responses"
-        >
-          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-            <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
-          </svg>
-          + Group
-        </button>
-        <button
-          @click="serverStore.addNewResponse"
-          class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm text-white font-medium flex items-center gap-1"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-          </svg>
-          + Response
-        </button>
-        <button
-          @click="handleImportOpenAPI"
-          class="px-3 py-1 bg-green-700 hover:bg-green-600 rounded text-sm text-white font-medium flex items-center gap-1"
-          title="Import from OpenAPI/Swagger specification"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-          </svg>
-          + OpenAPI
-        </button>
-      </div>
-    </div>
-
-    <!-- Endpoint Info Banner -->
+    <!-- Endpoint Info Banner with SETTINGS button -->
     <div v-if="serverStore.currentEndpoint" class="px-3 py-2 bg-gray-800/50 border-b border-gray-700 flex-shrink-0">
       <div class="flex items-center justify-between">
         <div class="flex-1">
           <p class="text-xs text-gray-400">
-            <span class="font-medium text-gray-300">Type:</span> {{ typeDisplayName(serverStore.currentEndpoint.type || 'mock') }}
+            <span class="font-medium text-gray-300">Type:</span> {{ isOverlayEndpoint(serverStore.currentEndpoint) ? 'Overlay' : typeDisplayName(serverStore.currentEndpoint.type || 'mock') }}
             <span class="mx-2">•</span>
             <span class="font-medium text-gray-300">Prefix:</span> {{ serverStore.currentEndpoint.path_prefix }}
             <span class="mx-2">•</span>
@@ -701,6 +754,23 @@ onUnmounted(() => {
             </template>
           </p>
         </div>
+        <!-- SETTINGS button -->
+        <button
+          v-if="!serverStore.currentEndpoint.is_system || isOverlayEndpoint(serverStore.currentEndpoint)"
+          @click="showSettingsDrawer = !showSettingsDrawer"
+          :class="[
+            'ml-3 px-3 py-1.5 rounded border text-xs font-medium transition-colors flex items-center gap-1.5 flex-shrink-0',
+            showSettingsDrawer
+              ? 'bg-blue-600 border-blue-500 text-white'
+              : 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600 hover:text-white'
+          ]"
+        >
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          SETTINGS
+        </button>
       </div>
     </div>
 
@@ -709,390 +779,270 @@ onUnmounted(() => {
 
     <!-- Endpoint Content -->
     <template v-else>
-      <!-- Info Banner (Mock only) -->
-      <div v-if="serverStore.currentEndpoint?.type === 'mock'" class="px-3 py-2 bg-gray-800/50 border-b border-gray-700 flex-shrink-0">
-        <p class="text-xs text-gray-400">
-          Rules are checked in order. First matching rule wins. Drag to reorder. Use groups to organize related rules.
-        </p>
-      </div>
+      <!-- Traffic Log (full width) -->
+      <div class="flex-1 overflow-hidden flex flex-col min-h-0 relative">
+        <TrafficLogPanel />
 
-      <!-- Resizable Content Area -->
-    <div class="flex-1 flex flex-row min-h-0">
-      <!-- Left Section: Mock Rules OR Proxy/Container Status -->
-      <div
-        :style="{ width: dividerPosition + 'px' }"
-        :class="[
-          'overflow-y-auto flex flex-col min-h-0',
-          serverStore.currentEndpoint?.name === 'Rejections' ? 'bg-red-950/20' : ''
-        ]"
-      >
-        <!-- Mock Endpoint: Rules List or SOCKS5 Domains -->
-        <div v-if="serverStore.currentEndpoint?.type === 'mock'" class="flex-1 overflow-y-auto">
-          <!-- Special handling for SOCKS5 Proxy endpoint -->
-          <SOCKS5DomainsPanel v-if="serverStore.currentEndpoint.id === 'system-socks5-proxy'" />
-
-          <!-- Regular mock endpoints -->
-          <div v-else class="p-3 space-y-2" @dragend="onDragEnd">
-            <!-- Empty State -->
-            <div v-if="!serverStore.items || serverStore.items.length === 0" class="flex items-center justify-center h-32">
-              <div class="text-center text-gray-500">
-                <p class="text-sm">No response rules configured</p>
-                <p class="text-xs mt-1">Click "+ Response" or "+ Group" to get started</p>
-              </div>
-            </div>
-
-            <!-- Items (Responses and Groups) -->
-      <div
-        v-for="(item, index) in serverStore.items"
-        :key="getItemId(item)"
-        :class="[
-          'transition-all',
-          dragOverIndex === index && draggedIndex !== index ? 'border-t-2 border-blue-500 pt-2' : ''
-        ]"
-      >
-        <!-- Response Card -->
-        <ResponseRuleCard
-          v-if="item.type === 'response' && item.response"
-          :response="item.response"
-          :is-expanded="serverStore.expandedItemId === item.response.id"
-          :is-highlighted="serverStore.highlightedResponseId === item.response.id"
-          :index="index"
-          @toggle="serverStore.toggleExpanded(item.response?.id || '')"
-          @update="handleResponseUpdate(index, $event)"
-          @delete="handleDelete(index)"
-          @dragstart="onDragStart(index, $event)"
-          @dragover="onDragOver(index, $event)"
-          @drop="onDrop(index, $event)"
-        />
-
-        <!-- Group Card -->
-        <ResponseGroupCard
-          v-else-if="item.type === 'group' && item.group"
-          :group="item.group"
-          :index="index"
-          @update="handleGroupUpdate(index, $event)"
-          @delete="handleDelete(index)"
-          @dragstart="onDragStart(index, $event)"
-          @dragover="onDragOver(index, $event)"
-          @drop="onDrop(index, $event)"
-        />
-      </div>
-          </div>
-        </div>
-
-        <!-- Proxy/Container Endpoint: Status View -->
-        <div v-else-if="serverStore.currentEndpoint" class="flex-1 overflow-y-auto p-4">
-      <div class="max-w-2xl mx-auto space-y-4">
-
-        <!-- Overlay Simulation Mode selector (only for system-overlay-* endpoints) -->
-        <OverlaySimPanel
-          v-if="isOverlayEndpoint(serverStore.currentEndpoint)"
-          :endpoint="serverStore.currentEndpoint"
-        />
-
-        <!-- Endpoint Type Info -->
-        <div class="p-4 bg-gray-800 rounded border border-gray-700">
-          <h3 class="text-lg font-semibold text-white mb-2">
-            {{ typeDisplayName(serverStore.currentEndpoint.type || 'mock') }} Endpoint
-          </h3>
-          <p class="text-sm text-gray-400 mb-3">
-            <template v-if="serverStore.currentEndpoint.type === 'proxy'">
-              All requests to this prefix are forwarded to the backend server with optional header manipulation,
-              status translation, and body transformation.
-            </template>
-            <template v-else-if="serverStore.currentEndpoint.type === 'container'">
-              All requests to this prefix are forwarded to the Docker container.
-              The container is started when the mock server starts and stopped when it stops.
-            </template>
-          </p>
-
-          <!-- Container Control Buttons (only for container endpoints) -->
-          <template v-if="serverStore.currentEndpoint.type === 'container'">
-            <div class="flex gap-2 mb-2">
+        <!-- Settings Drawer (absolute overlay, right side — independent of traffic log reactivity) -->
+        <Transition name="drawer">
+          <div
+            v-if="showSettingsDrawer && serverStore.currentEndpoint"
+            :key="serverStore.currentEndpoint.id"
+            class="absolute top-0 right-0 bottom-0 border-l border-gray-700 bg-gray-800 flex flex-col overflow-hidden z-30 shadow-2xl"
+            :style="{ width: 'clamp(350px, 40vw, 550px)' }"
+          >
+            <!-- Drawer header -->
+            <div class="flex items-center justify-between px-4 py-2 border-b border-gray-700 flex-shrink-0">
+              <h3 class="text-sm font-semibold text-white">Endpoint Settings</h3>
               <button
-                v-if="canStartContainer(serverStore.currentEndpoint.id)"
-                @click="handleStartContainer(serverStore.currentEndpoint.id)"
-                :disabled="!!containerActionLoading[serverStore.currentEndpoint.id]"
-                class="px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded text-sm font-medium transition-colors"
-              >
-                {{ containerActionLoading[serverStore.currentEndpoint.id] === 'start' ? 'Starting...' : 'Start' }}
-              </button>
-              <button
-                v-if="canStopContainer(serverStore.currentEndpoint.id)"
-                @click="handleStopContainer(serverStore.currentEndpoint.id)"
-                :disabled="!!containerActionLoading[serverStore.currentEndpoint.id]"
-                class="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded text-sm font-medium transition-colors"
-              >
-                {{ containerActionLoading[serverStore.currentEndpoint.id] === 'stop' ? 'Stopping...' : 'Stop' }}
-              </button>
-              <button
-                v-if="canStopContainer(serverStore.currentEndpoint.id)"
-                @click="handleDeleteContainer(serverStore.currentEndpoint.id)"
-                :disabled="!!containerActionLoading[serverStore.currentEndpoint.id]"
-                class="px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded text-sm font-medium transition-colors"
-              >
-                {{ containerActionLoading[serverStore.currentEndpoint.id] === 'delete' ? 'Deleting...' : 'Delete' }}
-              </button>
-              <button
-                v-if="canStopContainer(serverStore.currentEndpoint.id)"
-                @click="handleRestartContainer(serverStore.currentEndpoint.id)"
-                :disabled="!!containerActionLoading[serverStore.currentEndpoint.id] || !canStopContainer(serverStore.currentEndpoint.id)"
-                class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded text-sm font-medium transition-colors"
-              >
-                {{ containerActionLoading[serverStore.currentEndpoint.id] === 'restart' ? 'Restarting...' : 'Restart' }}
-              </button>
-              <button
-                v-if="canStopContainer(serverStore.currentEndpoint.id)"
-                @click="handleShowConsole(serverStore.currentEndpoint.id, serverStore.currentEndpoint.name)"
-                class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm font-medium transition-colors flex items-center gap-1"
-                title="View container console output"
+                @click="showSettingsDrawer = false"
+                class="p-1 text-gray-400 hover:text-white rounded hover:bg-gray-700 transition-colors"
+                title="Close settings"
               >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                 </svg>
-                Console
               </button>
             </div>
 
-            <!-- Container Progress Indicator -->
-            <div
-              v-if="containerProgress[serverStore.currentEndpoint.id]"
-              class="mt-3 p-3 bg-blue-900/20 border border-blue-700 rounded"
-            >
-              <div class="flex items-center justify-between mb-2">
-                <div class="flex items-center gap-2">
-                  <div class="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
-                  <span class="text-sm font-medium text-blue-300">
-                    {{ containerProgress[serverStore.currentEndpoint.id].stage.charAt(0).toUpperCase() + containerProgress[serverStore.currentEndpoint.id].stage.slice(1) }}
-                  </span>
+            <!-- Drawer body -->
+            <div class="flex-1 overflow-y-auto">
+
+              <!-- ── MOCK ENDPOINT DRAWER CONTENT ── -->
+              <template v-if="serverStore.currentEndpoint.type === 'mock'">
+                <!-- Mock controls (+ Group / + Response / + OpenAPI) -->
+                <div v-if="!serverStore.currentEndpoint.is_system" class="flex items-center gap-2 p-3 border-b border-gray-700 flex-shrink-0">
+                  <button @click="serverStore.addNewGroup" class="px-2 py-1 bg-blue-800 hover:bg-blue-700 rounded text-xs text-white font-medium flex items-center gap-1" title="Add group">
+                    <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" /></svg>
+                    + Group
+                  </button>
+                  <button @click="serverStore.addNewResponse" class="px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded text-xs text-white font-medium flex items-center gap-1">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
+                    + Response
+                  </button>
+                  <button @click="handleImportOpenAPI" class="px-2 py-1 bg-green-700 hover:bg-green-600 rounded text-xs text-white font-medium flex items-center gap-1" title="Import OpenAPI">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                    + OpenAPI
+                  </button>
                 </div>
-                <span class="text-xs text-blue-400">
-                  {{ containerProgress[serverStore.currentEndpoint.id].progress }}%
-                </span>
-              </div>
-              <p class="text-xs text-blue-200 mb-2">
-                {{ containerProgress[serverStore.currentEndpoint.id].message }}
-              </p>
-              <!-- Progress bar -->
-              <div class="w-full bg-gray-700 rounded-full h-1.5">
-                <div
-                  class="bg-blue-500 h-1.5 rounded-full transition-all duration-300"
-                  :style="{ width: `${containerProgress[serverStore.currentEndpoint.id].progress}%` }"
-                ></div>
-              </div>
-            </div>
 
-            <!-- Error message -->
-            <div
-              v-if="containerActionError[serverStore.currentEndpoint.id]"
-              class="p-2 bg-red-900/30 border border-red-700 rounded text-red-400 text-sm"
-            >
-              {{ containerActionError[serverStore.currentEndpoint.id] }}
-            </div>
-          </template>
-        </div>
+                <!-- SOCKS5 Proxy domains -->
+                <SOCKS5DomainsPanel v-if="serverStore.currentEndpoint.id === 'system-socks5-proxy'" />
 
-        <!-- Health Status (if health checks enabled) -->
-        <div
-          v-if="needsHealthIndicator(serverStore.currentEndpoint)"
-          class="p-4 bg-gray-800 rounded border border-gray-700"
-        >
-          <h4 class="text-md font-semibold text-white mb-3">Health Status</h4>
-          <div v-if="serverStore.getEndpointHealth(serverStore.currentEndpoint.id)">
-            <div class="flex items-center gap-2 mb-2">
-              <span
-                :class="[
-                  'text-2xl',
-                  healthIndicatorClass(serverStore.currentEndpoint.id)
-                ]"
-              >
-                ●
-              </span>
-              <span
-                :class="[
-                  'text-lg font-medium',
-                  serverStore.getEndpointHealth(serverStore.currentEndpoint.id)?.healthy
-                    ? 'text-green-400'
-                    : 'text-red-400'
-                ]"
-              >
-                {{ serverStore.getEndpointHealth(serverStore.currentEndpoint.id)?.healthy ? 'Healthy' : 'Unhealthy' }}
-              </span>
-            </div>
-            <p class="text-xs text-gray-400">
-              Last check: {{ new Date(serverStore.getEndpointHealth(serverStore.currentEndpoint.id)?.last_check || '').toLocaleString() }}
-            </p>
-            <p v-if="serverStore.getEndpointHealth(serverStore.currentEndpoint.id)?.error_message" class="text-xs text-red-400 mt-2">
-              {{ serverStore.getEndpointHealth(serverStore.currentEndpoint.id)?.error_message }}
-            </p>
-          </div>
-          <div v-else class="text-sm text-gray-400">
-            Waiting for health check data...
-          </div>
-        </div>
-
-        <!-- Configuration Summary -->
-        <div class="p-4 bg-gray-800 rounded border border-gray-700">
-          <h4 class="text-md font-semibold text-white mb-3">Configuration</h4>
-          <div class="space-y-2 text-sm">
-            <div class="flex justify-between">
-              <span class="text-gray-400">Path Prefix:</span>
-              <span class="text-white font-mono">{{ serverStore.currentEndpoint.path_prefix }}</span>
-            </div>
-            <template v-if="serverStore.currentEndpoint.type === 'proxy' && serverStore.currentEndpoint.proxy_config">
-              <div class="flex justify-between items-start gap-4">
-                <span class="text-gray-400 flex-shrink-0">Backend:</span>
-                <div class="text-right">
-                  <span class="text-white font-mono text-sm">
-                    {{ (serverStore.currentEndpoint.proxy_config.backend_url ?? '').replace(/^\/\//, '') }}
-                  </span>
-                  <div v-if="isOverlayEndpoint(serverStore.currentEndpoint)" class="text-xs text-gray-500 mt-0.5">
-                    http · https · ws · wss as appropriate
+                <!-- Mock rules list -->
+                <div v-else class="p-3 space-y-2" @dragend="onDragEnd">
+                  <div v-if="!serverStore.items || serverStore.items.length === 0" class="flex items-center justify-center h-32">
+                    <div class="text-center text-gray-500">
+                      <p class="text-sm">No response rules configured</p>
+                      <p class="text-xs mt-1">Click "+ Response" or "+ Group" to get started</p>
+                    </div>
+                  </div>
+                  <div
+                    v-for="(item, index) in serverStore.items"
+                    :key="getItemId(item)"
+                    :class="['transition-all', dragOverIndex === index && draggedIndex !== index ? 'border-t-2 border-blue-500 pt-2' : '']"
+                  >
+                    <ResponseRuleCard
+                      v-if="item.type === 'response' && item.response"
+                      :response="item.response"
+                      :is-expanded="serverStore.expandedItemId === item.response.id"
+                      :is-highlighted="serverStore.highlightedResponseId === item.response.id"
+                      :index="index"
+                      @toggle="serverStore.toggleExpanded(item.response?.id || '')"
+                      @update="handleResponseUpdate(index, $event)"
+                      @delete="handleDelete(index)"
+                      @dragstart="onDragStart(index, $event)"
+                      @dragover="onDragOver(index, $event)"
+                      @drop="onDrop(index, $event)"
+                    />
+                    <ResponseGroupCard
+                      v-else-if="item.type === 'group' && item.group"
+                      :group="item.group"
+                      :index="index"
+                      @update="handleGroupUpdate(index, $event)"
+                      @delete="handleDelete(index)"
+                      @dragstart="onDragStart(index, $event)"
+                      @dragover="onDragOver(index, $event)"
+                      @drop="onDrop(index, $event)"
+                    />
                   </div>
                 </div>
-              </div>
-              <div v-if="!isOverlayEndpoint(serverStore.currentEndpoint)" class="flex justify-between">
-                <span class="text-gray-400">Timeout:</span>
-                <span class="text-white">{{ serverStore.currentEndpoint.proxy_config.timeout_seconds || 30 }}s</span>
-              </div>
-              <div class="flex justify-between">
-                <span class="text-gray-400">Status Translation:</span>
-                <span class="text-white">{{ serverStore.currentEndpoint.proxy_config.status_passthrough ? 'Pass-through' : 'Enabled' }}</span>
-              </div>
-            </template>
-            <template v-if="serverStore.currentEndpoint.type === 'container' && serverStore.currentEndpoint.container_config">
-              <div class="flex justify-between">
-                <span class="text-gray-400">Image:</span>
-                <span class="text-white font-mono">{{ serverStore.currentEndpoint.container_config.image_name }}</span>
-              </div>
-              <div class="flex justify-between">
-                <span class="text-gray-400">Container Port:</span>
-                <span class="text-white">{{ serverStore.currentEndpoint.container_config.container_port }}</span>
-              </div>
-              <div class="flex justify-between">
-                <span class="text-gray-400">Pull on Startup:</span>
-                <span class="text-white">{{ serverStore.currentEndpoint.container_config.pull_on_startup ? 'Yes' : 'No' }}</span>
-              </div>
-            </template>
-          </div>
-        </div>
 
-        <!-- Container Metrics (only show for container endpoints) -->
-        <div
-          v-if="serverStore.currentEndpoint.type === 'container'"
-          class="p-4 bg-gray-800 rounded border border-gray-700"
-        >
-          <div class="flex items-center justify-between mb-3">
-            <h4 class="text-md font-semibold text-white">Container Metrics</h4>
-            <div class="flex items-center gap-2">
-              <span
-                v-if="getContainerStatus(serverStore.currentEndpoint.id)"
-                :class="[
-                  'px-3 py-1 text-sm rounded font-medium border',
-                  containerStatusClass(serverStore.currentEndpoint.id)
-                ]"
-              >
-                {{ containerStatusText(serverStore.currentEndpoint.id) }}
-              </span>
+                <!-- Inline editor for mock endpoints (below rules) -->
+                <div v-if="!serverStore.currentEndpoint.is_system" class="p-4 border-t border-gray-700">
+                  <div class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Endpoint Configuration</div>
+                  <!-- Inline General Settings -->
+                  <div class="space-y-3">
+                    <div class="flex items-center justify-between">
+                      <label class="text-xs font-medium text-gray-300">Enabled</label>
+                      <label class="relative inline-flex items-center cursor-pointer">
+                        <input v-model="inlineEnabled" type="checkbox" class="sr-only peer" @change="debouncedInlineSave">
+                        <div class="w-9 h-5 bg-gray-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                      </label>
+                    </div>
+                    <div>
+                      <label class="block text-xs font-medium text-gray-400 mb-1">Path Prefix</label>
+                      <input v-model="inlinePathPrefix" type="text" @input="debouncedInlineSave" class="w-full px-2 py-1.5 bg-gray-700 border border-gray-600 rounded text-sm text-white font-mono focus:outline-none focus:border-blue-500" />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-medium text-gray-400 mb-1">Translation</label>
+                      <CustomSelect v-model="inlineTranslationMode" :options="translationModeOptions" @update:model-value="debouncedInlineSave" />
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <!-- ── OVERLAY ENDPOINT DRAWER CONTENT ── -->
+              <template v-else-if="isOverlayEndpoint(serverStore.currentEndpoint)">
+                <div class="p-4 space-y-4">
+                  <OverlaySimPanel :endpoint="serverStore.currentEndpoint" />
+                  <div class="p-4 bg-gray-800 rounded border border-gray-700">
+                    <h3 class="text-lg font-semibold text-white mb-2">Overlay</h3>
+                    <p class="text-sm text-gray-400">
+                      Overlay endpoints automatically proxy traffic to the real domain.
+                      Use the simulation panel above to inject faults for testing.
+                    </p>
+                  </div>
+                </div>
+              </template>
+
+              <!-- ── PROXY / CONTAINER ENDPOINT DRAWER CONTENT ── -->
+              <template v-else-if="serverStore.currentEndpoint">
+                <div class="p-4 space-y-4">
+                  <!-- Proxy Simulation Mode (for non-overlay proxy endpoints) -->
+                  <ProxySimPanel
+                    v-if="serverStore.currentEndpoint.type === 'proxy'"
+                    :endpoint="serverStore.currentEndpoint"
+                  />
+
+                  <!-- Container Controls -->
+                  <template v-if="serverStore.currentEndpoint.type === 'container'">
+                    <div class="p-4 bg-gray-800 rounded border border-gray-700">
+                      <h4 class="text-sm font-semibold text-white mb-2">Container Controls</h4>
+                      <div class="flex flex-wrap gap-2">
+                        <button v-if="canStartContainer(serverStore.currentEndpoint.id)" @click="handleStartContainer(serverStore.currentEndpoint.id)" :disabled="!!containerActionLoading[serverStore.currentEndpoint.id]" class="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded text-xs font-medium transition-colors">
+                          {{ containerActionLoading[serverStore.currentEndpoint.id] === 'start' ? 'Starting...' : 'Start' }}
+                        </button>
+                        <button v-if="canStopContainer(serverStore.currentEndpoint.id)" @click="handleStopContainer(serverStore.currentEndpoint.id)" :disabled="!!containerActionLoading[serverStore.currentEndpoint.id]" class="px-2 py-1 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded text-xs font-medium transition-colors">
+                          {{ containerActionLoading[serverStore.currentEndpoint.id] === 'stop' ? 'Stopping...' : 'Stop' }}
+                        </button>
+                        <button v-if="canStopContainer(serverStore.currentEndpoint.id)" @click="handleRestartContainer(serverStore.currentEndpoint.id)" :disabled="!!containerActionLoading[serverStore.currentEndpoint.id]" class="px-2 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded text-xs font-medium transition-colors">
+                          {{ containerActionLoading[serverStore.currentEndpoint.id] === 'restart' ? 'Restarting...' : 'Restart' }}
+                        </button>
+                        <button v-if="canStopContainer(serverStore.currentEndpoint.id)" @click="handleShowConsole(serverStore.currentEndpoint.id, serverStore.currentEndpoint.name)" class="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs font-medium transition-colors flex items-center gap-1">
+                          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                          Console
+                        </button>
+                      </div>
+                      <!-- Progress -->
+                      <div v-if="containerProgress[serverStore.currentEndpoint.id]" class="mt-3 p-2 bg-blue-900/20 border border-blue-700 rounded">
+                        <div class="flex items-center justify-between mb-1">
+                          <span class="text-xs font-medium text-blue-300 flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse"></span>
+                            {{ containerProgress[serverStore.currentEndpoint.id].stage }}
+                          </span>
+                          <span class="text-xs text-blue-400">{{ containerProgress[serverStore.currentEndpoint.id].progress }}%</span>
+                        </div>
+                        <div class="w-full bg-gray-700 rounded-full h-1">
+                          <div class="bg-blue-500 h-1 rounded-full transition-all duration-300" :style="{ width: `${containerProgress[serverStore.currentEndpoint.id].progress}%` }"></div>
+                        </div>
+                      </div>
+                      <div v-if="containerActionError[serverStore.currentEndpoint.id]" class="mt-2 p-2 bg-red-900/30 border border-red-700 rounded text-red-400 text-xs">
+                        {{ containerActionError[serverStore.currentEndpoint.id] }}
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- Health Status -->
+                  <div v-if="needsHealthIndicator(serverStore.currentEndpoint)" class="p-4 bg-gray-800 rounded border border-gray-700">
+                    <h4 class="text-sm font-semibold text-white mb-2">Health Status</h4>
+                    <div v-if="serverStore.getEndpointHealth(serverStore.currentEndpoint.id)">
+                      <div class="flex items-center gap-2 mb-1">
+                        <span :class="['text-lg', healthIndicatorClass(serverStore.currentEndpoint.id)]">●</span>
+                        <span :class="['text-sm font-medium', serverStore.getEndpointHealth(serverStore.currentEndpoint.id)?.healthy ? 'text-green-400' : 'text-red-400']">
+                          {{ serverStore.getEndpointHealth(serverStore.currentEndpoint.id)?.healthy ? 'Healthy' : 'Unhealthy' }}
+                        </span>
+                      </div>
+                      <p class="text-xs text-gray-400">Last: {{ new Date(serverStore.getEndpointHealth(serverStore.currentEndpoint.id)?.last_check || '').toLocaleTimeString() }}</p>
+                    </div>
+                    <div v-else class="text-xs text-gray-400">Waiting for health check...</div>
+                  </div>
+
+                  <!-- Inline Endpoint Editor -->
+                  <div class="p-4 bg-gray-800 rounded border border-gray-700">
+                    <div class="flex border-b border-gray-700 mb-4 -mt-1">
+                      <button @click="inlineActiveTab = 'general'" :class="['px-3 py-1.5 text-xs font-medium transition-colors', inlineActiveTab === 'general' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-300']">General</button>
+                      <button v-if="serverStore.currentEndpoint.type === 'proxy' || serverStore.currentEndpoint.type === 'container'" @click="inlineActiveTab = 'proxy'" :class="['px-3 py-1.5 text-xs font-medium transition-colors', inlineActiveTab === 'proxy' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-300']">Proxy Settings</button>
+                      <button v-if="serverStore.currentEndpoint.type === 'container'" @click="inlineActiveTab = 'container'" :class="['px-3 py-1.5 text-xs font-medium transition-colors', inlineActiveTab === 'container' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-300']">Container</button>
+                    </div>
+
+                    <div v-if="inlineActiveTab === 'general'" class="space-y-3">
+                      <div class="flex items-center justify-between">
+                        <label class="text-xs font-medium text-gray-300">Enabled</label>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                          <input v-model="inlineEnabled" type="checkbox" class="sr-only peer" @change="debouncedInlineSave">
+                          <div class="w-9 h-5 bg-gray-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                        </label>
+                      </div>
+                      <div>
+                        <label class="block text-xs font-medium text-gray-400 mb-1">Name</label>
+                        <input v-model="inlineName" type="text" @input="debouncedInlineSave" class="w-full px-2 py-1.5 bg-gray-700 border border-gray-600 rounded text-sm text-white focus:outline-none focus:border-blue-500" />
+                      </div>
+                      <div>
+                        <label class="block text-xs font-medium text-gray-400 mb-1">Domain Filter</label>
+                        <CustomSelect v-model="inlineDomainFilterMode" :options="domainFilterModeOptions" @update:model-value="debouncedInlineSave" />
+                      </div>
+                      <div v-if="inlineDomainFilterMode === 'specific'">
+                        <label class="block text-xs font-medium text-gray-400 mb-1">Domain Patterns</label>
+                        <DomainFilterInput v-model="inlineDomainFilterPatterns" @update:model-value="debouncedInlineSave" />
+                      </div>
+                      <div>
+                        <label class="block text-xs font-medium text-gray-400 mb-1">Path Prefix</label>
+                        <input v-model="inlinePathPrefix" type="text" @input="debouncedInlineSave" class="w-full px-2 py-1.5 bg-gray-700 border border-gray-600 rounded text-sm text-white font-mono focus:outline-none focus:border-blue-500" />
+                      </div>
+                      <div>
+                        <label class="block text-xs font-medium text-gray-400 mb-1">Path Translation</label>
+                        <CustomSelect v-model="inlineTranslationMode" :options="translationModeOptions" @update:model-value="debouncedInlineSave" />
+                      </div>
+                      <div v-if="inlineTranslationMode === 'translate'" class="space-y-2">
+                        <div>
+                          <label class="block text-xs font-medium text-gray-400 mb-1">Match Pattern</label>
+                          <input v-model="inlineTranslatePattern" type="text" @input="debouncedInlineSave" class="w-full px-2 py-1.5 bg-gray-700 border border-gray-600 rounded text-sm text-white font-mono focus:outline-none focus:border-blue-500" />
+                        </div>
+                        <div>
+                          <label class="block text-xs font-medium text-gray-400 mb-1">Replace With</label>
+                          <input v-model="inlineTranslateReplace" type="text" @input="debouncedInlineSave" class="w-full px-2 py-1.5 bg-gray-700 border border-gray-600 rounded text-sm text-white font-mono focus:outline-none focus:border-blue-500" />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div v-if="inlineActiveTab === 'proxy'" class="space-y-3">
+                      <ProxyConfigPanel v-if="serverStore.currentEndpoint.type === 'proxy' && inlineProxyConfig" :config="inlineProxyConfig" :is-container-endpoint="false" @update:config="handleInlineProxyConfigUpdate" />
+                      <ProxyConfigPanel v-if="serverStore.currentEndpoint.type === 'container' && inlineContainerConfig?.proxy_config" :config="inlineContainerConfig.proxy_config" :is-container-endpoint="true" @update:config="handleInlineProxyConfigUpdate" />
+                    </div>
+
+                    <div v-if="inlineActiveTab === 'container' && serverStore.currentEndpoint.type === 'container' && inlineContainerConfig" class="space-y-3">
+                      <ContainerConfigPanel :config="inlineContainerConfig" :endpoint-id="serverStore.currentEndpoint.id" :is-running="serverStore.isRunning" @update:config="handleInlineContainerConfigUpdate" />
+                    </div>
+                  </div>
+
+                  <!-- Container Metrics -->
+                  <div v-if="serverStore.currentEndpoint.type === 'container' && getContainerStats(serverStore.currentEndpoint.id)" class="p-4 bg-gray-800 rounded border border-gray-700">
+                    <h4 class="text-sm font-semibold text-white mb-2">Container Metrics</h4>
+                    <div class="space-y-2 text-xs">
+                      <div class="flex justify-between"><span class="text-gray-400">CPU:</span><span class="text-white font-mono">{{ formatCPU(getContainerStats(serverStore.currentEndpoint.id)!.cpu_percent) }}</span></div>
+                      <div class="flex justify-between"><span class="text-gray-400">Memory:</span><span class="text-white font-mono">{{ formatMemory(getContainerStats(serverStore.currentEndpoint.id)!.memory_usage_mb) }} ({{ formatPercent(getContainerStats(serverStore.currentEndpoint.id)!.memory_percent) }})</span></div>
+                      <div class="flex justify-between"><span class="text-gray-400">Net RX/TX:</span><span class="text-white font-mono">{{ formatBytes(getContainerStats(serverStore.currentEndpoint.id)!.network_rx_bytes) }} / {{ formatBytes(getContainerStats(serverStore.currentEndpoint.id)!.network_tx_bytes) }}</span></div>
+                      <div class="flex justify-between"><span class="text-gray-400">PIDs:</span><span class="text-white font-mono">{{ getContainerStats(serverStore.currentEndpoint.id)!.pids }}</span></div>
+                    </div>
+                  </div>
+                </div>
+              </template>
+
             </div>
           </div>
-
-          <div v-if="getContainerStats(serverStore.currentEndpoint.id)" class="space-y-3">
-            <!-- CPU Usage -->
-            <div>
-              <div class="flex justify-between text-sm mb-1">
-                <span class="text-gray-400">CPU Usage:</span>
-                <span class="text-white font-mono">{{ formatCPU(getContainerStats(serverStore.currentEndpoint.id)!.cpu_percent) }}</span>
-              </div>
-              <div class="w-full bg-gray-700 rounded-full h-2">
-                <div
-                  class="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                  :style="{ width: `${Math.min(getContainerStats(serverStore.currentEndpoint.id)!.cpu_percent, 100)}%` }"
-                ></div>
-              </div>
-            </div>
-
-            <!-- Memory Usage -->
-            <div>
-              <div class="flex justify-between text-sm mb-1">
-                <span class="text-gray-400">Memory Usage:</span>
-                <span class="text-white font-mono">
-                  {{ formatMemory(getContainerStats(serverStore.currentEndpoint.id)!.memory_usage_mb) }} /
-                  {{ formatMemory(getContainerStats(serverStore.currentEndpoint.id)!.memory_limit_mb) }}
-                  ({{ formatPercent(getContainerStats(serverStore.currentEndpoint.id)!.memory_percent) }})
-                </span>
-              </div>
-              <div class="w-full bg-gray-700 rounded-full h-2">
-                <div
-                  class="bg-green-600 h-2 rounded-full transition-all duration-300"
-                  :style="{ width: `${Math.min(getContainerStats(serverStore.currentEndpoint.id)!.memory_percent, 100)}%` }"
-                ></div>
-              </div>
-            </div>
-
-            <!-- Network I/O -->
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <span class="text-gray-400 text-sm">Network RX:</span>
-                <div class="text-white font-mono text-sm">{{ formatBytes(getContainerStats(serverStore.currentEndpoint.id)!.network_rx_bytes) }}</div>
-              </div>
-              <div>
-                <span class="text-gray-400 text-sm">Network TX:</span>
-                <div class="text-white font-mono text-sm">{{ formatBytes(getContainerStats(serverStore.currentEndpoint.id)!.network_tx_bytes) }}</div>
-              </div>
-            </div>
-
-            <!-- Block I/O -->
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <span class="text-gray-400 text-sm">Block Read:</span>
-                <div class="text-white font-mono text-sm">{{ formatBytes(getContainerStats(serverStore.currentEndpoint.id)!.block_read_bytes) }}</div>
-              </div>
-              <div>
-                <span class="text-gray-400 text-sm">Block Write:</span>
-                <div class="text-white font-mono text-sm">{{ formatBytes(getContainerStats(serverStore.currentEndpoint.id)!.block_write_bytes) }}</div>
-              </div>
-            </div>
-
-            <!-- PIDs -->
-            <div class="flex justify-between text-sm">
-              <span class="text-gray-400">Processes:</span>
-              <span class="text-white font-mono">{{ getContainerStats(serverStore.currentEndpoint.id)!.pids }}</span>
-            </div>
-
-            <!-- Last Updated -->
-            <div class="text-xs text-gray-500 text-right">
-              Updated: {{ new Date(getContainerStats(serverStore.currentEndpoint.id)!.last_check).toLocaleTimeString() }}
-            </div>
-          </div>
-
-          <div v-else class="text-sm text-gray-400">
-            No metrics available
-          </div>
-        </div>
-
-        <!-- Action Hint -->
-        <div class="p-4 bg-blue-900/20 border border-blue-800 rounded">
-          <p class="text-sm text-blue-300">
-            Use the Settings button above to configure {{ serverStore.currentEndpoint.type === 'proxy' ? 'proxy' : 'container' }} options.
-          </p>
-        </div>
+        </Transition>
       </div>
-        </div>
-      </div>
-
-      <!-- Resizable Divider -->
-      <div
-        @mousedown="startDragging"
-        class="w-1 bg-gray-700 hover:bg-blue-500 cursor-col-resize flex-shrink-0 transition-colors"
-        :class="{ 'bg-blue-500': isDraggingDivider }"
-      ></div>
-
-      <!-- Right Section: Traffic Log -->
-      <div :style="{ width: `calc(100% - ${dividerPosition}px)` }" class="overflow-hidden flex flex-col min-h-0">
-        <TrafficLogPanel />
-      </div>
-    </div>
     </template>
     <!-- End Endpoint Content -->
 
@@ -1140,3 +1090,9 @@ onUnmounted(() => {
     </div><!-- end main content column -->
   </div><!-- end outer flex-row -->
 </template>
+
+<style scoped>
+.drawer-enter-active { transition: transform 0.25s ease, opacity 0.2s ease; }
+.drawer-leave-active { transition: transform 0.2s ease, opacity 0.15s ease; }
+.drawer-enter-from, .drawer-leave-to { transform: translateX(100%); opacity: 0; }
+</style>

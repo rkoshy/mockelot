@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useServerStore } from '../../stores/server'
-import { ExportWSTrace, TerminateWSConnection, SetWSConnectionBlocked } from '../../../wailsjs/go/main/App'
+import { ExportWSTrace, TerminateWSConnection, SetWSConnectionBlocked, ClearWSFrames } from '../../../wailsjs/go/main/App'
 import type { models } from '../../../wailsjs/go/models'
 
 interface Props {
@@ -141,6 +141,18 @@ async function handleExportTrace() {
   }
 }
 
+async function handleClearFrames() {
+  try {
+    await ClearWSFrames(props.logSummary.id)
+    if (fullLog.value) {
+      fullLog.value.websocket_events = []
+    }
+    lastFetchedFrameCount = -1
+  } catch (e) {
+    console.error('ClearWSFrames failed:', e)
+  }
+}
+
 // ── TERMINATE and BLOCKED ─────────────────────────────────────────────────
 const isBlocked = ref(false)
 
@@ -239,6 +251,14 @@ function formatSize(bytes: number): string {
           title="Inspect upgrade handshake"
         >
           Upgrade Request
+        </button>
+        <button
+          @click="handleClearFrames"
+          :disabled="totalAll === 0"
+          class="px-2 py-1 bg-red-800/60 hover:bg-red-700/80 border border-red-700/60 hover:border-red-500 rounded text-xs text-red-300 hover:text-red-200 font-medium transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Clear all captured frames for this connection"
+        >
+          Clear
         </button>
         <button
           @click="handleExportTrace"

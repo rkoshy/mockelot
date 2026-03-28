@@ -21,7 +21,11 @@ export function CancelContainerStart(arg1:string):Promise<void>;
 
 export function ClearRequestLogs():Promise<void>;
 
+export function ClearRequestLogsForEndpoint(arg1:string):Promise<void>;
+
 export function ClearScriptErrors(arg1:string):Promise<void>;
+
+export function ClearWSFrames(arg1:string):Promise<void>;
 
 export function CloseWebSocketConnection(arg1:string,arg2:number,arg3:string,arg4:Error):Promise<void>;
 
@@ -146,6 +150,10 @@ export function SetItems(arg1:Array<models.ResponseItem>):Promise<void>;
 export function SetOverlaySimulationMode(arg1:string,arg2:models.OverlaySimConfig):Promise<void>;
 
 export function SetOverlayTimeouts(arg1:string,arg2:number,arg3:number):Promise<void>;
+
+export function SetProxySimulationMode(arg1:string,arg2:models.OverlaySimConfig):Promise<void>;
+
+export function SetProxyTimeouts(arg1:string,arg2:number,arg3:number):Promise<void>;
 
 export function SetResponses(arg1:Array<models.MethodResponse>):Promise<void>;
 

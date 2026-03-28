@@ -252,14 +252,8 @@ defineExpose({ openWSTab })
 
     <!-- ── TRAFFIC LOG TAB ── -->
     <template v-if="activeTab === 'traffic'">
-      <!-- Header (title + inline method filters + URL filter + actions — wraps on narrow windows) -->
+      <!-- Header (inline method filters + URL filter + actions — wraps on narrow windows) -->
       <div class="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 border-b border-gray-700 flex-shrink-0">
-        <!-- Title -->
-        <h2 class="text-sm font-semibold text-white whitespace-nowrap">Traffic Log</h2>
-
-        <!-- Divider -->
-        <span class="text-gray-700 hidden sm:inline">|</span>
-
         <!-- Method filter checkboxes -->
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
           <label
@@ -306,7 +300,11 @@ defineExpose({ openWSTab })
         <span class="text-xs text-gray-400 whitespace-nowrap">{{ filteredLogs.length }} reqs</span>
         <button @click="handleExportJSON" :disabled="filteredLogs.length === 0" class="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">JSON</button>
         <button @click="handleExportCSV"  :disabled="filteredLogs.length === 0" class="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">CSV</button>
-        <button @click="serverStore.clearLogs" :disabled="filteredLogs.length === 0" class="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-xs text-white disabled:opacity-50 disabled:cursor-not-allowed">Clear</button>
+        <button
+          @click="serverStore.selectedEndpointId ? serverStore.clearLogsForEndpoint(serverStore.selectedEndpointId) : serverStore.clearLogs()"
+          :disabled="filteredLogs.length === 0"
+          class="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-xs text-white disabled:opacity-50 disabled:cursor-not-allowed"
+        >{{ serverStore.selectedEndpointId ? 'Clear' : 'Clear All' }}</button>
       </div>
 
       <!-- Log List -->
@@ -377,7 +375,8 @@ defineExpose({ openWSTab })
 
               <!-- Path / SOCKS5 Target -->
               <span class="text-sm text-gray-300 truncate flex-1 font-mono">
-                <span v-if="log.target_host">{{ log.target_host }}:{{ log.target_port }}</span>
+                <span v-if="log.is_websocket && log.path">{{ log.path }}</span>
+                <span v-else-if="log.target_host">{{ log.target_host }}:{{ log.target_port }}</span>
                 <span v-else>{{ log.path || 'N/A' }}</span>
               </span>
 

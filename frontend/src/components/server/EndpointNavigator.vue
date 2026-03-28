@@ -116,6 +116,9 @@ function statusDot(ep: models.Endpoint): { show: boolean; cls: string; pulse: bo
     return { show: true, cls: running ? 'bg-green-400' : 'bg-gray-500', pulse: running, title: s.status }
   }
   if (ep.type === 'proxy' && !isOverlay(ep)) {
+    // Show pulsing green dot if a WS connection is open for this proxy endpoint
+    const hasOpenWS = serverStore.requestLogs.some(l => l.endpoint_id === ep.id && l.is_websocket && l.ws_is_open)
+    if (hasOpenWS) return { show: true, cls: 'bg-green-400', pulse: true, title: 'WS connection open' }
     const h = serverStore.getEndpointHealth(ep.id)
     if (!h) return { show: false, cls: '', pulse: false, title: '' }
     return { show: true, cls: h.healthy ? 'bg-green-400' : 'bg-red-400', pulse: false, title: h.healthy ? 'Healthy' : 'Unhealthy' }
@@ -332,9 +335,6 @@ function itemCls(id: string, isDragging = false): string {
               <span class="flex-1 truncate font-mono text-[11px]">{{ ep.path_prefix }}</span>
               <!-- Hover actions -->
               <div class="hidden group-hover:flex items-center gap-0.5 flex-shrink-0 pointer-events-auto z-10">
-                <button @click.stop="emit('settings', ep)" class="p-0.5 rounded hover:bg-gray-600" title="Settings">
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065zM15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                </button>
                 <button @click.stop="emit('deleteEp', ep)" class="p-0.5 rounded hover:bg-red-900/50 text-red-400" title="Delete">
                   <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                 </button>
@@ -354,9 +354,8 @@ function itemCls(id: string, isDragging = false): string {
             <div v-for="ep in proxyEps" :key="ep.id" :id="`nav-item-${ep.id}`" :class="itemCls(ep.id ?? '', draggedId === ep.id)" role="listitem" :aria-current="selectedId === ep.id ? 'true' : undefined" :draggable="true" @click="emit('select', ep.id ?? '')" @dragstart="onDragStart(ep, $event)" @dragover="onDragOver(ep, $event)" @drop="onDrop(ep)" @dragend="onDragEnd">
               <span class="flex-shrink-0 text-xs font-bold w-3 text-center text-blue-400">→</span>
               <span class="flex-1 truncate">{{ ep.name }}</span>
-              <span v-if="statusDot(ep).show" :class="['w-1.5 h-1.5 rounded-full flex-shrink-0', statusDot(ep).cls]" :title="statusDot(ep).title" />
+              <span v-if="statusDot(ep).show" :class="['w-1.5 h-1.5 rounded-full flex-shrink-0', statusDot(ep).cls, statusDot(ep).pulse ? 'animate-pulse' : '']" :title="statusDot(ep).title" />
               <div class="hidden group-hover:flex items-center gap-0.5 flex-shrink-0">
-                <button @click.stop="emit('settings', ep)" class="p-0.5 rounded hover:bg-gray-600"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065zM15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg></button>
                 <button @click.stop="emit('deleteEp', ep)" class="p-0.5 rounded hover:bg-red-900/50 text-red-400"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
               </div>
             </div>
@@ -376,7 +375,6 @@ function itemCls(id: string, isDragging = false): string {
               <span class="flex-1 truncate">{{ ep.name }}</span>
               <span v-if="statusDot(ep).show" :class="['w-1.5 h-1.5 rounded-full flex-shrink-0', statusDot(ep).cls, statusDot(ep).pulse ? 'animate-pulse' : '']" :title="statusDot(ep).title" />
               <div class="hidden group-hover:flex items-center gap-0.5 flex-shrink-0">
-                <button @click.stop="emit('settings', ep)" class="p-0.5 rounded hover:bg-gray-600"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065zM15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg></button>
                 <button @click.stop="emit('deleteEp', ep)" class="p-0.5 rounded hover:bg-red-900/50 text-red-400"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
               </div>
             </div>

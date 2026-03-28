@@ -2673,6 +2673,60 @@ func (a *App) ClearRequestLogs() {
 	runtime.EventsEmit(a.ctx, "logs:cleared", nil)
 }
 
+// ClearRequestLogsForEndpoint clears request logs only for a specific endpoint.
+func (a *App) ClearRequestLogsForEndpoint(endpointID string) {
+	a.logMutex.Lock()
+	// Collect WS connection IDs being removed so we can clean up handles
+	removedWSIDs := make(map[string]bool)
+	kept := make([]models.RequestLog, 0, len(a.requestLogs))
+	for _, log := range a.requestLogs {
+		if log.EndpointID == endpointID {
+			if log.IsWebSocket {
+				removedWSIDs[log.ID] = true
+			}
+			continue
+		}
+		kept = append(kept, log)
+	}
+	a.requestLogs = kept
+	a.logMutex.Unlock()
+
+	// Clean up WS throttle entries for removed connections
+	if len(removedWSIDs) > 0 {
+		a.requestLogQueueMutex.Lock()
+		for id := range removedWSIDs {
+			delete(a.wsLastSummaryUpdate, id)
+		}
+		a.requestLogQueueMutex.Unlock()
+
+		a.wsHandlesMu.Lock()
+		for id := range removedWSIDs {
+			delete(a.wsHandles, id)
+		}
+		a.wsHandlesMu.Unlock()
+	}
+
+	runtime.EventsEmit(a.ctx, "logs:cleared:endpoint", endpointID)
+}
+
+// ClearWSFrames clears all captured WebSocket frames for a specific connection,
+// while keeping the connection log entry itself intact.
+func (a *App) ClearWSFrames(connectionID string) error {
+	a.logMutex.Lock()
+	defer a.logMutex.Unlock()
+
+	for i := range a.requestLogs {
+		if a.requestLogs[i].ID == connectionID {
+			a.requestLogs[i].WebSocketEvents = make([]models.WebSocketEvent, 0)
+			a.requestLogs[i].WSFramesSent = 0
+			a.requestLogs[i].WSFramesRecv = 0
+			a.requestLogs[i].WSBytesTotal = 0
+			return nil
+		}
+	}
+	return fmt.Errorf("connection %s not found", connectionID)
+}
+
 // ExportWSTrace exports a WebSocket connection's full frame trace to a user-chosen file.
 // The output format is human-readable text: metadata header, then each frame with its
 // timestamp, direction, opcode, size, and captured data, separated by a ruled line.
@@ -3430,6 +3484,38 @@ func (a *App) SetOverlaySimulationMode(endpointID string, cfg models.OverlaySimC
 		a.server.SetOverlaySimulationMode(endpointID, cfg)
 	}
 	return nil
+}
+
+// SetProxySimulationMode sets fault-injection config for a proxy endpoint.
+func (a *App) SetProxySimulationMode(endpointID string, cfg models.OverlaySimConfig) error {
+	if a.server != nil {
+		a.server.SetProxySimulationMode(endpointID, cfg)
+	}
+	return nil
+}
+
+// SetProxyTimeouts updates the connect and total timeouts for a proxy endpoint at runtime.
+func (a *App) SetProxyTimeouts(endpointID string, connectSecs int, totalSecs int) error {
+	a.configMutex.Lock()
+	defer a.configMutex.Unlock()
+
+	for i := range a.config.Endpoints {
+		if a.config.Endpoints[i].ID == endpointID && a.config.Endpoints[i].Type == models.EndpointTypeProxy {
+			if a.config.Endpoints[i].ProxyConfig == nil {
+				return fmt.Errorf("proxy config not found for endpoint: %s", endpointID)
+			}
+			if connectSecs > 0 {
+				a.config.Endpoints[i].ProxyConfig.ConnectTimeoutSeconds = connectSecs
+			}
+			a.config.Endpoints[i].ProxyConfig.TimeoutSeconds = totalSecs
+
+			// Emit events
+			runtime.EventsEmit(a.ctx, "endpoints:updated", a.config.Endpoints)
+			runtime.EventsEmit(a.ctx, "config:dirty", true)
+			return nil
+		}
+	}
+	return fmt.Errorf("proxy endpoint not found: %s", endpointID)
 }
 
 // TerminateWSConnection force-closes both sides of a live WebSocket relay.

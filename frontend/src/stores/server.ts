@@ -11,6 +11,8 @@ import {
   AddGroup,
   GetRequestLogs,
   ClearRequestLogs,
+  ClearRequestLogsForEndpoint,
+  ClearWSFrames,
   ImportOpenAPISpecWithDialog,
   GetCACertInfo,
   RegenerateCA,
@@ -284,6 +286,19 @@ export const useServerStore = defineStore('server', () => {
       selectedLogId.value = null
     } catch (error) {
       console.error('Failed to clear logs:', error)
+    }
+  }
+
+  async function clearLogsForEndpoint(endpointId: string) {
+    try {
+      await ClearRequestLogsForEndpoint(endpointId)
+      requestLogs.value = requestLogs.value.filter(log => log.endpoint_id !== endpointId)
+      if (selectedLogId.value) {
+        const still = requestLogs.value.find(l => l.id === selectedLogId.value)
+        if (!still) selectedLogId.value = null
+      }
+    } catch (error) {
+      console.error('Failed to clear logs for endpoint:', error)
     }
   }
 
@@ -701,6 +716,7 @@ export const useServerStore = defineStore('server', () => {
     // Remove any existing listeners first
     EventsOff('server:status')
     EventsOff('logs:cleared')
+    EventsOff('logs:cleared:endpoint')
     EventsOff('items:updated')
     EventsOff('endpoints:updated')
     EventsOff('endpoint:selected')
@@ -750,6 +766,16 @@ export const useServerStore = defineStore('server', () => {
       requestLogs.value = []
       requestLogCache.value.clear()
       selectedLogId.value = null
+    })
+
+    EventsOn('logs:cleared:endpoint', (endpointId: string) => {
+      requestLogs.value = requestLogs.value.filter(log => log.endpoint_id !== endpointId)
+      // Clear cached full logs for removed entries
+      for (const [id, log] of requestLogCache.value) {
+        if ((log as any).endpoint_id === endpointId) {
+          requestLogCache.value.delete(id)
+        }
+      }
     })
 
     EventsOn('items:updated', (newItems: models.ResponseItem[]) => {
@@ -862,6 +888,7 @@ export const useServerStore = defineStore('server', () => {
     toggleExpanded,
     refreshLogs,
     clearLogs,
+    clearLogsForEndpoint,
     selectLog,
     importOpenAPISpec,
     // Endpoint Actions

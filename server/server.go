@@ -35,6 +35,7 @@ type HTTPServer struct {
 	logRequestMatching bool               // Enable verbose request matching logs
 	dnsResolver        *DNSResolver       // DNS resolver with override support
 	overlaySimModes    sync.Map           // shared fault-injection map for overlay endpoints
+	proxySimModes      sync.Map           // shared fault-injection map for proxy endpoints
 }
 
 // SetOverlaySimulationMode sets fault-injection config for a system-overlay-* endpoint.
@@ -43,6 +44,15 @@ func (s *HTTPServer) SetOverlaySimulationMode(endpointID string, cfg models.Over
 		s.overlaySimModes.Delete(endpointID)
 	} else {
 		s.overlaySimModes.Store(endpointID, cfg)
+	}
+}
+
+// SetProxySimulationMode sets fault-injection config for a proxy endpoint.
+func (s *HTTPServer) SetProxySimulationMode(endpointID string, cfg models.OverlaySimConfig) {
+	if cfg.Mode == "" || cfg.Mode == OverlaySimNormal {
+		s.proxySimModes.Delete(endpointID)
+	} else {
+		s.proxySimModes.Store(endpointID, cfg)
 	}
 }
 
@@ -99,7 +109,7 @@ func (s *HTTPServer) StartHTTP() error {
 		handler = HTTPSRedirectHandler(httpsPort)
 	} else {
 		// Use normal response handler
-		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver, &s.overlaySimModes)
+		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver, &s.overlaySimModes, &s.proxySimModes)
 		handler = http.HandlerFunc(responseHandler.HandleRequest)
 	}
 
@@ -238,7 +248,7 @@ func (s *HTTPServer) StartHTTPS() error {
 	}
 
 	// Create response handler
-	responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver, &s.overlaySimModes)
+	responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver, &s.overlaySimModes, &s.proxySimModes)
 
 	// Create HTTPS server
 	s.httpsServer = &http.Server{
@@ -332,7 +342,7 @@ func (s *HTTPServer) Start() error {
 	s.configMutex.RUnlock()
 
 	if socks5Config != nil && (socks5Config.Enabled || serverMode == models.ServerModeSOCKS5) {
-		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver, &s.overlaySimModes)
+		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver, &s.overlaySimModes, &s.proxySimModes)
 
 		// Initialize certificate cache for TLS interception if HTTPS is enabled
 		// This allows SOCKS5 to intercept HTTPS connections for domains in the takeover list

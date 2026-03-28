@@ -38,8 +38,16 @@ export function ClearRequestLogs() {
   return window['go']['main']['App']['ClearRequestLogs']();
 }
 
+export function ClearRequestLogsForEndpoint(arg1) {
+  return window['go']['main']['App']['ClearRequestLogsForEndpoint'](arg1);
+}
+
 export function ClearScriptErrors(arg1) {
   return window['go']['main']['App']['ClearScriptErrors'](arg1);
+}
+
+export function ClearWSFrames(arg1) {
+  return window['go']['main']['App']['ClearWSFrames'](arg1);
 }
 
 export function CloseWebSocketConnection(arg1, arg2, arg3, arg4) {
@@ -288,6 +296,14 @@ export function SetOverlaySimulationMode(arg1, arg2) {
 
 export function SetOverlayTimeouts(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetOverlayTimeouts'](arg1, arg2, arg3);
+}
+
+export function SetProxySimulationMode(arg1, arg2) {
+  return window['go']['main']['App']['SetProxySimulationMode'](arg1, arg2);
+}
+
+export function SetProxyTimeouts(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetProxyTimeouts'](arg1, arg2, arg3);
 }
 
 export function SetResponses(arg1) {

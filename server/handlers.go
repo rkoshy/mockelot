@@ -59,9 +59,10 @@ type ResponseHandler struct {
 	regexCacheMutex    sync.RWMutex              // Mutex for regex cache
 	logRequestMatching bool                      // Enable verbose request matching logs
 	overlaySimModes    *sync.Map                 // endpointID → OverlaySimMode constant; shared with HTTPServer
+	proxySimModes      *sync.Map                 // endpointID → OverlaySimConfig; shared with HTTPServer
 }
 
-func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptErrorLogger ScriptErrorLogger, proxyHandler *ProxyHandler, containerHandler *ContainerHandler, logRequestMatching bool, dnsResolver *DNSResolver, overlaySimModes *sync.Map) *ResponseHandler {
+func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptErrorLogger ScriptErrorLogger, proxyHandler *ProxyHandler, containerHandler *ContainerHandler, logRequestMatching bool, dnsResolver *DNSResolver, overlaySimModes *sync.Map, proxySimModes *sync.Map) *ResponseHandler {
 	overlayHandler := NewOverlayHandler(proxyHandler, dnsResolver)
 	return &ResponseHandler{
 		config:             config,
@@ -74,6 +75,7 @@ func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptEr
 		regexCache:         make(map[string]*regexp.Regexp),
 		logRequestMatching: logRequestMatching,
 		overlaySimModes:    overlaySimModes,
+		proxySimModes:      proxySimModes,
 	}
 }
 
@@ -572,6 +574,33 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 		// Fault injection for overlay endpoints.
 		if strings.HasPrefix(matchedEndpoint.ID, "system-overlay-") && h.overlaySimModes != nil {
 			if raw, ok := h.overlaySimModes.Load(matchedEndpoint.ID); ok {
+				cfg := raw.(models.OverlaySimConfig)
+				switch cfg.Mode {
+				case OverlaySimTimeout:
+					secs := cfg.TimeoutSecs
+					if secs <= 0 {
+						secs = 30
+					}
+					time.Sleep(time.Duration(secs) * time.Second)
+					http.Error(w, "504 Gateway Timeout — simulated by Mockelot", http.StatusGatewayTimeout)
+					return
+				case OverlaySimDNSError:
+					http.Error(w, "502 Bad Gateway — DNS resolution failed (simulated by Mockelot)", http.StatusBadGateway)
+					return
+				case OverlaySimOther:
+					code := cfg.StatusCode
+					if code < 100 || code > 599 {
+						code = http.StatusBadGateway
+					}
+					http.Error(w, http.StatusText(code)+" — simulated by Mockelot", code)
+					return
+				}
+			}
+		}
+
+		// Fault injection for proxy endpoints.
+		if matchedEndpoint.Type == models.EndpointTypeProxy && h.proxySimModes != nil {
+			if raw, ok := h.proxySimModes.Load(matchedEndpoint.ID); ok {
 				cfg := raw.(models.OverlaySimConfig)
 				switch cfg.Mode {
 				case OverlaySimTimeout:
