@@ -260,20 +260,67 @@
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                 Download CA Cert
               </button>
+            </div>
+
+            <!-- Install buttons — vary by platform -->
+            <div class="mt-3 flex flex-wrap gap-2">
+              <!-- Windows: two install options (user vs system) -->
+              <template v-if="runtimeOS === 'windows'">
+                <button
+                  @click="handleInstallCurrentUser"
+                  :disabled="!caInfo?.exists"
+                  :class="['px-3 py-2 text-white text-sm rounded transition-colors flex items-center gap-2', caInfo?.exists ? 'bg-green-700 hover:bg-green-600' : 'bg-gray-600 cursor-not-allowed']"
+                  title="Installs to CurrentUser\Root — no UAC prompt needed"
+                >
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                  Install (Current User)
+                </button>
+                <button
+                  @click="confirmInstallElevated"
+                  :disabled="!caInfo?.exists"
+                  :class="['px-3 py-2 text-white text-sm rounded transition-colors flex items-center gap-2', caInfo?.exists ? 'bg-green-600 hover:bg-green-500' : 'bg-gray-600 cursor-not-allowed']"
+                  title="Installs to LocalMachine\Root — triggers UAC prompt"
+                >
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                  Install System-Wide (UAC)
+                </button>
+              </template>
+              <!-- Linux / macOS: single system-wide install -->
+              <template v-else>
+                <button
+                  @click="confirmInstallCASystem"
+                  :disabled="!caInfo?.exists"
+                  :class="['px-3 py-2 text-white text-sm rounded transition-colors flex items-center gap-2', caInfo?.exists ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-600 cursor-not-allowed']"
+                >
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                  Install CA (System-Wide)
+                </button>
+              </template>
+              <!-- Manual install — all platforms -->
               <button
-                @click="confirmInstallCASystem"
+                @click="openManualInstall"
                 :disabled="!caInfo?.exists"
-                :class="['px-3 py-2 text-white text-sm rounded transition-colors flex items-center gap-2', caInfo?.exists ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-600 cursor-not-allowed']"
+                :class="['px-3 py-2 text-sm rounded transition-colors flex items-center gap-2', caInfo?.exists ? 'bg-gray-600 hover:bg-gray-500 text-gray-200' : 'bg-gray-700 text-gray-500 cursor-not-allowed']"
+                title="View manual installation instructions and download install script"
               >
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
-                Install CA (System-Wide)
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                Install Manually
               </button>
             </div>
 
-            <div class="mt-3 p-3 bg-blue-900/20 border border-blue-800 rounded">
-              <p class="text-xs text-blue-300">
-                <strong class="text-blue-200">System-Wide Install</strong> adds the CA to the OS trust store (requires admin/root — uses polkit on Linux, UAC elevation on Windows, sudo on macOS). All applications will trust HTTPS and SOCKS5-intercepted connections signed by this CA.
-              </p>
+            <!-- Context note per platform -->
+            <div class="mt-3 p-3 bg-blue-900/20 border border-blue-800 rounded text-xs text-blue-300 space-y-1">
+              <template v-if="runtimeOS === 'windows'">
+                <p><strong class="text-blue-200">Current User</strong> — no UAC needed, works for Chrome/Edge. Trusted for your account only.</p>
+                <p><strong class="text-blue-200">System-Wide (UAC)</strong> — triggers a UAC prompt to install to Local Machine store. Trusted for all accounts.</p>
+                <p class="text-blue-400">⚠ Firefox uses its own trust store — use "Install Manually" for Firefox instructions.</p>
+              </template>
+              <template v-else-if="runtimeOS === 'linux'">
+                <p>Uses <code class="text-blue-200">pkexec</code> / <code class="text-blue-200">sudo</code> to install system-wide. Firefox requires separate manual import.</p>
+              </template>
+              <template v-else-if="runtimeOS === 'darwin'">
+                <p>Uses <code class="text-blue-200">sudo security</code> to install to the System keychain. Firefox requires separate manual import.</p>
+              </template>
             </div>
           </div>
 
@@ -757,7 +804,7 @@
       @cancel="cancelRegenerateCA"
     />
 
-    <!-- Install CA System Confirmation Dialog -->
+    <!-- Install CA System Confirmation Dialog (Linux/macOS) -->
     <ConfirmDialog
       :show="showInstallConfirm"
       title="Install CA Certificate (System-Wide)?"
@@ -767,8 +814,142 @@
       @primary="handleInstallCASystem"
       @cancel="cancelInstallCASystem"
     />
+
+    <!-- Install CA System Elevated (Windows UAC) Confirmation Dialog -->
+    <ConfirmDialog
+      :show="showInstallElevatedConfirm"
+      title="Install CA Certificate (System-Wide)?"
+      message="A UAC prompt will appear asking for administrator permission. This installs the Mockelot CA to the Local Machine certificate store, trusted by all accounts on this computer. Continue?"
+      primary-text="Install (UAC)"
+      cancel-text="Cancel"
+      @primary="handleInstallElevated"
+      @cancel="cancelInstallElevated"
+    />
+
+    <!-- Manual Install Modal -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="showManualInstallModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div class="bg-gray-800 rounded-lg shadow-2xl border border-gray-700 flex flex-col max-h-[85vh] w-full max-w-2xl mx-4">
+            <!-- Header -->
+            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700 flex-shrink-0">
+              <div>
+                <h3 class="text-base font-semibold text-white">Manual CA Certificate Installation</h3>
+                <p class="text-xs text-gray-400 mt-0.5">
+                  CA cert location: <code class="text-cyan-300 font-mono">{{ manualInstallScript.certPath }}</code>
+                </p>
+              </div>
+              <button @click="showManualInstallModal = false" class="p-1 text-gray-400 hover:text-white rounded hover:bg-gray-700 transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            <!-- Body -->
+            <div class="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+
+              <!-- Windows instructions -->
+              <template v-if="runtimeOS === 'windows'">
+                <div class="space-y-3 text-sm">
+                  <h4 class="font-semibold text-white">Option A — PowerShell (Recommended)</h4>
+                  <p class="text-gray-300">Run the script below in PowerShell. It will prompt you to choose current-user or system-wide install.</p>
+                  <ol class="list-decimal list-inside space-y-1 text-gray-300 text-xs ml-2">
+                    <li>Copy the script below and save as <code class="text-cyan-300">install-mockelot-ca.ps1</code></li>
+                    <li>Right-click the file → <strong>Run with PowerShell</strong></li>
+                    <li>Follow the on-screen prompts</li>
+                  </ol>
+
+                  <h4 class="font-semibold text-white mt-4">Option B — Quick one-liner (Current User, no UAC)</h4>
+                  <div class="bg-gray-900 rounded p-3 font-mono text-xs text-cyan-300 break-all select-all">
+                    Import-Certificate -FilePath '{{ manualInstallScript.certPath }}' -CertStoreLocation Cert:\CurrentUser\Root
+                  </div>
+
+                  <h4 class="font-semibold text-white mt-4">Option C — Firefox</h4>
+                  <p class="text-gray-300 text-xs">Firefox has its own trust store and ignores the Windows cert store.</p>
+                  <ol class="list-decimal list-inside space-y-1 text-gray-300 text-xs ml-2">
+                    <li>Open Firefox → Settings → Privacy &amp; Security</li>
+                    <li>Scroll to <strong>Certificates</strong> → click <strong>View Certificates</strong></li>
+                    <li>Go to <strong>Authorities</strong> tab → click <strong>Import</strong></li>
+                    <li>Select: <code class="text-cyan-300 font-mono">{{ manualInstallScript.certPath }}</code></li>
+                    <li>Check <strong>"Trust this CA to identify websites"</strong> → OK</li>
+                  </ol>
+                </div>
+              </template>
+
+              <!-- Linux instructions -->
+              <template v-else-if="runtimeOS === 'linux'">
+                <div class="space-y-3 text-sm">
+                  <h4 class="font-semibold text-white">Option A — Shell Script (Recommended)</h4>
+                  <p class="text-gray-300">Run the script below in a terminal. Requires sudo.</p>
+
+                  <h4 class="font-semibold text-white mt-4">Option B — Manual commands</h4>
+                  <div class="bg-gray-900 rounded p-3 font-mono text-xs text-cyan-300 space-y-1">
+                    <div>sudo cp '{{ manualInstallScript.certPath }}' /usr/local/share/ca-certificates/mockelot-ca.crt</div>
+                    <div>sudo update-ca-certificates</div>
+                  </div>
+
+                  <h4 class="font-semibold text-white mt-4">Firefox</h4>
+                  <ol class="list-decimal list-inside space-y-1 text-gray-300 text-xs ml-2">
+                    <li>Open Firefox → Settings → Privacy &amp; Security → Certificates → View Certificates</li>
+                    <li>Authorities tab → Import → select: <code class="text-cyan-300 font-mono">{{ manualInstallScript.certPath }}</code></li>
+                    <li>Check <strong>"Trust this CA to identify websites"</strong> → OK</li>
+                  </ol>
+                </div>
+              </template>
+
+              <!-- macOS instructions -->
+              <template v-else-if="runtimeOS === 'darwin'">
+                <div class="space-y-3 text-sm">
+                  <h4 class="font-semibold text-white">Option A — Shell Script (Recommended)</h4>
+                  <p class="text-gray-300">Run the script below in Terminal. Requires sudo.</p>
+
+                  <h4 class="font-semibold text-white mt-4">Option B — Keychain Access GUI</h4>
+                  <ol class="list-decimal list-inside space-y-1 text-gray-300 text-xs ml-2">
+                    <li>Open <strong>Keychain Access</strong> (Spotlight → Keychain Access)</li>
+                    <li>Select <strong>System</strong> keychain on the left</li>
+                    <li>File → Import Items → select: <code class="text-cyan-300 font-mono">{{ manualInstallScript.certPath }}</code></li>
+                    <li>Double-click the imported cert → Expand <strong>Trust</strong></li>
+                    <li>Set <strong>"When using this certificate"</strong> → <strong>Always Trust</strong></li>
+                  </ol>
+
+                  <h4 class="font-semibold text-white mt-4">Firefox</h4>
+                  <p class="text-gray-300 text-xs">Same as other platforms — import via Firefox's own certificate manager (see Linux instructions above).</p>
+                </div>
+              </template>
+
+              <!-- Script display -->
+              <div v-if="manualInstallScript.script" class="border-t border-gray-700 pt-4">
+                <div class="flex items-center justify-between mb-2">
+                  <h4 class="text-sm font-semibold text-white">
+                    Install Script
+                    <span class="ml-2 text-xs font-normal text-gray-400">({{ manualInstallScript.filename }})</span>
+                  </h4>
+                  <button
+                    @click="copyScript"
+                    class="px-3 py-1 bg-gray-600 hover:bg-gray-500 text-gray-200 text-xs rounded transition-colors flex items-center gap-1"
+                  >
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                    Copy Script
+                  </button>
+                </div>
+                <pre class="bg-gray-900 rounded p-3 text-xs text-gray-300 overflow-x-auto whitespace-pre-wrap max-h-64 font-mono select-all">{{ manualInstallScript.script }}</pre>
+              </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="px-6 py-3 border-t border-gray-700 flex justify-end flex-shrink-0">
+              <button @click="showManualInstallModal = false" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded transition-colors">Close</button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
+
+<style scoped>
+.modal-enter-active, .modal-leave-active { transition: opacity 0.2s ease; }
+.modal-enter-from, .modal-leave-to { opacity: 0; }
+</style>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
@@ -780,7 +961,7 @@ import ConfirmDialog from '../../dialogs/ConfirmDialog.vue'
 import CORSHeaderList from '../../dialogs/CORSHeaderList.vue'
 import CORSScript from '../../dialogs/CORSScript.vue'
 import DNSSection from './DNSSection.vue'
-import { UpdateServerSettings, GetCACertInfo, RegenerateCA, DownloadCACert, InstallCACertSystem, SelectCertFile, GetDefaultCertNames, GetDNSProviders, GetDNSOverrides, UpdateDNSOverrides } from '../../../../wailsjs/go/main/App'
+import { UpdateServerSettings, GetCACertInfo, RegenerateCA, DownloadCACert, InstallCACertSystem, InstallCACertCurrentUser, InstallCACertSystemElevated, GetRuntimeOS, GetCACertInstallScript, SelectCertFile, GetDefaultCertNames, GetDNSProviders, GetDNSOverrides, UpdateDNSOverrides } from '../../../../wailsjs/go/main/App'
 import { models } from '../../../../wailsjs/go/models'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -798,7 +979,68 @@ const defaultCertNames = ref<string[]>([])
 // UI State
 const showRegenerateConfirm = ref(false)
 const showInstallConfirm = ref(false)
+const showInstallElevatedConfirm = ref(false)
+const showManualInstallModal = ref(false)
 const errorMessage = ref('')
+
+// Runtime OS and manual install script
+const runtimeOS = ref('')
+const manualInstallScript = ref<Record<string, string>>({})
+
+async function loadRuntimeOS() {
+  try {
+    runtimeOS.value = await GetRuntimeOS()
+  } catch (e) {
+    console.error('Failed to get runtime OS:', e)
+  }
+}
+
+// Install for current user only (no elevation)
+async function handleInstallCurrentUser() {
+  try {
+    await InstallCACertCurrentUser()
+    errorMessage.value = ''
+  } catch (error) {
+    errorMessage.value = `Failed to install certificate for current user: ${error}`
+  }
+}
+
+// Install system-wide with elevation
+function confirmInstallElevated() {
+  showInstallElevatedConfirm.value = true
+}
+
+async function handleInstallElevated() {
+  showInstallElevatedConfirm.value = false
+  try {
+    await InstallCACertSystemElevated()
+    errorMessage.value = ''
+  } catch (error) {
+    errorMessage.value = `Failed to install certificate system-wide: ${error}`
+  }
+}
+
+function cancelInstallElevated() {
+  showInstallElevatedConfirm.value = false
+}
+
+// Manual install modal
+async function openManualInstall() {
+  try {
+    manualInstallScript.value = await GetCACertInstallScript()
+    showManualInstallModal.value = true
+  } catch (error) {
+    errorMessage.value = `Failed to generate install script: ${error}`
+  }
+}
+
+async function copyScript() {
+  try {
+    await navigator.clipboard.writeText(manualInstallScript.value.script || '')
+  } catch (e) {
+    console.error('Clipboard copy failed:', e)
+  }
+}
 
 // CORS validation state
 const corsHeaderListValid = ref(true)
@@ -1117,6 +1359,7 @@ async function copyHostsEntries() {
 onMounted(async () => {
   loadCAInfo()
   loadDefaultCertNames()
+  loadRuntimeOS()
   await loadDNSProviders()
   if (serverStore.config) {
     loadFromConfig(serverStore.config)

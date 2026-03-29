@@ -57,6 +57,8 @@ export function GetAllResponseIDsWithErrors():Promise<Array<string>>;
 
 export function GetCACertInfo():Promise<models.CACertInfo>;
 
+export function GetCACertInstallScript():Promise<Record<string, string>>;
+
 export function GetCORSConfig():Promise<models.CORSConfig>;
 
 export function GetConfig():Promise<models.AppConfig>;
@@ -93,6 +95,8 @@ export function GetRequestLogs():Promise<Array<models.RequestLogSummary>>;
 
 export function GetResponses():Promise<Array<models.MethodResponse>>;
 
+export function GetRuntimeOS():Promise<string>;
+
 export function GetSOCKS5Config():Promise<main.SOCKS5ConfigResponse>;
 
 export function GetSOCKS5Domains():Promise<Array<models.SOCKS5DomainInfo>>;
@@ -107,7 +111,11 @@ export function GetWSCaptureBytes():Promise<number>;
 
 export function ImportOpenAPISpecWithDialog(arg1:boolean):Promise<models.AppConfig>;
 
+export function InstallCACertCurrentUser():Promise<void>;
+
 export function InstallCACertSystem():Promise<void>;
+
+export function InstallCACertSystemElevated():Promise<void>;
 
 export function IsDirty():Promise<boolean>;
 

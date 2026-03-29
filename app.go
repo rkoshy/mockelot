@@ -3186,15 +3186,249 @@ func (a *App) installCACertLinux(certPath string) error {
 	return nil
 }
 
-// installCACertWindows installs CA certificate on Windows systems
+// installCACertWindows installs CA certificate to the current user's certificate store.
+// Does NOT require elevation — works for Chrome, Edge and other apps that use the Windows cert store.
 func (a *App) installCACertWindows(certPath string) error {
-	// Use certutil to add to Trusted Root Certification Authorities
-	cmd := exec.Command("certutil", "-addstore", "-f", "ROOT", certPath)
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+		fmt.Sprintf("Import-Certificate -FilePath '%s' -CertStoreLocation Cert:\\CurrentUser\\Root", certPath))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to install certificate: %w\nOutput: %s", err, string(output))
+		// Fallback to certutil user store
+		cmd2 := exec.Command("certutil", "-addstore", "-user", "-f", "ROOT", certPath)
+		output2, err2 := cmd2.CombinedOutput()
+		if err2 != nil {
+			return fmt.Errorf("failed to install certificate (user store): %w\nPS output: %s\ncertutil output: %s", err2, string(output), string(output2))
+		}
 	}
 	return nil
+}
+
+// installCACertWindowsSystem installs CA certificate to the Local Machine store system-wide.
+// Spawns an elevated PowerShell process via the ShellExecute "runas" verb — triggers a UAC prompt.
+func (a *App) installCACertWindowsSystem(certPath string) error {
+	// Use PowerShell to spawn an elevated child process via Start-Process -Verb RunAs.
+	// The inner command installs to LocalMachine\Root (system-wide).
+	psCmd := fmt.Sprintf("Import-Certificate -FilePath '%s' -CertStoreLocation Cert:\\LocalMachine\\Root", certPath)
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+		fmt.Sprintf("Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile -NonInteractive -Command \"%s\"'", psCmd))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to install certificate system-wide (UAC may have been denied): %w\nOutput: %s", err, string(output))
+	}
+	return nil
+}
+
+// InstallCACertCurrentUser installs the CA certificate for the current user only (no elevation required).
+// On Windows this writes to CurrentUser\Root. On Linux/macOS falls back to the regular system install path.
+func (a *App) InstallCACertCurrentUser() error {
+	certManager, err := server.NewCertificateManager()
+	if err != nil {
+		return fmt.Errorf("failed to initialize certificate manager: %w", err)
+	}
+	if !certManager.CAExists() {
+		return fmt.Errorf("CA certificate does not exist - please generate it first")
+	}
+	certPEM, err := certManager.GetCACertPEM()
+	if err != nil {
+		return fmt.Errorf("failed to read CA certificate: %w", err)
+	}
+	tmpFile, err := os.CreateTemp("", "mockelot-ca-*.crt")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	if _, err := tmpFile.Write(certPEM); err != nil {
+		return fmt.Errorf("failed to write temporary certificate: %w", err)
+	}
+	tmpFile.Close()
+
+	switch goruntime.GOOS {
+	case "windows":
+		return a.installCACertWindows(tmpFile.Name())
+	default:
+		// On Linux/macOS the regular system install is the only path
+		return a.InstallCACertSystem()
+	}
+}
+
+// InstallCACertSystemElevated installs the CA certificate system-wide with elevation.
+// Windows: spawns elevated PowerShell via UAC. Linux: uses pkexec/sudo. macOS: uses sudo security.
+func (a *App) InstallCACertSystemElevated() error {
+	certManager, err := server.NewCertificateManager()
+	if err != nil {
+		return fmt.Errorf("failed to initialize certificate manager: %w", err)
+	}
+	if !certManager.CAExists() {
+		return fmt.Errorf("CA certificate does not exist - please generate it first")
+	}
+	certPEM, err := certManager.GetCACertPEM()
+	if err != nil {
+		return fmt.Errorf("failed to read CA certificate: %w", err)
+	}
+	tmpFile, err := os.CreateTemp("", "mockelot-ca-*.crt")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	if _, err := tmpFile.Write(certPEM); err != nil {
+		return fmt.Errorf("failed to write temporary certificate: %w", err)
+	}
+	tmpFile.Close()
+
+	switch goruntime.GOOS {
+	case "windows":
+		return a.installCACertWindowsSystem(tmpFile.Name())
+	case "linux":
+		return a.installCACertLinux(tmpFile.Name())
+	case "darwin":
+		return a.installCACertMacOS(tmpFile.Name())
+	default:
+		return fmt.Errorf("unsupported operating system: %s", goruntime.GOOS)
+	}
+}
+
+// GetRuntimeOS returns the current operating system ("windows", "linux", "darwin").
+func (a *App) GetRuntimeOS() string {
+	return goruntime.GOOS
+}
+
+// GetCACertInstallScript returns a platform-specific script for manually installing the CA certificate.
+// Returns the script content and the suggested filename.
+func (a *App) GetCACertInstallScript() (map[string]string, error) {
+	certDir, err := server.GetCertDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cert directory: %w", err)
+	}
+	caCertPath := filepath.Join(certDir, "ca.crt")
+	// Normalize path separators for display
+	caCertPathDisplay := caCertPath
+
+	switch goruntime.GOOS {
+	case "windows":
+		// Generate a PowerShell script that offers both user and system-wide install
+		script := fmt.Sprintf(`# Mockelot CA Certificate Installer
+# Generated by Mockelot — run this in PowerShell
+# CA certificate location: %s
+
+$certPath = '%s'
+
+Write-Host "Mockelot CA Certificate Installer" -ForegroundColor Cyan
+Write-Host "=====================================" -ForegroundColor Cyan
+Write-Host ""
+
+if (-not (Test-Path $certPath)) {
+    Write-Error "CA certificate not found at: $certPath"
+    Write-Host "Please start the Mockelot server with HTTPS or SOCKS5 enabled to generate the CA certificate."
+    exit 1
+}
+
+Write-Host "Choose installation scope:" -ForegroundColor Yellow
+Write-Host "  [1] Current User only  (no UAC prompt required)"
+Write-Host "  [2] All Users / System (requires Administrator — UAC prompt will appear)"
+Write-Host "  [Q] Quit"
+Write-Host ""
+$choice = Read-Host "Enter choice"
+
+switch ($choice) {
+    '1' {
+        Import-Certificate -FilePath $certPath -CertStoreLocation Cert:\CurrentUser\Root
+        Write-Host "Certificate installed for current user." -ForegroundColor Green
+    }
+    '2' {
+        Start-Process powershell -Verb RunAs -Wait -ArgumentList (
+            "-NoProfile -NonInteractive -Command " +
+            "Import-Certificate -FilePath '$certPath' -CertStoreLocation Cert:\LocalMachine\Root; " +
+            "Write-Host 'Certificate installed system-wide.' -ForegroundColor Green; " +
+            "pause"
+        )
+    }
+    default {
+        Write-Host "Cancelled." -ForegroundColor Gray
+    }
+}
+`, caCertPathDisplay, caCertPath)
+		return map[string]string{
+			"filename": "install-mockelot-ca.ps1",
+			"script":   script,
+			"language": "powershell",
+			"certPath": caCertPathDisplay,
+		}, nil
+
+	case "linux":
+		script := fmt.Sprintf(`#!/bin/bash
+# Mockelot CA Certificate Installer
+# Generated by Mockelot — run this script in a terminal
+# CA certificate location: %s
+
+CERT_PATH="%s"
+CERT_DEST="/usr/local/share/ca-certificates/mockelot-ca.crt"
+
+if [ ! -f "$CERT_PATH" ]; then
+    echo "ERROR: CA certificate not found at: $CERT_PATH"
+    echo "Please start Mockelot with HTTPS or SOCKS5 enabled to generate the CA certificate."
+    exit 1
+fi
+
+echo "Installing Mockelot CA certificate system-wide..."
+sudo cp "$CERT_PATH" "$CERT_DEST" && sudo update-ca-certificates
+
+if [ $? -eq 0 ]; then
+    echo "Certificate installed successfully."
+    echo ""
+    echo "For Firefox, you must also install it manually:"
+    echo "  Settings → Privacy & Security → Certificates → View Certificates → Authorities → Import"
+    echo "  Import: $CERT_PATH"
+else
+    echo "Installation failed. Try running with pkexec:"
+    echo "  pkexec sh -c \"cp '$CERT_PATH' '$CERT_DEST' && update-ca-certificates\""
+fi
+`, caCertPathDisplay, caCertPath)
+		return map[string]string{
+			"filename": "install-mockelot-ca.sh",
+			"script":   script,
+			"language": "bash",
+			"certPath": caCertPathDisplay,
+		}, nil
+
+	case "darwin":
+		script := fmt.Sprintf(`#!/bin/bash
+# Mockelot CA Certificate Installer
+# Generated by Mockelot — run this script in Terminal
+# CA certificate location: %s
+
+CERT_PATH="%s"
+
+if [ ! -f "$CERT_PATH" ]; then
+    echo "ERROR: CA certificate not found at: $CERT_PATH"
+    echo "Please start Mockelot with HTTPS or SOCKS5 enabled to generate the CA certificate."
+    exit 1
+fi
+
+echo "Installing Mockelot CA certificate (requires sudo)..."
+sudo security add-trusted-cert -d -r trustRoot \
+    -k /Library/Keychains/System.keychain \
+    "$CERT_PATH"
+
+if [ $? -eq 0 ]; then
+    echo "Certificate installed successfully."
+    echo ""
+    echo "Note: Firefox uses its own trust store."
+    echo "  In Firefox: Settings → Privacy & Security → Certificates → View Certificates"
+    echo "  → Authorities → Import → select: $CERT_PATH"
+else
+    echo "Installation failed. Make sure you have administrator rights."
+fi
+`, caCertPathDisplay, caCertPath)
+		return map[string]string{
+			"filename": "install-mockelot-ca.sh",
+			"script":   script,
+			"language": "bash",
+			"certPath": caCertPathDisplay,
+		}, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported OS: %s", goruntime.GOOS)
+	}
 }
 
 // installCACertMacOS installs CA certificate on macOS systems

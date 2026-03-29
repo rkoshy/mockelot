@@ -110,6 +110,10 @@ export function GetCACertInfo() {
   return window['go']['main']['App']['GetCACertInfo']();
 }
 
+export function GetCACertInstallScript() {
+  return window['go']['main']['App']['GetCACertInstallScript']();
+}
+
 export function GetCORSConfig() {
   return window['go']['main']['App']['GetCORSConfig']();
 }
@@ -182,6 +186,10 @@ export function GetResponses() {
   return window['go']['main']['App']['GetResponses']();
 }
 
+export function GetRuntimeOS() {
+  return window['go']['main']['App']['GetRuntimeOS']();
+}
+
 export function GetSOCKS5Config() {
   return window['go']['main']['App']['GetSOCKS5Config']();
 }
@@ -210,8 +218,16 @@ export function ImportOpenAPISpecWithDialog(arg1) {
   return window['go']['main']['App']['ImportOpenAPISpecWithDialog'](arg1);
 }
 
+export function InstallCACertCurrentUser() {
+  return window['go']['main']['App']['InstallCACertCurrentUser']();
+}
+
 export function InstallCACertSystem() {
   return window['go']['main']['App']['InstallCACertSystem']();
+}
+
+export function InstallCACertSystemElevated() {
+  return window['go']['main']['App']['InstallCACertSystemElevated']();
 }
 
 export function IsDirty() {
