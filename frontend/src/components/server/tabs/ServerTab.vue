@@ -121,251 +121,165 @@
                 Port for HTTPS server (default: 8443)
               </p>
             </div>
+          </div>
+        </div>
+      </CollapsibleSection>
 
-            <!-- Certificate Mode -->
-            <div class="border-t border-gray-700 pt-6">
-              <h4 class="text-sm font-semibold text-white mb-3">Certificate Mode</h4>
-              <ComboBox
-                v-model="localSettings.certMode"
-                :options="certModeOptions"
-                @update:modelValue="handleChange"
-              />
+      <!-- Certificate Management (always visible — used by HTTPS and SOCKS5 TLS interception) -->
+      <CollapsibleSection title="Certificate Management" :defaultOpen="false">
+        <div class="space-y-6">
+          <div class="p-3 bg-gray-700/50 rounded text-xs text-gray-300">
+            The CA certificate is used by both <strong class="text-white">HTTPS</strong> (server TLS) and <strong class="text-white">SOCKS5</strong> (TLS interception of HTTPS domains). Configure it once here.
+          </div>
 
-              <!-- Auto Mode Description -->
-              <div v-if="localSettings.certMode === 'auto'" class="mt-3 p-3 bg-gray-700/50 rounded">
-                <p class="text-xs text-gray-300">
-                  Automatically generates a CA certificate (persistent) and server certificate (regenerated on each start).
-                </p>
-              </div>
+          <!-- Certificate Mode -->
+          <div>
+            <h4 class="text-sm font-semibold text-white mb-3">Certificate Mode</h4>
+            <ComboBox
+              v-model="localSettings.certMode"
+              :options="certModeOptions"
+              @update:modelValue="handleChange"
+            />
 
-              <!-- CA Provided Mode -->
-              <div v-if="localSettings.certMode === 'ca-provided'" class="mt-4 space-y-3">
-                <div>
-                  <label class="block text-sm font-medium text-gray-300 mb-2">
-                    CA Certificate (.pem/.crt)
-                  </label>
-                  <div class="flex gap-2">
-                    <input
-                      v-model="localSettings.certPaths.ca_cert_path"
-                      type="text"
-                      class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-blue-500"
-                      placeholder="Select CA certificate file"
-                      readonly
-                    />
-                    <button
-                      @click="selectCACert"
-                      class="px-3 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors"
-                    >
-                      Browse
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <label class="block text-sm font-medium text-gray-300 mb-2">
-                    CA Private Key (.pem/.key)
-                  </label>
-                  <div class="flex gap-2">
-                    <input
-                      v-model="localSettings.certPaths.ca_key_path"
-                      type="text"
-                      class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-blue-500"
-                      placeholder="Select CA private key file"
-                      readonly
-                    />
-                    <button
-                      @click="selectCAKey"
-                      class="px-3 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors"
-                    >
-                      Browse
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Cert Provided Mode -->
-              <div v-if="localSettings.certMode === 'cert-provided'" class="mt-4 space-y-3">
-                <div>
-                  <label class="block text-sm font-medium text-gray-300 mb-2">
-                    Server Certificate (.pem/.crt)
-                  </label>
-                  <div class="flex gap-2">
-                    <input
-                      v-model="localSettings.certPaths.server_cert_path"
-                      type="text"
-                      class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-blue-500"
-                      placeholder="Select server certificate file"
-                      readonly
-                    />
-                    <button
-                      @click="selectServerCert"
-                      class="px-3 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors"
-                    >
-                      Browse
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <label class="block text-sm font-medium text-gray-300 mb-2">
-                    Server Private Key (.pem/.key)
-                  </label>
-                  <div class="flex gap-2">
-                    <input
-                      v-model="localSettings.certPaths.server_key_path"
-                      type="text"
-                      class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-blue-500"
-                      placeholder="Select server private key file"
-                      readonly
-                    />
-                    <button
-                      @click="selectServerKey"
-                      class="px-3 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors"
-                    >
-                      Browse
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <label class="block text-sm font-medium text-gray-300 mb-2">
-                    Certificate Bundle (.pem) - Optional
-                  </label>
-                  <div class="flex gap-2">
-                    <input
-                      v-model="localSettings.certPaths.server_bundle_path"
-                      type="text"
-                      class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-blue-500"
-                      placeholder="Select certificate bundle (optional)"
-                      readonly
-                    />
-                    <button
-                      @click="selectServerBundle"
-                      class="px-3 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors"
-                    >
-                      Browse
-                    </button>
-                  </div>
-                </div>
-              </div>
+            <!-- Auto Mode Description -->
+            <div v-if="localSettings.certMode === 'auto'" class="mt-3 p-3 bg-gray-700/50 rounded">
+              <p class="text-xs text-gray-300">
+                Automatically generates a CA certificate (persistent) and server certificate (regenerated on each start).
+              </p>
             </div>
 
-            <!-- Certificate Names (CN/SAN) - Only visible when generating certs -->
-            <div v-if="localSettings.certMode === 'auto' || localSettings.certMode === 'ca-provided'" class="border-t border-gray-700 pt-6">
-              <h4 class="text-sm font-semibold text-white mb-3">Certificate Names (CN/SAN)</h4>
-
-              <!-- Default Names Info -->
-              <div class="p-3 bg-gray-700/50 rounded mb-3">
-                <p class="text-sm font-medium text-gray-300 mb-2">Default Names:</p>
-                <p class="text-xs text-gray-400 font-mono">
-                  {{ defaultCertNames.length > 0 ? defaultCertNames.join(', ') : 'Loading...' }}
-                </p>
-                <p class="text-xs text-gray-500 mt-2">
-                  Automatically includes: localhost, machine hostname, and interface IP to default gateway
-                </p>
-              </div>
-
-              <!-- Custom Names Toggle -->
-              <label class="flex items-center gap-2 cursor-pointer mb-3">
-                <input
-                  v-model="useCustomCertNames"
-                  type="checkbox"
-                  class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500"
-                  @change="handleChange"
-                />
-                <span class="text-sm font-medium text-white">Use Custom Names</span>
-              </label>
-
-              <!-- Custom Names Input -->
-              <div v-if="useCustomCertNames">
+            <!-- CA Provided Mode -->
+            <div v-if="localSettings.certMode === 'ca-provided'" class="mt-4 space-y-3">
+              <div>
                 <label class="block text-sm font-medium text-gray-300 mb-2">
-                  DNS Names and IP Addresses (comma-separated)
+                  CA Certificate (.pem/.crt)
                 </label>
-                <input
-                  v-model="customCertNames"
-                  type="text"
-                  class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-blue-500"
-                  placeholder="e.g., example.com, 192.168.1.100, *.example.com"
-                  @input="handleChange"
-                />
-                <p class="mt-1 text-xs text-gray-400">
-                  Enter DNS names or IP addresses separated by commas. These will be used as Subject Alternative Names (SAN).
-                </p>
+                <div class="flex gap-2">
+                  <input
+                    v-model="localSettings.certPaths.ca_cert_path"
+                    type="text"
+                    class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                    placeholder="Select CA certificate file"
+                    readonly
+                  />
+                  <button @click="selectCACert" class="px-3 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors">Browse</button>
+                </div>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-2">
+                  CA Private Key (.pem/.key)
+                </label>
+                <div class="flex gap-2">
+                  <input
+                    v-model="localSettings.certPaths.ca_key_path"
+                    type="text"
+                    class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                    placeholder="Select CA private key file"
+                    readonly
+                  />
+                  <button @click="selectCAKey" class="px-3 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors">Browse</button>
+                </div>
               </div>
             </div>
 
-            <!-- CA Certificate Section - Only visible when generating certs -->
-            <div v-if="localSettings.certMode === 'auto' || localSettings.certMode === 'ca-provided'" class="border-t border-gray-700 pt-6">
-              <h4 class="text-sm font-semibold text-white mb-3">CA Certificate</h4>
-
-              <!-- CA Info -->
-              <div class="p-3 bg-gray-700/50 rounded mb-3">
-                <p class="text-sm text-gray-300">
-                  <span class="font-medium">Status:</span>
-                  <span v-if="isLoadingCAInfo" class="ml-2">Loading...</span>
-                  <span v-else-if="caInfo?.exists" class="ml-2 text-green-400">Generated</span>
-                  <span v-else class="ml-2 text-gray-400">Not generated</span>
-                </p>
-                <p v-if="caInfo?.exists && caInfo?.generated" class="text-sm text-gray-300 mt-1">
-                  <span class="font-medium">Generated:</span>
-                  <span class="ml-2">{{ formatTimestamp(caInfo.generated) }}</span>
-                </p>
+            <!-- Cert Provided Mode -->
+            <div v-if="localSettings.certMode === 'cert-provided'" class="mt-4 space-y-3">
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-2">Server Certificate (.pem/.crt)</label>
+                <div class="flex gap-2">
+                  <input v-model="localSettings.certPaths.server_cert_path" type="text" class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-blue-500" placeholder="Select server certificate file" readonly />
+                  <button @click="selectServerCert" class="px-3 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors">Browse</button>
+                </div>
               </div>
-
-              <!-- CA Actions -->
-              <div class="flex flex-wrap gap-2">
-                <button
-                  @click="confirmRegenerateCA"
-                  class="px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white text-sm rounded transition-colors flex items-center gap-2"
-                >
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                  Regenerate CA
-                </button>
-                <button
-                  @click="downloadCA"
-                  :disabled="!caInfo?.exists"
-                  :class="[
-                    'px-3 py-2 text-white text-sm rounded transition-colors flex items-center gap-2',
-                    caInfo?.exists
-                      ? 'bg-blue-600 hover:bg-blue-700'
-                      : 'bg-gray-600 cursor-not-allowed'
-                  ]"
-                >
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                  </svg>
-                  Download CA Certificate
-                </button>
-                <button
-                  @click="confirmInstallCASystem"
-                  :disabled="!caInfo?.exists"
-                  :class="[
-                    'px-3 py-2 text-white text-sm rounded transition-colors flex items-center gap-2',
-                    caInfo?.exists
-                      ? 'bg-green-600 hover:bg-green-700'
-                      : 'bg-gray-600 cursor-not-allowed'
-                  ]"
-                >
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                  </svg>
-                  Install CA (System-Wide)
-                </button>
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-2">Server Private Key (.pem/.key)</label>
+                <div class="flex gap-2">
+                  <input v-model="localSettings.certPaths.server_key_path" type="text" class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-blue-500" placeholder="Select server private key file" readonly />
+                  <button @click="selectServerKey" class="px-3 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors">Browse</button>
+                </div>
               </div>
-
-              <div class="mt-3 p-3 bg-blue-900/20 border border-blue-800 rounded">
-                <p class="text-xs text-blue-300">
-                  Click "Install CA (System-Wide)" to automatically install the CA certificate at the system level. This requires administrator/root privileges and will trust the certificate for all applications.
-                </p>
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-2">Certificate Bundle (.pem) - Optional</label>
+                <div class="flex gap-2">
+                  <input v-model="localSettings.certPaths.server_bundle_path" type="text" class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-blue-500" placeholder="Select certificate bundle (optional)" readonly />
+                  <button @click="selectServerBundle" class="px-3 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors">Browse</button>
+                </div>
               </div>
             </div>
+          </div>
 
-            <!-- Error Message -->
-            <div v-if="errorMessage" class="p-3 bg-red-900/20 border border-red-800 rounded">
-              <p class="text-sm text-red-300">{{ errorMessage }}</p>
+          <!-- Certificate Names (CN/SAN) -->
+          <div v-if="localSettings.certMode === 'auto' || localSettings.certMode === 'ca-provided'" class="border-t border-gray-700 pt-6">
+            <h4 class="text-sm font-semibold text-white mb-3">Certificate Names (CN/SAN)</h4>
+            <div class="p-3 bg-gray-700/50 rounded mb-3">
+              <p class="text-sm font-medium text-gray-300 mb-2">Default Names:</p>
+              <p class="text-xs text-gray-400 font-mono">
+                {{ defaultCertNames.length > 0 ? defaultCertNames.join(', ') : 'Loading...' }}
+              </p>
+              <p class="text-xs text-gray-500 mt-2">
+                Automatically includes: localhost, machine hostname, and interface IP to default gateway
+              </p>
             </div>
+            <label class="flex items-center gap-2 cursor-pointer mb-3">
+              <input v-model="useCustomCertNames" type="checkbox" class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500" @change="handleChange" />
+              <span class="text-sm font-medium text-white">Use Custom Names</span>
+            </label>
+            <div v-if="useCustomCertNames">
+              <label class="block text-sm font-medium text-gray-300 mb-2">DNS Names and IP Addresses (comma-separated)</label>
+              <input v-model="customCertNames" type="text" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:border-blue-500" placeholder="e.g., example.com, 192.168.1.100, *.example.com" @input="handleChange" />
+              <p class="mt-1 text-xs text-gray-400">Enter DNS names or IP addresses separated by commas. These will be used as Subject Alternative Names (SAN).</p>
+            </div>
+          </div>
+
+          <!-- CA Certificate Status & Actions -->
+          <div v-if="localSettings.certMode === 'auto' || localSettings.certMode === 'ca-provided'" class="border-t border-gray-700 pt-6">
+            <h4 class="text-sm font-semibold text-white mb-3">CA Certificate</h4>
+            <div class="p-3 bg-gray-700/50 rounded mb-4">
+              <p class="text-sm text-gray-300">
+                <span class="font-medium">Status:</span>
+                <span v-if="isLoadingCAInfo" class="ml-2">Loading...</span>
+                <span v-else-if="caInfo?.exists" class="ml-2 text-green-400">Generated</span>
+                <span v-else class="ml-2 text-gray-400">Not generated</span>
+              </p>
+              <p v-if="caInfo?.exists && caInfo?.generated" class="text-sm text-gray-300 mt-1">
+                <span class="font-medium">Generated:</span>
+                <span class="ml-2">{{ formatTimestamp(caInfo.generated) }}</span>
+              </p>
+            </div>
+
+            <div class="flex flex-wrap gap-2">
+              <button @click="confirmRegenerateCA" class="px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white text-sm rounded transition-colors flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                Regenerate CA
+              </button>
+              <button
+                @click="downloadCA"
+                :disabled="!caInfo?.exists"
+                :class="['px-3 py-2 text-white text-sm rounded transition-colors flex items-center gap-2', caInfo?.exists ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-600 cursor-not-allowed']"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                Download CA Cert
+              </button>
+              <button
+                @click="confirmInstallCASystem"
+                :disabled="!caInfo?.exists"
+                :class="['px-3 py-2 text-white text-sm rounded transition-colors flex items-center gap-2', caInfo?.exists ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-600 cursor-not-allowed']"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                Install CA (System-Wide)
+              </button>
+            </div>
+
+            <div class="mt-3 p-3 bg-blue-900/20 border border-blue-800 rounded">
+              <p class="text-xs text-blue-300">
+                <strong class="text-blue-200">System-Wide Install</strong> adds the CA to the OS trust store (requires admin/root — uses polkit on Linux, UAC elevation on Windows, sudo on macOS). All applications will trust HTTPS and SOCKS5-intercepted connections signed by this CA.
+              </p>
+            </div>
+          </div>
+
+          <!-- Error Message -->
+          <div v-if="errorMessage" class="p-3 bg-red-900/20 border border-red-800 rounded">
+            <p class="text-sm text-red-300">{{ errorMessage }}</p>
           </div>
         </div>
       </CollapsibleSection>
