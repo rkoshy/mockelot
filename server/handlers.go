@@ -354,10 +354,20 @@ func (h *ResponseHandler) CheckOverlaySimMode(r *http.Request) (models.OverlaySi
 	return cfg, true
 }
 
-// FindEndpointID returns the ID of the first enabled endpoint that matches r's
-// domain and path prefix, or "system-socks5-proxy" if no endpoint matches.
-// Used by the SOCKS5 WebSocket handler to log frames under the correct endpoint tab.
-func (h *ResponseHandler) FindEndpointID(r *http.Request) string {
+// EndpointMatch contains the result of matching a request to an endpoint,
+// including the translated path and any regex capture groups.
+// Used by the SOCKS5 WebSocket handler to route connections through proxy endpoints.
+type EndpointMatch struct {
+	Endpoint      *models.Endpoint
+	TranslatedPath string
+	CaptureGroups []string
+}
+
+// FindEndpointMatch returns the first enabled endpoint that matches r's domain
+// and path prefix, along with the translated path and capture groups.
+// Returns nil if no endpoint matches.
+// Used by the SOCKS5 WebSocket handler to route and log connections correctly.
+func (h *ResponseHandler) FindEndpointMatch(r *http.Request) *EndpointMatch {
 	h.configMutex.RLock()
 	defer h.configMutex.RUnlock()
 
@@ -372,11 +382,17 @@ func (h *ResponseHandler) FindEndpointID(r *http.Request) string {
 		if !h.matchesDomain(endpoint, requestDomain) {
 			continue
 		}
+
 		var prefixMatches bool
+		var captureGroups []string
 		if strings.HasPrefix(endpoint.PathPrefix, "^") {
 			re, err := h.compileRegex(endpoint.PathPrefix)
 			if err == nil {
-				prefixMatches = re.MatchString(requestPath)
+				matches := re.FindStringSubmatch(requestPath)
+				if matches != nil {
+					prefixMatches = true
+					captureGroups = matches
+				}
 			}
 		} else if endpoint.PathPrefix == "/" {
 			prefixMatches = true
@@ -384,9 +400,65 @@ func (h *ResponseHandler) FindEndpointID(r *http.Request) string {
 			prefixMatches = requestPath == endpoint.PathPrefix ||
 				strings.HasPrefix(requestPath, endpoint.PathPrefix+"/")
 		}
-		if prefixMatches {
-			return endpoint.ID
+
+		if !prefixMatches {
+			continue
 		}
+
+		// Compute translated path (same logic as HandleRequest)
+		var translatedPath string
+		switch endpoint.TranslationMode {
+		case models.TranslationModeNone:
+			translatedPath = requestPath
+		case models.TranslationModeStrip:
+			if strings.HasPrefix(endpoint.PathPrefix, "^") {
+				re, err := h.compileRegex(endpoint.PathPrefix)
+				if err != nil {
+					translatedPath = requestPath
+				} else {
+					matched := re.FindString(requestPath)
+					if matched != "" {
+						translatedPath = strings.TrimPrefix(requestPath, matched)
+					} else {
+						translatedPath = requestPath
+					}
+				}
+			} else {
+				translatedPath = strings.TrimPrefix(requestPath, endpoint.PathPrefix)
+			}
+			if !strings.HasPrefix(translatedPath, "/") {
+				translatedPath = "/" + translatedPath
+			}
+		case models.TranslationModeTranslate:
+			if endpoint.TranslatePattern != "" {
+				re, err := h.compileRegex(endpoint.TranslatePattern)
+				if err != nil {
+					translatedPath = requestPath
+				} else {
+					translatedPath = re.ReplaceAllString(requestPath, endpoint.TranslateReplace)
+				}
+			} else {
+				translatedPath = requestPath
+			}
+		default:
+			translatedPath = requestPath
+		}
+
+		return &EndpointMatch{
+			Endpoint:       endpoint,
+			TranslatedPath: translatedPath,
+			CaptureGroups:  captureGroups,
+		}
+	}
+	return nil
+}
+
+// FindEndpointID returns the ID of the first enabled endpoint that matches r's
+// domain and path prefix, or "system-socks5-proxy" if no endpoint matches.
+// Used by the SOCKS5 WebSocket handler to log frames under the correct endpoint tab.
+func (h *ResponseHandler) FindEndpointID(r *http.Request) string {
+	if match := h.FindEndpointMatch(r); match != nil {
+		return match.Endpoint.ID
 	}
 	return "system-socks5-proxy"
 }

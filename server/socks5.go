@@ -798,6 +798,35 @@ func makeWSEvent(msgType int, data []byte, direction string, connStart time.Time
 	return event
 }
 
+// buildWSBackendURL constructs the WebSocket backend URL for a SOCKS5-tunneled
+// WebSocket connection.  If a proxy endpoint matched the request, its BackendURL
+// (with path translation and capture-group substitution) is used; otherwise the
+// original target domain is dialed directly.
+func (s *SOCKS5Server) buildWSBackendURL(match *EndpointMatch, req *http.Request, targetAddr string, targetPort uint16, isTLS bool) string {
+	// If a proxy endpoint matched, use its backend_url
+	if match != nil && match.Endpoint.Type == models.EndpointTypeProxy && match.Endpoint.ProxyConfig != nil {
+		backendRaw := match.Endpoint.ProxyConfig.BackendURL
+		// Substitute capture groups ($1, $2, …) in backend URL template
+		backendRaw = substituteCaptureGroups(backendRaw, match.CaptureGroups)
+		// Resolve scheme-relative URLs (//host) using the incoming request
+		backendURL := resolveBackendURL(backendRaw, req, true)
+		// Ensure ws/wss scheme
+		backendURL = strings.Replace(backendURL, "http://", "ws://", 1)
+		backendURL = strings.Replace(backendURL, "https://", "wss://", 1)
+		// Avoid double-slash when backend URL has trailing slash
+		backendURL = strings.TrimRight(backendURL, "/")
+		backendURL += match.TranslatedPath
+		return backendURL
+	}
+
+	// No proxy endpoint matched — dial the original target directly
+	scheme := "ws"
+	if isTLS {
+		scheme = "wss"
+	}
+	return fmt.Sprintf("%s://%s:%d%s", scheme, targetAddr, targetPort, req.URL.Path)
+}
+
 // handleInterceptedWebSocket relays a WebSocket connection that was detected inside
 // an already-TLS-terminated SOCKS5 tunnel (port 443 / intercepted domain).
 func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientReader *bufio.Reader, req *http.Request, targetAddr string, targetPort uint16) {
@@ -805,12 +834,21 @@ func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientRea
 	startTime := time.Now()
 	status101 := http.StatusSwitchingProtocols
 
-	endpointID := s.responseHandler.FindEndpointID(req)
+	match := s.responseHandler.FindEndpointMatch(req)
+	endpointID := "system-socks5-proxy"
+	if match != nil {
+		endpointID = match.Endpoint.ID
+		log.Printf("SOCKS5 WSS [%s] matched endpoint %q (%s), translated=%s",
+			targetAddr, match.Endpoint.Name, match.Endpoint.ID, match.TranslatedPath)
+	} else {
+		log.Printf("SOCKS5 WSS [%s] no endpoint match for host=%s path=%s",
+			targetAddr, req.Host, req.URL.Path)
+	}
 
 	// ── Step 1: dial the backend FIRST ───────────────────────────────────────
 	// Dialling before upgrading the client means a backend failure sends HTTP 502
 	// rather than a WebSocket close frame (client never sees onopen+onclose).
-	backendURL := fmt.Sprintf("wss://%s:%d%s", targetAddr, targetPort, req.URL.Path)
+	backendURL := s.buildWSBackendURL(match, req, targetAddr, targetPort, true)
 	if req.URL.RawQuery != "" {
 		backendURL += "?" + req.URL.RawQuery
 	}
@@ -820,6 +858,56 @@ func (s *SOCKS5Server) handleInterceptedWebSocket(clientConn net.Conn, clientRea
 	backendWS, backendResp, err := websocket.DefaultDialer.Dial(backendURL, backendHeaders)
 	if err != nil {
 		log.Printf("SOCKS5 WSS [%s] backend dial FAILED: %v", targetAddr, err)
+		// Log the failed WebSocket attempt under the matched endpoint
+		if s.requestLogger != nil {
+			status502 := http.StatusBadGateway
+			failLog := models.RequestLog{
+				ID:          connID,
+				Timestamp:   startTime.Format(time.RFC3339),
+				EndpointID:  endpointID,
+				IsWebSocket: true,
+				SOCKS5Info: &models.SOCKS5RequestInfo{
+					TargetHost:    targetAddr,
+					TargetPort:    int(targetPort),
+					Protocol:      "HTTPS",
+					IsIntercepted: true,
+				},
+			}
+			failLog.ClientRequest.Method = req.Method
+			failLog.ClientRequest.FullURL = fmt.Sprintf("wss://%s:%d%s", targetAddr, targetPort, req.URL.Path)
+			failLog.ClientRequest.Path = req.URL.Path
+			failLog.ClientRequest.Headers = map[string][]string(req.Header)
+			if len(req.URL.Query()) > 0 {
+				qp := make(map[string][]string)
+				for k, v := range req.URL.Query() {
+					qp[k] = v
+				}
+				failLog.ClientRequest.QueryParams = qp
+			}
+			failLog.ClientResponse.StatusCode = &status502
+			failLog.ClientResponse.StatusText = fmt.Sprintf("Backend dial failed: %v", err)
+			// Include the backend URL we tried to reach
+			backendReqEntry := struct {
+				Method      string              `json:"method"`
+				FullURL     string              `json:"full_url"`
+				Path        string              `json:"path"`
+				QueryParams map[string][]string `json:"query_params,omitempty"`
+				Headers     map[string][]string `json:"headers,omitempty"`
+				Body        string              `json:"body,omitempty"`
+			}{
+				Method:  req.Method,
+				FullURL: backendURL,
+				Path:    req.URL.Path,
+				Headers: map[string][]string(backendHeaders),
+			}
+			failLog.BackendRequest = &backendReqEntry
+			// Mark the WS connection as immediately closed
+			failLog.WSClosedAt = failLog.Timestamp
+			failLog.WSCloseCode = 502
+			failLog.WSCloseReason = err.Error()
+			s.requestLogger.LogRequest(failLog)
+			log.Printf("SOCKS5 WSS [%s] logged failed WS under endpoint %s", targetAddr, endpointID)
+		}
 		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
 		return
 	}
@@ -975,10 +1063,19 @@ func (s *SOCKS5Server) handlePlainWebSocket(clientConn net.Conn, clientReader *b
 	startTime := time.Now()
 	status101 := http.StatusSwitchingProtocols
 
-	endpointID := s.responseHandler.FindEndpointID(req)
+	match := s.responseHandler.FindEndpointMatch(req)
+	endpointID := "system-socks5-proxy"
+	if match != nil {
+		endpointID = match.Endpoint.ID
+		log.Printf("SOCKS5 WS [%s] matched endpoint %q (%s), translated=%s",
+			targetAddr, match.Endpoint.Name, match.Endpoint.ID, match.TranslatedPath)
+	} else {
+		log.Printf("SOCKS5 WS [%s] no endpoint match for host=%s path=%s",
+			targetAddr, req.Host, req.URL.Path)
+	}
 
 	// ── Step 1: dial backend first ────────────────────────────────────────────
-	backendURL := fmt.Sprintf("ws://%s:%d%s", targetAddr, targetPort, req.URL.Path)
+	backendURL := s.buildWSBackendURL(match, req, targetAddr, targetPort, false)
 	if req.URL.RawQuery != "" {
 		backendURL += "?" + req.URL.RawQuery
 	}
@@ -988,6 +1085,54 @@ func (s *SOCKS5Server) handlePlainWebSocket(clientConn net.Conn, clientReader *b
 	backendWS, backendResp, err := websocket.DefaultDialer.Dial(backendURL, backendHeaders)
 	if err != nil {
 		log.Printf("SOCKS5 WS [%s] backend dial FAILED: %v", targetAddr, err)
+		// Log the failed WebSocket attempt under the matched endpoint
+		if s.requestLogger != nil {
+			status502 := http.StatusBadGateway
+			failLog := models.RequestLog{
+				ID:          connID,
+				Timestamp:   startTime.Format(time.RFC3339),
+				EndpointID:  endpointID,
+				IsWebSocket: true,
+				SOCKS5Info: &models.SOCKS5RequestInfo{
+					TargetHost:    targetAddr,
+					TargetPort:    int(targetPort),
+					Protocol:      "HTTP",
+					IsIntercepted: false,
+				},
+			}
+			failLog.ClientRequest.Method = req.Method
+			failLog.ClientRequest.FullURL = fmt.Sprintf("ws://%s:%d%s", targetAddr, targetPort, req.URL.Path)
+			failLog.ClientRequest.Path = req.URL.Path
+			failLog.ClientRequest.Headers = map[string][]string(req.Header)
+			if len(req.URL.Query()) > 0 {
+				qp := make(map[string][]string)
+				for k, v := range req.URL.Query() {
+					qp[k] = v
+				}
+				failLog.ClientRequest.QueryParams = qp
+			}
+			failLog.ClientResponse.StatusCode = &status502
+			failLog.ClientResponse.StatusText = fmt.Sprintf("Backend dial failed: %v", err)
+			backendReqEntry := struct {
+				Method      string              `json:"method"`
+				FullURL     string              `json:"full_url"`
+				Path        string              `json:"path"`
+				QueryParams map[string][]string `json:"query_params,omitempty"`
+				Headers     map[string][]string `json:"headers,omitempty"`
+				Body        string              `json:"body,omitempty"`
+			}{
+				Method:  req.Method,
+				FullURL: backendURL,
+				Path:    req.URL.Path,
+				Headers: map[string][]string(backendHeaders),
+			}
+			failLog.BackendRequest = &backendReqEntry
+			failLog.WSClosedAt = failLog.Timestamp
+			failLog.WSCloseCode = 502
+			failLog.WSCloseReason = err.Error()
+			s.requestLogger.LogRequest(failLog)
+			log.Printf("SOCKS5 WS [%s] logged failed WS under endpoint %s", targetAddr, endpointID)
+		}
 		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
 		return
 	}

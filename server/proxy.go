@@ -56,7 +56,7 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, endpoin
 	// Build backend URL with capture group substitution.
 	// resolveBackendURL handles scheme-relative URLs ("//host") used by overlay endpoints
 	// so the correct scheme (http/https) is inferred from the incoming request.
-	backendURLStr := resolveBackendURL(p.substituteCaptureGroups(cfg.BackendURL, captureGroups), r, false)
+	backendURLStr := resolveBackendURL(substituteCaptureGroups(cfg.BackendURL, captureGroups), r, false)
 	backendURL, err := url.Parse(backendURLStr)
 	if err != nil {
 		http.Error(w, "Invalid backend URL", http.StatusInternalServerError)
@@ -440,14 +440,14 @@ func (p *ProxyHandler) matchesStatusPattern(code int, pattern string) bool {
 }
 
 // substituteCaptureGroups replaces $1, $2, etc. in the URL with capture group values
-func (p *ProxyHandler) substituteCaptureGroups(urlTemplate string, captureGroups []string) string {
+// substituteCaptureGroups replaces $1, $2, … placeholders in urlTemplate with
+// the corresponding regex capture groups.  captureGroups[0] is the full match.
+func substituteCaptureGroups(urlTemplate string, captureGroups []string) string {
 	if len(captureGroups) == 0 {
 		return urlTemplate
 	}
 
 	result := urlTemplate
-	// captureGroups[0] is the full match, captureGroups[1]... are the actual groups
-	// We support $1, $2, $3, etc. for the capture groups
 	for i := 1; i < len(captureGroups); i++ {
 		placeholder := fmt.Sprintf("$%d", i)
 		result = strings.ReplaceAll(result, placeholder, captureGroups[i])
@@ -562,7 +562,7 @@ func (p *ProxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request, e
 
 	// Connect to backend WebSocket with capture group substitution.
 	// resolveBackendURL handles scheme-relative URLs; forWebSocket=true selects ws/wss.
-	backendURL := resolveBackendURL(p.substituteCaptureGroups(endpoint.ProxyConfig.BackendURL, captureGroups), r, true)
+	backendURL := resolveBackendURL(substituteCaptureGroups(endpoint.ProxyConfig.BackendURL, captureGroups), r, true)
 	backendURL = strings.Replace(backendURL, "http://", "ws://", 1)
 	backendURL = strings.Replace(backendURL, "https://", "wss://", 1)
 	backendURL += translatedPath

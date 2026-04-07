@@ -3579,8 +3579,8 @@ func (a *App) GetSOCKS5Domains() []models.SOCKS5DomainInfo {
 
 	// Aggregate from request logs
 	for _, log := range a.requestLogs {
-		// Only process SOCKS5 proxy endpoint logs
-		if log.EndpointID == "system-socks5-proxy" && log.SOCKS5Info != nil {
+		// Process any log that came through the SOCKS5 tunnel
+		if log.SOCKS5Info != nil {
 			domain := log.SOCKS5Info.TargetHost
 			if domain == "" {
 				continue
