@@ -1366,20 +1366,25 @@ func (s *SOCKS5Server) handleInterceptedHTTPS(conn net.Conn, targetAddr string, 
 			return
 		}
 
-		// Create a response recorder to capture the response
-		rec := newResponseRecorder()
+		// Use a streaming-capable writer so SSE responses can be relayed directly.
+		sw := newSocks5StreamWriter(tlsConn)
 
 		// Pass request to ResponseHandler
-		s.responseHandler.HandleRequest(rec, req)
+		s.responseHandler.HandleRequest(sw, req)
 
-		// Write response back through TLS tunnel
-		if err := s.writeResponse(tlsConn, rec); err != nil {
+		if sw.isStreaming() {
+			// SSE or other streaming response — the connection is consumed; exit loop.
+			return
+		}
+
+		// Non-streaming: write buffered response with correct Content-Length.
+		if err := sw.writeBuffered(); err != nil {
 			log.Printf("SOCKS5 write response error (intercepted): %v", err)
 			return
 		}
 
 		// Check if connection should be closed
-		if req.Header.Get("Connection") == "close" || rec.Header().Get("Connection") == "close" {
+		if req.Header.Get("Connection") == "close" || sw.Header().Get("Connection") == "close" {
 			return
 		}
 	}
@@ -1509,11 +1514,11 @@ func (s *SOCKS5Server) handleHTTP(conn net.Conn, targetAddr string, targetPort u
 			return
 		}
 
-		// Create a response recorder to capture the response
-		rec := newResponseRecorder()
+		// Use a streaming-capable writer so SSE responses can be relayed directly.
+		sw := newSocks5StreamWriter(conn)
 
 		// Pass request to ResponseHandler
-		s.responseHandler.HandleRequest(rec, req)
+		s.responseHandler.HandleRequest(sw, req)
 
 		// Log HTTP request (plain HTTP through SOCKS5)
 		if s.requestLogger != nil {
@@ -1534,14 +1539,19 @@ func (s *SOCKS5Server) handleHTTP(conn net.Conn, targetAddr string, targetPort u
 			s.requestLogger.LogRequest(requestLog)
 		}
 
-		// Write response back through tunnel
-		if err := s.writeResponse(conn, rec); err != nil {
+		if sw.isStreaming() {
+			// SSE or other streaming response — the connection is consumed; exit loop.
+			return
+		}
+
+		// Non-streaming: write buffered response with correct Content-Length.
+		if err := sw.writeBuffered(); err != nil {
 			log.Printf("SOCKS5 write response error: %v", err)
 			return
 		}
 
 		// Check if connection should be closed
-		if req.Header.Get("Connection") == "close" || rec.Header().Get("Connection") == "close" {
+		if req.Header.Get("Connection") == "close" || sw.Header().Get("Connection") == "close" {
 			return
 		}
 	}
@@ -1594,6 +1604,125 @@ func (s *SOCKS5Server) writeResponse(conn net.Conn, rec *responseRecorder) error
 
 	// Write to connection
 	_, err := conn.Write(buf.Bytes())
+	return err
+}
+
+// socks5StreamWriter is an http.ResponseWriter + http.Flusher for SOCKS5 tunnels.
+//
+// It operates in two modes:
+//   - Buffered (default): Header/WriteHeader store state; Write accumulates in a
+//     bytes.Buffer.  Call writeBuffered() to finalise the response with correct
+//     Content-Length (same behaviour as the old responseRecorder + writeResponse).
+//   - Streaming (after first Flush): the HTTP status line and headers are written
+//     directly to the underlying net.Conn, then every subsequent Write goes straight
+//     to the conn.  This is used by SSE and other long-lived streaming responses.
+//
+// After HandleRequest returns, call isStreaming() to decide which path to take:
+//
+//	if sw.isStreaming() { return }   // SSE consumed the connection — exit the loop
+//	sw.writeBuffered()               // non-streaming — serialise with Content-Length
+type socks5StreamWriter struct {
+	conn       net.Conn
+	header     http.Header
+	statusCode int
+	body       bytes.Buffer
+	streaming  bool
+}
+
+func newSocks5StreamWriter(conn net.Conn) *socks5StreamWriter {
+	return &socks5StreamWriter{
+		conn:   conn,
+		header: make(http.Header),
+	}
+}
+
+func (sw *socks5StreamWriter) Header() http.Header { return sw.header }
+
+func (sw *socks5StreamWriter) WriteHeader(code int) {
+	if sw.statusCode == 0 {
+		sw.statusCode = code
+	}
+}
+
+func (sw *socks5StreamWriter) Write(data []byte) (int, error) {
+	if sw.streaming {
+		return sw.conn.Write(data)
+	}
+	return sw.body.Write(data)
+}
+
+// Flush transitions to streaming mode on the first call: it writes the HTTP
+// status line and sanitised headers to the conn, then flushes any buffered body
+// bytes.  Subsequent Write calls go directly to the conn.  net.Conn.Write is
+// already unbuffered so there is nothing to flush after that.
+func (sw *socks5StreamWriter) Flush() {
+	if sw.streaming {
+		return
+	}
+	sw.streaming = true
+
+	statusCode := sw.statusCode
+	if statusCode == 0 {
+		statusCode = http.StatusOK
+	}
+	fmt.Fprintf(sw.conn, "HTTP/1.1 %d %s\r\n", statusCode, http.StatusText(statusCode))
+
+	// Go's http.Client already decoded chunked encoding before we saw the bytes,
+	// so strip framing headers — the browser will read until the connection closes.
+	for key, values := range sw.header {
+		if strings.EqualFold(key, "Transfer-Encoding") || strings.EqualFold(key, "Content-Length") {
+			continue
+		}
+		for _, value := range values {
+			fmt.Fprintf(sw.conn, "%s: %s\r\n", key, value)
+		}
+	}
+	fmt.Fprintf(sw.conn, "\r\n")
+
+	if sw.body.Len() > 0 {
+		sw.conn.Write(sw.body.Bytes())
+		sw.body.Reset()
+	}
+}
+
+// isStreaming reports whether the writer has entered streaming mode.
+func (sw *socks5StreamWriter) isStreaming() bool { return sw.streaming }
+
+// writeBuffered serialises the accumulated response to the conn.  It strips
+// Transfer-Encoding and corrects Content-Length to the actual body length —
+// exactly what the old writeResponse() did.  Must only be called when
+// isStreaming() is false.
+func (sw *socks5StreamWriter) writeBuffered() error {
+	var buf bytes.Buffer
+
+	statusCode := sw.statusCode
+	if statusCode == 0 {
+		statusCode = http.StatusOK
+	}
+	fmt.Fprintf(&buf, "HTTP/1.1 %d %s\r\n", statusCode, http.StatusText(statusCode))
+
+	bodyBytes := sw.body.Bytes()
+	hasContentLength := false
+	for key, values := range sw.header {
+		if strings.EqualFold(key, "Transfer-Encoding") {
+			continue
+		}
+		if strings.EqualFold(key, "Content-Length") {
+			hasContentLength = true
+			fmt.Fprintf(&buf, "Content-Length: %d\r\n", len(bodyBytes))
+			continue
+		}
+		for _, value := range values {
+			fmt.Fprintf(&buf, "%s: %s\r\n", key, value)
+		}
+	}
+	if !hasContentLength && len(bodyBytes) > 0 {
+		fmt.Fprintf(&buf, "Content-Length: %d\r\n", len(bodyBytes))
+	}
+	buf.WriteString("\r\n")
+	buf.Write(bodyBytes)
+
+	_, err := sw.conn.Write(buf.Bytes())
 	return err
 }
 

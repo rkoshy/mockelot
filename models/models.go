@@ -58,6 +58,19 @@ const (
 	WSDirectionRecv = "recv" // server → client  (↓)
 )
 
+// SSEEvent represents a single Server-Sent Events event captured during a proxied SSE stream
+type SSEEvent struct {
+	ID        string `json:"id"`
+	Timestamp string `json:"timestamp"`              // ISO8601/RFC3339Nano
+	OffsetMs  int64  `json:"offset_ms"`              // ms elapsed since the SSE stream opened
+	EventType string `json:"event_type"`             // "message" (default) or custom event: field value
+	EventID   string `json:"event_id,omitempty"`     // SSE id: field value
+	Data      string `json:"data"`                   // Joined data: field lines
+	DataSize  int    `json:"data_size"`              // Total size of data in bytes
+	RawText   string `json:"raw_text"`               // Full unparsed event block for display
+	Retry     int    `json:"retry,omitempty"`        // SSE retry: field in ms (if present)
+}
+
 // WebSocketEvent represents a single WebSocket frame captured during a proxied connection
 type WebSocketEvent struct {
 	ID          string `json:"id"`
@@ -630,6 +643,14 @@ type RequestLogSummary struct {
 	WSCloseCode   int    `json:"ws_close_code,omitempty"`          // WebSocket close code (0 if not a clean close)
 	WSOpenedAt    string `json:"ws_opened_at,omitempty"`           // ISO8601 timestamp when upgrade completed
 	WSClosedAt    string `json:"ws_closed_at,omitempty"`           // ISO8601 timestamp when connection closed
+
+	// SSE stream live-tap fields — updated continuously while the stream is open
+	IsSSE         bool   `json:"is_sse,omitempty"`                // true when this entry is an SSE stream
+	SSEIsOpen     bool   `json:"sse_is_open"`                     // true while the SSE stream is active (no omitempty — false must serialize)
+	SSEEventCount int    `json:"sse_event_count"`                 // Running count of SSE events received
+	SSEBytesTotal int64  `json:"sse_bytes_total,omitempty"`       // Total bytes across all SSE events
+	SSEOpenedAt   string `json:"sse_opened_at,omitempty"`         // ISO8601 timestamp when SSE stream opened
+	SSEClosedAt   string `json:"sse_closed_at,omitempty"`         // ISO8601 timestamp when SSE stream closed
 }
 
 // RequestLog represents a detailed log of an incoming HTTP request and response
@@ -658,6 +679,16 @@ type RequestLog struct {
 	WSFramesSent  int    `json:"ws_frames_sent,omitempty"`
 	WSFramesRecv  int    `json:"ws_frames_recv,omitempty"`
 	WSBytesTotal  int64  `json:"ws_bytes_total,omitempty"`
+
+	// SSE stream data (only set when IsSSE == true)
+	IsSSE         bool       `json:"is_sse,omitempty"`
+	SSEEvents     []SSEEvent `json:"sse_events,omitempty"`
+	// SSE running state — updated by AppendSSEEvent and CloseSSEStream
+	SSEOpenedAt   string `json:"sse_opened_at,omitempty"`
+	SSEClosedAt   string `json:"sse_closed_at,omitempty"`
+	SSECloseError string `json:"sse_close_error,omitempty"`
+	SSEEventCount int    `json:"sse_event_count"`
+	SSEBytesTotal int64  `json:"sse_bytes_total"`
 
 	// Client side: Client → Server
 	ClientRequest struct {

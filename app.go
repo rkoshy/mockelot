@@ -3688,6 +3688,9 @@ func (a *App) ValidateCORSHeaderExpression(expression string) error {
 // Older events are evicted using copy-based ring eviction to allow GC to reclaim memory.
 const maxWSEvents = 10000
 
+// maxSSEEvents is the maximum number of SSE events retained per stream connection.
+const maxSSEEvents = 10000
+
 // LogRequest implements the server.RequestLogger interface
 func (a *App) LogRequest(log models.RequestLog) {
 	var summary models.RequestLogSummary
@@ -3970,6 +3973,125 @@ func (a *App) buildWSSummary(l *models.RequestLog) models.RequestLogSummary {
 	return summary
 }
 
+// MarkSSEOpen implements the server.RequestLogger interface.
+// Called at the start of streamSSEResponse to mark the log entry as an SSE stream.
+func (a *App) MarkSSEOpen(connectionID string, openedAt string) {
+	var summary *models.RequestLogSummary
+
+	a.logMutex.Lock()
+	for i := range a.requestLogs {
+		if a.requestLogs[i].ID == connectionID {
+			l := &a.requestLogs[i]
+			l.IsSSE = true
+			l.SSEOpenedAt = openedAt
+			s := a.buildSSESummary(l)
+			summary = &s
+			break
+		}
+	}
+	a.logMutex.Unlock()
+
+	if summary != nil {
+		a.requestLogQueueMutex.Lock()
+		a.requestLogSummaryQueue = append(a.requestLogSummaryQueue, *summary)
+		a.requestLogQueueMutex.Unlock()
+	}
+}
+
+// AppendSSEEvent implements the server.RequestLogger interface.
+// It appends a parsed SSE event, updates running counters, and enqueues a throttled
+// summary update so the traffic log row reflects live activity.
+func (a *App) AppendSSEEvent(connectionID string, event models.SSEEvent) {
+	var summary *models.RequestLogSummary
+
+	a.logMutex.Lock()
+	for i := range a.requestLogs {
+		if a.requestLogs[i].ID == connectionID {
+			l := &a.requestLogs[i]
+			// Ring eviction: use copy so the GC can reclaim dropped elements.
+			if len(l.SSEEvents) >= maxSSEEvents {
+				copy(l.SSEEvents[0:], l.SSEEvents[1:])
+				l.SSEEvents[maxSSEEvents-1] = event
+			} else {
+				l.SSEEvents = append(l.SSEEvents, event)
+			}
+			l.SSEEventCount++
+			l.SSEBytesTotal += int64(event.DataSize)
+			s := a.buildSSESummary(l)
+			summary = &s
+			break
+		}
+	}
+	a.logMutex.Unlock()
+
+	// Throttled enqueue: at most one summary update per connection per 150ms.
+	if summary != nil {
+		now := time.Now()
+		a.requestLogQueueMutex.Lock()
+		if now.Sub(a.wsLastSummaryUpdate[connectionID]) >= 150*time.Millisecond {
+			a.wsLastSummaryUpdate[connectionID] = now
+			a.requestLogSummaryQueue = append(a.requestLogSummaryQueue, *summary)
+		}
+		a.requestLogQueueMutex.Unlock()
+	}
+}
+
+// CloseSSEStream implements the server.RequestLogger interface.
+// Called after the SSE relay ends to record the final stream state.
+func (a *App) CloseSSEStream(connectionID string, closeError string) {
+	var summary *models.RequestLogSummary
+
+	a.logMutex.Lock()
+	for i := range a.requestLogs {
+		if a.requestLogs[i].ID == connectionID {
+			l := &a.requestLogs[i]
+			l.SSEClosedAt = time.Now().Format(time.RFC3339)
+			l.SSECloseError = closeError
+			s := a.buildSSESummary(l) // SSEIsOpen will be false (SSEClosedAt is set)
+			summary = &s
+			break
+		}
+	}
+	a.logMutex.Unlock()
+
+	if summary != nil {
+		// Always enqueue the close summary — no throttle, always deliver.
+		a.requestLogQueueMutex.Lock()
+		a.requestLogSummaryQueue = append(a.requestLogSummaryQueue, *summary)
+		delete(a.wsLastSummaryUpdate, connectionID) // clean up throttle entry
+		a.requestLogQueueMutex.Unlock()
+	}
+}
+
+// buildSSESummary builds a RequestLogSummary from a live SSE RequestLog.
+// Must be called with logMutex held for a consistent snapshot.
+func (a *App) buildSSESummary(l *models.RequestLog) models.RequestLogSummary {
+	summary := models.RequestLogSummary{
+		ID:           l.ID,
+		Timestamp:    l.Timestamp,
+		EndpointID:   l.EndpointID,
+		ResponseID:   l.ResponseID,
+		Method:       l.ClientRequest.Method,
+		Path:         l.ClientRequest.Path,
+		SourceIP:     l.ClientRequest.SourceIP,
+		ClientStatus: l.ClientResponse.StatusCode,
+		IsSSE:        true,
+		HasBackend:   l.BackendRequest != nil || l.BackendResponse != nil,
+		// SSE live-tap fields
+		SSEIsOpen:     l.SSEClosedAt == "",
+		SSEEventCount: l.SSEEventCount,
+		SSEBytesTotal: l.SSEBytesTotal,
+		SSEOpenedAt:   l.SSEOpenedAt,
+		SSEClosedAt:   l.SSEClosedAt,
+	}
+	if l.SOCKS5Info != nil {
+		summary.TargetHost = l.SOCKS5Info.TargetHost
+		summary.TargetPort = l.SOCKS5Info.TargetPort
+		summary.HasBackend = true
+	}
+	return summary
+}
+
 // UpdateRequestLog updates an existing request log (used for two-phase logging)
 // This allows showing pending requests immediately, then updating them when complete
 func (a *App) UpdateRequestLog(log models.RequestLog) {
@@ -3979,6 +4101,19 @@ func (a *App) UpdateRequestLog(log models.RequestLog) {
 	found := false
 	for i := range a.requestLogs {
 		if a.requestLogs[i].ID == log.ID {
+			existing := &a.requestLogs[i]
+			// Preserve SSE live-tap fields accumulated by AppendSSEEvent/CloseSSEStream.
+			// logSSECompletion sends a bare RequestLog (no SSE events); we must not
+			// overwrite the events that were appended in-place.
+			if existing.IsSSE {
+				log.IsSSE = true
+				log.SSEEvents = existing.SSEEvents
+				log.SSEOpenedAt = existing.SSEOpenedAt
+				log.SSEClosedAt = existing.SSEClosedAt
+				log.SSECloseError = existing.SSECloseError
+				log.SSEEventCount = existing.SSEEventCount
+				log.SSEBytesTotal = existing.SSEBytesTotal
+			}
 			a.requestLogs[i] = log
 			found = true
 			break
@@ -4020,6 +4155,16 @@ func (a *App) UpdateRequestLog(log models.RequestLog) {
 	if log.SOCKS5Info != nil {
 		summary.TargetHost = log.SOCKS5Info.TargetHost
 		summary.TargetPort = log.SOCKS5Info.TargetPort
+	}
+
+	// Add SSE fields if present
+	if log.IsSSE {
+		summary.IsSSE = true
+		summary.SSEIsOpen = log.SSEClosedAt == ""
+		summary.SSEEventCount = log.SSEEventCount
+		summary.SSEBytesTotal = log.SSEBytesTotal
+		summary.SSEOpenedAt = log.SSEOpenedAt
+		summary.SSEClosedAt = log.SSEClosedAt
 	}
 
 	// Queue updated summary

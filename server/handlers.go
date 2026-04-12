@@ -23,6 +23,12 @@ type RequestLogger interface {
 	// RegisterWSConnection stores control callbacks so the frontend can terminate
 	// or block a live WebSocket relay without touching the relay goroutines directly.
 	RegisterWSConnection(connectionID string, terminate func(), setBlocked func(bool))
+	// AppendSSEEvent appends a parsed SSE event to the stream log, updating running counters.
+	AppendSSEEvent(connectionID string, event models.SSEEvent)
+	// CloseSSEStream records the end of an SSE stream, optionally with an error message.
+	CloseSSEStream(connectionID string, closeError string)
+	// MarkSSEOpen stamps the SSE stream as open (IsSSE=true, SSEOpenedAt, SSEIsOpen=true).
+	MarkSSEOpen(connectionID string, openedAt string)
 }
 
 type ScriptErrorLogger interface {

@@ -983,6 +983,34 @@ export namespace models {
 		    return a;
 		}
 	}
+	export class SSEEvent {
+	    id: string;
+	    timestamp: string;
+	    offset_ms: number;
+	    event_type: string;
+	    event_id?: string;
+	    data: string;
+	    data_size: number;
+	    raw_text: string;
+	    retry?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SSEEvent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.timestamp = source["timestamp"];
+	        this.offset_ms = source["offset_ms"];
+	        this.event_type = source["event_type"];
+	        this.event_id = source["event_id"];
+	        this.data = source["data"];
+	        this.data_size = source["data_size"];
+	        this.raw_text = source["raw_text"];
+	        this.retry = source["retry"];
+	    }
+	}
 	export class WebSocketEvent {
 	    id: string;
 	    timestamp: string;
@@ -1046,6 +1074,13 @@ export namespace models {
 	    ws_frames_sent?: number;
 	    ws_frames_recv?: number;
 	    ws_bytes_total?: number;
+	    is_sse?: boolean;
+	    sse_events?: SSEEvent[];
+	    sse_opened_at?: string;
+	    sse_closed_at?: string;
+	    sse_close_error?: string;
+	    sse_event_count: number;
+	    sse_bytes_total: number;
 	    // Go type: struct { Method string "json:\"method\""; FullURL string "json:\"full_url\""; Path string "json:\"path\""; QueryParams map[string][]string "json:\"query_params,omitempty\""; Headers map[string][]string "json:\"headers,omitempty\""; Body string "json:\"body,omitempty\""; Protocol string "json:\"protocol,omitempty\""; SourceIP string "json:\"source_ip\""; UserAgent string "json:\"user_agent,omitempty\"" }
 	    client_request: any;
 	    // Go type: struct { StatusCode *int "json:\"status_code,omitempty\""; StatusText string "json:\"status_text,omitempty\""; Headers map[string][]string "json:\"headers,omitempty\""; Body string "json:\"body,omitempty\""; DelayMs *int64 "json:\"delay_ms,omitempty\""; RTTMs *int64 "json:\"rtt_ms,omitempty\"" }
@@ -1077,6 +1112,13 @@ export namespace models {
 	        this.ws_frames_sent = source["ws_frames_sent"];
 	        this.ws_frames_recv = source["ws_frames_recv"];
 	        this.ws_bytes_total = source["ws_bytes_total"];
+	        this.is_sse = source["is_sse"];
+	        this.sse_events = this.convertValues(source["sse_events"], SSEEvent);
+	        this.sse_opened_at = source["sse_opened_at"];
+	        this.sse_closed_at = source["sse_closed_at"];
+	        this.sse_close_error = source["sse_close_error"];
+	        this.sse_event_count = source["sse_event_count"];
+	        this.sse_bytes_total = source["sse_bytes_total"];
 	        this.client_request = this.convertValues(source["client_request"], Object);
 	        this.client_response = this.convertValues(source["client_response"], Object);
 	        this.backend_request = this.convertValues(source["backend_request"], Object);
@@ -1128,6 +1170,12 @@ export namespace models {
 	    ws_close_code?: number;
 	    ws_opened_at?: string;
 	    ws_closed_at?: string;
+	    is_sse?: boolean;
+	    sse_is_open: boolean;
+	    sse_event_count: number;
+	    sse_bytes_total?: number;
+	    sse_opened_at?: string;
+	    sse_closed_at?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new RequestLogSummary(source);
@@ -1161,6 +1209,12 @@ export namespace models {
 	        this.ws_close_code = source["ws_close_code"];
 	        this.ws_opened_at = source["ws_opened_at"];
 	        this.ws_closed_at = source["ws_closed_at"];
+	        this.is_sse = source["is_sse"];
+	        this.sse_is_open = source["sse_is_open"];
+	        this.sse_event_count = source["sse_event_count"];
+	        this.sse_bytes_total = source["sse_bytes_total"];
+	        this.sse_opened_at = source["sse_opened_at"];
+	        this.sse_closed_at = source["sse_closed_at"];
 	    }
 	}
 	
@@ -1189,6 +1243,7 @@ export namespace models {
 	        this.is_intercepted = source["is_intercepted"];
 	    }
 	}
+	
 	
 	export class ServerSettings {
 	    server_mode?: string;

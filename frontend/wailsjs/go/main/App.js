@@ -26,6 +26,10 @@ export function AddResponse(arg1) {
   return window['go']['main']['App']['AddResponse'](arg1);
 }
 
+export function AppendSSEEvent(arg1, arg2) {
+  return window['go']['main']['App']['AppendSSEEvent'](arg1, arg2);
+}
+
 export function AppendWebSocketEvent(arg1, arg2) {
   return window['go']['main']['App']['AppendWebSocketEvent'](arg1, arg2);
 }
@@ -56,6 +60,10 @@ export function ClearScriptErrors(arg1) {
 
 export function ClearWSFrames(arg1) {
   return window['go']['main']['App']['ClearWSFrames'](arg1);
+}
+
+export function CloseSSEStream(arg1, arg2) {
+  return window['go']['main']['App']['CloseSSEStream'](arg1, arg2);
 }
 
 export function CloseWebSocketConnection(arg1, arg2, arg3, arg4) {
@@ -256,6 +264,10 @@ export function MarkClean() {
 
 export function MarkDirty() {
   return window['go']['main']['App']['MarkDirty']();
+}
+
+export function MarkSSEOpen(arg1, arg2) {
+  return window['go']['main']['App']['MarkSSEOpen'](arg1, arg2);
 }
 
 export function PollEvents() {

@@ -1,8 +1,8 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -157,30 +158,29 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, endpoin
 		connectTimeout = 5 * time.Second // safe default
 	}
 
-	// Total request timeout — how long the full round-trip may take.
-	// 0 means unlimited (useful for long-running transactions / streaming).
+	// Total request timeout — used as ResponseHeaderTimeout (how long the backend must
+	// begin responding) and as the first-event deadline for SSE streams.
+	// After the first SSE event arrives the relay runs indefinitely (no overall cap),
+	// matching WebSocket behaviour. 0 = unlimited.
 	totalTimeout := time.Duration(cfg.TimeoutSeconds) * time.Second
 
-	// Only install a context deadline when a total timeout is configured.
-	reqCtx := r.Context()
-	if totalTimeout > 0 {
-		var cancel context.CancelFunc
-		reqCtx, cancel = context.WithTimeout(reqCtx, totalTimeout)
-		defer cancel()
-	}
-	proxyReq = proxyReq.WithContext(reqCtx)
+	// Use the client-disconnect context without a deadline. We rely on
+	// ResponseHeaderTimeout rather than a context deadline so that SSE body reads
+	// are not killed after TimeoutSeconds.
+	proxyReq = proxyReq.WithContext(r.Context())
 
-	// Execute backend request and measure timing
-	// Note: Don't follow redirects - pass them through to the client
+	// Execute backend request and measure timing.
+	// Note: Don't follow redirects — pass them through to the client.
 	client := &http.Client{
-		Timeout: totalTimeout, // 0 = no client-level timeout
+		Timeout: 0, // no overall timeout; ResponseHeaderTimeout handles backend latency
 		Transport: &http.Transport{
 			DialContext: (&net.Dialer{
 				Timeout: connectTimeout,
 			}).DialContext,
+			ResponseHeaderTimeout: totalTimeout, // 0 = unlimited
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse // Don't follow redirects, return redirect response to client
+			return http.ErrUseLastResponse
 		},
 	}
 	backendStartTime := time.Now()
@@ -193,6 +193,17 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, endpoin
 		return
 	}
 	defer resp.Body.Close()
+
+	// SSE: stream instead of buffering. totalTimeout is used as the first-event
+	// deadline; after the first event arrives the relay runs indefinitely (no
+	// overall cap), matching WebSocket behaviour.
+	if isSSEResponse(resp) {
+		log.Printf("[SSE] Streaming response (endpoint: %s, path: %s)", endpoint.Name, r.URL.Path)
+		p.streamSSEResponse(w, r, resp, endpoint, requestID, totalTimeout,
+			clientFullURL, requestHeaders, requestBody, queryParams,
+			backendURL.String(), backendReqHeaders, backendStartTime)
+		return
+	}
 
 	// Read response body
 	bodyBytes, err := io.ReadAll(resp.Body)
@@ -832,6 +843,289 @@ func (p *ProxyHandler) logProxyRequest(requestID string, endpoint *models.Endpoi
 
 		p.logger.UpdateRequestLog(requestLog)
 	}
+}
+
+// isSSEResponse reports whether the backend response carries a Server-Sent Events stream.
+func isSSEResponse(resp *http.Response) bool {
+	ct := resp.Header.Get("Content-Type")
+	base := strings.TrimSpace(strings.SplitN(ct, ";", 2)[0])
+	return strings.EqualFold(base, "text/event-stream")
+}
+
+// streamSSEResponse relays a Server-Sent Events stream to the client.
+//
+// Like WebSocket connections there is no overall timeout — the relay runs until
+// either side closes the connection. firstMsgTimeout controls how long we wait
+// for the very first event from the backend; if no data arrives within that window
+// we can still return a proper HTTP error (headers have not been sent yet).
+// If firstMsgTimeout is 0 a 30-second default is used.
+//
+// Events are parsed line-by-line (blank-line delimited per the SSE spec) and
+// emitted to the logger via AppendSSEEvent for live display in the UI.
+func (p *ProxyHandler) streamSSEResponse(
+	w http.ResponseWriter, r *http.Request, resp *http.Response,
+	endpoint *models.Endpoint, requestID string, firstMsgTimeout time.Duration,
+	clientFullURL string, clientReqHeaders map[string][]string,
+	clientReqBody string, clientQueryParams map[string][]string,
+	backendFullURL string, backendReqHeaders map[string][]string,
+	backendStartTime time.Time,
+) {
+	cfg := endpoint.ProxyConfig
+	if firstMsgTimeout <= 0 {
+		firstMsgTimeout = 30 * time.Second
+	}
+
+	// Read the first chunk BEFORE writing headers to the client so we can still
+	// return a proper HTTP error if the backend doesn't produce any data in time.
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	firstCh := make(chan readResult, 1)
+	initialBuf := make([]byte, 4096)
+	go func() {
+		n, err := resp.Body.Read(initialBuf)
+		res := readResult{err: err}
+		if n > 0 {
+			res.data = make([]byte, n)
+			copy(res.data, initialBuf[:n])
+		}
+		firstCh <- res
+	}()
+
+	var first readResult
+	select {
+	case first = <-firstCh:
+		// backend produced data (or an immediate error)
+	case <-time.After(firstMsgTimeout):
+		resp.Body.Close()
+		<-firstCh // drain goroutine
+		log.Printf("[SSE] First-event timeout after %v (endpoint: %s)", firstMsgTimeout, endpoint.Name)
+		http.Error(w, "SSE: first event timeout", http.StatusGatewayTimeout)
+		return
+	}
+
+	if first.err != nil && len(first.data) == 0 {
+		log.Printf("[SSE] Backend closed before first event (endpoint: %s): %v", endpoint.Name, first.err)
+		http.Error(w, "SSE: backend closed without data", http.StatusBadGateway)
+		return
+	}
+
+	// We have the first chunk — write response headers to the client now.
+	statusCode := resp.StatusCode
+	if !cfg.StatusPassthrough {
+		statusCode = p.translateStatusCode(resp.StatusCode, cfg.StatusTranslation)
+	}
+	for name, values := range resp.Header {
+		// Go's http.Client already decoded chunked encoding; don't forward framing headers.
+		if strings.EqualFold(name, "Transfer-Encoding") || strings.EqualFold(name, "Content-Length") {
+			continue
+		}
+		for _, value := range values {
+			w.Header().Add(name, value)
+		}
+	}
+	p.applyHeaderManipulation(w.Header(), cfg.OutboundHeaders, r)
+	w.WriteHeader(statusCode)
+
+	// Flush — for socks5StreamWriter this signals streaming mode and writes the
+	// HTTP status line + headers to the underlying net.Conn immediately.
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+
+	// Mark the log entry as an SSE stream now that we are committed to streaming.
+	streamOpenedAt := time.Now()
+	if p.logger != nil {
+		p.logger.MarkSSEOpen(requestID, streamOpenedAt.Format(time.RFC3339))
+	}
+
+	// Write first chunk and begin SSE parsing.
+	// We use io.MultiReader to prepend the first chunk to the remaining body so
+	// the scanner sees a single contiguous stream.
+	combinedReader := io.MultiReader(bytes.NewReader(first.data), resp.Body)
+
+	// Pipe the stream to both the client writer and the SSE parser via a pipe.
+	// The scanner reads from pipeReader; we write each line to both the client
+	// and the pipe writer.  To keep it simple we write to both inline in the
+	// scanner loop (no goroutine needed — we own both sides).
+	//
+	// We use bufio.Scanner for line-by-line parsing.
+	scanner := bufio.NewScanner(combinedReader)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // up to 1 MB per line
+
+	// Accumulated SSE event fields
+	var (
+		eventType    string
+		eventID      string
+		dataLines    []string
+		rawLines     []string
+		retryMs      int
+		eventCounter int
+	)
+
+	var streamErr string
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Forward the line to the client.
+		if _, writeErr := fmt.Fprintf(w, "%s\n", line); writeErr != nil {
+			log.Printf("[SSE] Client write error (endpoint: %s): %v", endpoint.Name, writeErr)
+			streamErr = writeErr.Error()
+			break
+		}
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+
+		// Parse the SSE line.
+		if line == "" {
+			// Blank line — dispatch event if we have any data fields.
+			if len(dataLines) > 0 || eventType != "" {
+				data := strings.Join(dataLines, "\n")
+				rawText := strings.Join(rawLines, "\n")
+				et := eventType
+				if et == "" {
+					et = "message"
+				}
+				offsetMs := time.Since(streamOpenedAt).Milliseconds()
+				eventCounter++
+				sseEvent := models.SSEEvent{
+					ID:        fmt.Sprintf("sse-%s-%d", requestID, eventCounter),
+					Timestamp: time.Now().Format(time.RFC3339Nano),
+					OffsetMs:  offsetMs,
+					EventType: et,
+					EventID:   eventID,
+					Data:      data,
+					DataSize:  len(data),
+					RawText:   rawText,
+					Retry:     retryMs,
+				}
+				if p.logger != nil {
+					p.logger.AppendSSEEvent(requestID, sseEvent)
+				}
+			}
+			// Reset accumulated fields for next event.
+			eventType = ""
+			eventID = ""
+			dataLines = dataLines[:0]
+			rawLines = rawLines[:0]
+			retryMs = 0
+			continue
+		}
+
+		rawLines = append(rawLines, line)
+
+		if strings.HasPrefix(line, ":") {
+			// Comment line — skip but forward (already written above).
+			continue
+		}
+
+		colonIdx := strings.Index(line, ":")
+		if colonIdx < 0 {
+			// Field with no colon — treat as field name with empty value.
+			continue
+		}
+		field := line[:colonIdx]
+		value := line[colonIdx+1:]
+		// Strip a single leading space if present.
+		if strings.HasPrefix(value, " ") {
+			value = value[1:]
+		}
+
+		switch field {
+		case "data":
+			dataLines = append(dataLines, value)
+		case "event":
+			eventType = value
+		case "id":
+			eventID = value
+		case "retry":
+			if n, err := strconv.Atoi(value); err == nil {
+				retryMs = n
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil && err != io.EOF {
+		log.Printf("[SSE] Backend stream ended (endpoint: %s): %v", endpoint.Name, err)
+		if streamErr == "" {
+			streamErr = err.Error()
+		}
+	}
+
+	// Dispatch any trailing event (stream closed without a final blank line).
+	if len(dataLines) > 0 && p.logger != nil {
+		data := strings.Join(dataLines, "\n")
+		rawText := strings.Join(rawLines, "\n")
+		et := eventType
+		if et == "" {
+			et = "message"
+		}
+		eventCounter++
+		sseEvent := models.SSEEvent{
+			ID:        fmt.Sprintf("sse-%s-%d", requestID, eventCounter),
+			Timestamp: time.Now().Format(time.RFC3339Nano),
+			OffsetMs:  time.Since(streamOpenedAt).Milliseconds(),
+			EventType: et,
+			EventID:   eventID,
+			Data:      data,
+			DataSize:  len(data),
+			RawText:   rawText,
+			Retry:     retryMs,
+		}
+		p.logger.AppendSSEEvent(requestID, sseEvent)
+	}
+
+	if p.logger != nil {
+		p.logger.CloseSSEStream(requestID, streamErr)
+	}
+
+	p.logSSECompletion(requestID, endpoint, r, clientFullURL, clientReqHeaders, clientReqBody, clientQueryParams, statusCode, backendFullURL, backendReqHeaders)
+}
+
+// logSSECompletion updates the pending log entry once an SSE stream has ended.
+func (p *ProxyHandler) logSSECompletion(
+	requestID string, endpoint *models.Endpoint, r *http.Request,
+	clientFullURL string, clientReqHeaders map[string][]string,
+	clientReqBody string, clientQueryParams map[string][]string,
+	statusCode int, backendFullURL string, backendReqHeaders map[string][]string,
+) {
+	if p.logger == nil {
+		return
+	}
+	requestLog := models.RequestLog{
+		ID:         requestID,
+		Timestamp:  time.Now().Format(time.RFC3339),
+		EndpointID: endpoint.ID,
+	}
+	requestLog.ClientRequest.Method = r.Method
+	requestLog.ClientRequest.FullURL = clientFullURL
+	requestLog.ClientRequest.Path = r.URL.Path
+	requestLog.ClientRequest.QueryParams = clientQueryParams
+	requestLog.ClientRequest.Headers = clientReqHeaders
+	requestLog.ClientRequest.Body = clientReqBody
+	requestLog.ClientRequest.Protocol = r.Proto
+	requestLog.ClientRequest.SourceIP = r.RemoteAddr
+	requestLog.ClientRequest.UserAgent = r.Header.Get("User-Agent")
+	requestLog.ClientResponse.StatusCode = &statusCode
+	requestLog.ClientResponse.StatusText = http.StatusText(statusCode)
+	requestLog.ClientResponse.Body = "[SSE stream]"
+	requestLog.BackendRequest = &struct {
+		Method      string              `json:"method"`
+		FullURL     string              `json:"full_url"`
+		Path        string              `json:"path"`
+		QueryParams map[string][]string `json:"query_params,omitempty"`
+		Headers     map[string][]string `json:"headers,omitempty"`
+		Body        string              `json:"body,omitempty"`
+	}{
+		Method:  r.Method,
+		FullURL: backendFullURL,
+		Path:    r.URL.Path,
+		Headers: backendReqHeaders,
+	}
+	p.logger.UpdateRequestLog(requestLog)
 }
 
 // logPendingRequest logs a request immediately when received (before waiting for response)

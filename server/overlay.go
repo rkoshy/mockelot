@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -237,10 +238,36 @@ func (h *OverlayHandler) executeProxyRequest(w http.ResponseWriter, r *http.Requ
 	// Write response status
 	w.WriteHeader(resp.StatusCode)
 
+	// For SSE (text/event-stream), signal streaming mode to socks5StreamWriter
+	// so it writes the HTTP response line + headers to the conn immediately, then
+	// flush each chunk as it arrives for low-latency event delivery.
+	isSSE := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
+	if isSSE {
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}
+
 	// Copy response body
 	if resp.Body != nil {
-		if _, err := io.Copy(w, resp.Body); err != nil {
-			log.Printf("Failed to copy response body: %v", err)
+		if isSSE {
+			buf := make([]byte, 4096)
+			for {
+				n, err := resp.Body.Read(buf)
+				if n > 0 {
+					w.Write(buf[:n])
+					if f, ok := w.(http.Flusher); ok {
+						f.Flush()
+					}
+				}
+				if err != nil {
+					break
+				}
+			}
+		} else {
+			if _, err := io.Copy(w, resp.Body); err != nil {
+				log.Printf("Failed to copy response body: %v", err)
+			}
 		}
 	}
 

@@ -15,6 +15,8 @@ export function AddRecentFile(arg1:string):Promise<void>;
 
 export function AddResponse(arg1:models.MethodResponse):Promise<models.MethodResponse>;
 
+export function AppendSSEEvent(arg1:string,arg2:models.SSEEvent):Promise<void>;
+
 export function AppendWebSocketEvent(arg1:string,arg2:models.WebSocketEvent):Promise<void>;
 
 export function CancelContainerStart(arg1:string):Promise<void>;
@@ -30,6 +32,8 @@ export function ClearRequestLogsForEndpoint(arg1:string):Promise<void>;
 export function ClearScriptErrors(arg1:string):Promise<void>;
 
 export function ClearWSFrames(arg1:string):Promise<void>;
+
+export function CloseSSEStream(arg1:string,arg2:string):Promise<void>;
 
 export function CloseWebSocketConnection(arg1:string,arg2:number,arg3:string,arg4:Error):Promise<void>;
 
@@ -130,6 +134,8 @@ export function LogScriptError(arg1:string,arg2:string,arg3:string,arg4:string):
 export function MarkClean():Promise<void>;
 
 export function MarkDirty():Promise<void>;
+
+export function MarkSSEOpen(arg1:string,arg2:string):Promise<void>;
 
 export function PollEvents():Promise<Array<main.Event>>;
 

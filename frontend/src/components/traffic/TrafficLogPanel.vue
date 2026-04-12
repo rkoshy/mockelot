@@ -4,6 +4,7 @@ import { useServerStore } from '../../stores/server'
 import { ExportLogs } from '../../../wailsjs/go/main/App'
 import RequestInspectorModal from '../inspector/RequestInspectorModal.vue'
 import WSConnectionTab from './WSConnectionTab.vue'
+import SSEConnectionTab from './SSEConnectionTab.vue'
 import ConfirmDialog from '../dialogs/ConfirmDialog.vue'
 import type { models } from '../../../wailsjs/go/models'
 
@@ -26,10 +27,11 @@ const methodFilters = ref<Record<string, boolean>>({
   HEAD: true,
   OPTIONS: true,
   WS: true,
+  SSE: true,
   OTHER: true,
 })
 
-const ALL_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'WS', 'OTHER']
+const ALL_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'WS', 'SSE', 'OTHER']
 
 function setAllFilters(val: boolean) {
   for (const m of ALL_METHODS) methodFilters.value[m] = val
@@ -37,14 +39,17 @@ function setAllFilters(val: boolean) {
 
 function getMethodBucket(log: models.RequestLogSummary): string {
   if (log.is_websocket) return 'WS'
+  if (log.is_sse) return 'SSE'
   const m = (log.method || '').toUpperCase()
   return ALL_METHODS.includes(m) ? m : 'OTHER'
 }
 
-// Tab state: 'traffic' = main log; string = WS connection ID open in a tab
+// Tab state: 'traffic' = main log; string = WS/SSE connection ID open in a tab
 const activeTab = ref<string>('traffic')
-// Map from connectionID → log summary (so we can show the URL in the tab)
+// Map from connectionID → log summary (for WS tabs)
 const wsConnectionTabs = ref<Map<string, models.RequestLogSummary>>(new Map())
+// Map from connectionID → log summary (for SSE tabs)
+const sseConnectionTabs = ref<Map<string, models.RequestLogSummary>>(new Map())
 
 function openWSTab(log: models.RequestLogSummary) {
   if (!wsConnectionTabs.value.has(log.id)) {
@@ -60,11 +65,29 @@ function closeWSTab(id: string) {
   }
 }
 
-// Keep WS tab summaries in sync as logs update (frame counts, active status)
+function openSSETab(log: models.RequestLogSummary) {
+  if (!sseConnectionTabs.value.has(log.id)) {
+    sseConnectionTabs.value.set(log.id, log)
+  }
+  activeTab.value = log.id
+}
+
+function closeSSETab(id: string) {
+  sseConnectionTabs.value.delete(id)
+  if (activeTab.value === id) {
+    activeTab.value = 'traffic'
+  }
+}
+
+// Keep WS and SSE tab summaries in sync as logs update
 watch(() => serverStore.requestLogs, (logs) => {
   for (const [id] of wsConnectionTabs.value) {
     const updated = logs.find(l => l.id === id)
     if (updated) wsConnectionTabs.value.set(id, updated)
+  }
+  for (const [id] of sseConnectionTabs.value) {
+    const updated = logs.find(l => l.id === id)
+    if (updated) sseConnectionTabs.value.set(id, updated)
   }
 }, { deep: false })
 
@@ -76,12 +99,20 @@ const visibleWSTabs = computed(() => {
   return [...wsConnectionTabs.value.entries()].filter(([, wsLog]) => wsLog.endpoint_id === endpointId)
 })
 
-// When the endpoint selection changes, hide any active WS tab that belongs
+// SSE tabs visible for the currently selected endpoint.
+const visibleSSETabs = computed(() => {
+  const endpointId = serverStore.selectedEndpointId
+  if (!endpointId) return [...sseConnectionTabs.value.entries()]
+  return [...sseConnectionTabs.value.entries()].filter(([, sseLog]) => sseLog.endpoint_id === endpointId)
+})
+
+// When the endpoint selection changes, hide any active WS/SSE tab that belongs
 // to a different endpoint and fall back to the Traffic Log tab.
 watch(() => serverStore.selectedEndpointId, () => {
   if (activeTab.value !== 'traffic') {
-    const stillVisible = visibleWSTabs.value.some(([id]) => id === activeTab.value)
-    if (!stillVisible) activeTab.value = 'traffic'
+    const wsVisible = visibleWSTabs.value.some(([id]) => id === activeTab.value)
+    const sseVisible = visibleSSETabs.value.some(([id]) => id === activeTab.value)
+    if (!wsVisible && !sseVisible) activeTab.value = 'traffic'
   }
 })
 
@@ -174,9 +205,14 @@ function formatBytes(bytes: number | undefined): string {
   return `${(bytes / 1048576).toFixed(1)}MB`
 }
 
-// Abbreviate a WS path for display in a tab label
+// Abbreviate a WS/SSE path for display in a tab label
 function wsTabLabel(log: models.RequestLogSummary): string {
   const path = log.path || log.target_host || 'ws'
+  return path.length > 20 ? '…' + path.slice(-20) : path
+}
+
+function sseTabLabel(log: models.RequestLogSummary): string {
+  const path = log.path || log.target_host || 'sse'
   return path.length > 20 ? '…' + path.slice(-20) : path
 }
 
@@ -203,12 +239,12 @@ const showClearDialog = ref(false)
 const activeWSCount = ref(0)
 
 function handleClear() {
-  // Count active WS connections in the scope being cleared
+  // Count active WS/SSE connections in the scope being cleared
   const endpointId = serverStore.selectedEndpointId
   const scopedLogs = endpointId
     ? serverStore.requestLogs.filter(l => l.endpoint_id === endpointId)
     : serverStore.requestLogs
-  const activeWS = scopedLogs.filter(l => l.is_websocket && l.ws_is_open).length
+  const activeWS = scopedLogs.filter(l => (l.is_websocket && l.ws_is_open) || (l.is_sse && l.sse_is_open)).length
 
   if (activeWS === 0) {
     // No active WS — clear immediately
@@ -249,8 +285,8 @@ function handleClearCancel() {
   showClearDialog.value = false
 }
 
-// Expose openWSTab so the inspector modal can call it
-defineExpose({ openWSTab })
+// Expose openWSTab/openSSETab so the inspector modal can call them
+defineExpose({ openWSTab, openSSETab })
 </script>
 
 <template>
@@ -292,6 +328,38 @@ defineExpose({ openWSTab })
         </span>
         <button
           @click.stop="closeWSTab(id)"
+          class="ml-0.5 text-gray-500 hover:text-gray-300 transition-colors"
+          title="Close tab"
+        >
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- SSE stream tabs (only for the selected endpoint) -->
+      <div
+        v-for="[id, sseLog] in visibleSSETabs"
+        :key="'sse-' + id"
+        :class="[
+          'flex items-center gap-1 px-3 py-2 flex-shrink-0 border-b-2 cursor-pointer transition-colors',
+          activeTab === id
+            ? 'border-teal-500 bg-gray-800'
+            : 'border-transparent hover:bg-gray-800/50'
+        ]"
+        @click="activeTab = id"
+      >
+        <!-- Active pulse dot for open SSE streams -->
+        <span
+          v-if="sseLog.sse_is_open"
+          class="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse flex-shrink-0"
+        />
+        <span class="text-xs font-bold text-teal-500 flex-shrink-0">SSE</span>
+        <span :class="['text-xs font-medium', activeTab === id ? 'text-teal-400' : 'text-gray-400']">
+          {{ sseTabLabel(sseLog) }}
+        </span>
+        <button
+          @click.stop="closeSSETab(id)"
           class="ml-0.5 text-gray-500 hover:text-gray-300 transition-colors"
           title="Close tab"
         >
@@ -390,19 +458,26 @@ defineExpose({ openWSTab })
                 {{ formatTimestamp(log.timestamp) }}
               </span>
 
-              <!-- Method / WS badge -->
+              <!-- Method / WS / SSE badge -->
               <span v-if="log.is_websocket" class="text-xs font-bold w-14 flex-shrink-0 text-cyan-400 flex items-center gap-1">
                 WS
                 <span v-if="log.ws_is_open" class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse flex-shrink-0" title="Connection open" />
+              </span>
+              <span v-else-if="log.is_sse" class="text-xs font-bold w-14 flex-shrink-0 text-teal-400 flex items-center gap-1">
+                SSE
+                <span v-if="log.sse_is_open" class="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse flex-shrink-0" title="Stream open" />
               </span>
               <span v-else :class="['text-xs font-bold w-14 flex-shrink-0', getMethodColor(log.method || 'GET')]">
                 {{ log.method || 'N/A' }}
               </span>
 
-              <!-- Status / WS frame counts -->
+              <!-- Status / WS frame counts / SSE event counts -->
               <span v-if="log.is_websocket" class="text-xs font-mono w-16 flex-shrink-0">
                 <span class="text-violet-400">↑{{ log.ws_frames_sent ?? 0 }}</span>
                 <span class="text-teal-400"> ↓{{ log.ws_frames_recv ?? 0 }}</span>
+              </span>
+              <span v-else-if="log.is_sse" class="text-xs font-mono w-16 flex-shrink-0">
+                <span class="text-teal-400">↓{{ log.sse_event_count ?? 0 }}</span>
               </span>
               <span v-else :class="['text-xs font-mono w-16 flex-shrink-0', getStatusColor(log.client_status || 0)]">
                 {{ formatStatus(log) }}
@@ -417,9 +492,12 @@ defineExpose({ openWSTab })
                 {{ getFailureBadgeText(log) }}
               </span>
 
-              <!-- RTT / WS total bytes -->
+              <!-- RTT / WS total bytes / SSE total bytes -->
               <span v-if="log.is_websocket" class="text-xs text-gray-400 font-mono w-14 flex-shrink-0 text-right">
                 {{ formatBytes(log.ws_bytes_total) }}
+              </span>
+              <span v-else-if="log.is_sse" class="text-xs text-gray-400 font-mono w-14 flex-shrink-0 text-right">
+                {{ formatBytes(log.sse_bytes_total) }}
               </span>
               <span v-else class="text-xs text-gray-400 font-mono w-14 flex-shrink-0 text-right">
                 {{ formatRTT(log.client_rtt) }}
@@ -427,7 +505,7 @@ defineExpose({ openWSTab })
 
               <!-- Path / SOCKS5 Target -->
               <span class="text-sm text-gray-300 truncate flex-1 font-mono">
-                <span v-if="log.is_websocket && log.path">{{ log.path }}</span>
+                <span v-if="(log.is_websocket || log.is_sse) && log.path">{{ log.path }}</span>
                 <span v-else-if="log.target_host">{{ log.target_host }}:{{ log.target_port }}</span>
                 <span v-else>{{ log.path || 'N/A' }}</span>
               </span>
@@ -441,6 +519,19 @@ defineExpose({ openWSTab })
                 @click.stop="openWSTab(log)"
                 class="px-1.5 py-0.5 bg-cyan-900/50 hover:bg-cyan-700/60 border border-cyan-700/50 hover:border-cyan-500 rounded text-cyan-400 hover:text-cyan-300 text-xs font-medium transition-colors flex-shrink-0 flex items-center gap-0.5"
                 title="Open WebSocket frame tab"
+              >
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+                Tab
+              </button>
+
+              <!-- SSE open-tab button — always visible for SSE rows -->
+              <button
+                v-if="log.is_sse"
+                @click.stop="openSSETab(log)"
+                class="px-1.5 py-0.5 bg-teal-900/50 hover:bg-teal-700/60 border border-teal-700/50 hover:border-teal-500 rounded text-teal-400 hover:text-teal-300 text-xs font-medium transition-colors flex-shrink-0 flex items-center gap-0.5"
+                title="Open SSE event tab"
               >
                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
@@ -474,6 +565,15 @@ defineExpose({ openWSTab })
       />
     </template>
 
+    <!-- ── SSE STREAM TABS ── -->
+    <template v-for="[id, sseLog] in visibleSSETabs" :key="'sse-' + id">
+      <SSEConnectionTab
+        v-if="activeTab === id"
+        :log-summary="sseLog"
+        @open-inspector="(l) => { inspectorLog = l; showInspectorModal = true }"
+      />
+    </template>
+
     <!-- Request Inspector Modal -->
     <RequestInspectorModal
       :show="showInspectorModal"
@@ -486,7 +586,7 @@ defineExpose({ openWSTab })
     <ConfirmDialog
       :show="showClearDialog"
       title="Clear Traffic Logs"
-      :message="`There ${activeWSCount === 1 ? 'is 1 active WebSocket connection' : 'are ' + activeWSCount + ' active WebSocket connections'}.\n\nINACTIVE — Clear historical logs and closed connections. Keep active WS connections.\n\nALL — Clear everything including active WebSocket connections.`"
+      :message="`There ${activeWSCount === 1 ? 'is 1 active connection' : 'are ' + activeWSCount + ' active connections'} (WebSocket/SSE).\n\nINACTIVE — Clear historical logs and closed connections. Keep active connections.\n\nALL — Clear everything including active WebSocket/SSE connections.`"
       primary-text="All"
       secondary-text="Inactive"
       cancel-text="Cancel"
