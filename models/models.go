@@ -346,9 +346,11 @@ type ContainerStatus struct {
 // ContainerStartProgress represents a startup progress event
 type ContainerStartProgress struct {
 	EndpointID string `json:"endpoint_id"`
-	Stage      string `json:"stage"`    // "pulling", "creating", "starting", "ready", "error"
+	Stage      string `json:"stage"`               // "pulling", "creating", "starting", "ready", "error"
 	Message    string `json:"message"`
-	Progress   int    `json:"progress"` // 0-100 percentage
+	Progress   int    `json:"progress"`             // 0-100 percentage
+	ErrorType  string `json:"error_type,omitempty"` // "runtime_unavailable", "startup_crash"
+	LogOutput  string `json:"log_output,omitempty"` // container stdout/stderr for startup_crash
 }
 
 // ContainerStats represents real-time container resource usage metrics

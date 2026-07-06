@@ -3,9 +3,11 @@ import { ref, watch } from 'vue'
 
 interface ProgressEvent {
   endpoint_id: string
-  stage: string      // "pulling", "creating", "starting", "ready", "error"
+  stage: string        // "pulling", "creating", "starting", "ready", "error"
   message: string
-  progress: number   // 0-100
+  progress: number     // 0-100
+  error_type?: string  // "runtime_unavailable" | "startup_crash"
+  log_output?: string  // container stdout/stderr for startup_crash
 }
 
 const props = defineProps<{
@@ -23,6 +25,8 @@ const message = ref<string>('Initializing...')
 const progress = ref<number>(0)
 const hasError = ref<boolean>(false)
 const errorMessage = ref<string>('')
+const errorType = ref<string>('')
+const logOutput = ref<string>('')
 
 // Watch for show prop changes to reset state
 watch(() => props.show, (newVal) => {
@@ -32,6 +36,8 @@ watch(() => props.show, (newVal) => {
     progress.value = 0
     hasError.value = false
     errorMessage.value = ''
+    errorType.value = ''
+    logOutput.value = ''
   }
 })
 
@@ -44,6 +50,8 @@ function updateProgress(event: ProgressEvent) {
   if (event.stage === 'error') {
     hasError.value = true
     errorMessage.value = event.message
+    errorType.value = event.error_type ?? ''
+    logOutput.value = event.log_output ?? ''
   } else if (event.stage === 'ready') {
     // Auto-close after 1 second when ready
     setTimeout(() => {
@@ -151,8 +159,36 @@ defineExpose({ updateProgress })
               ></div>
             </div>
 
-            <!-- Error Message -->
-            <div v-if="hasError" class="p-3 bg-red-900/30 border border-red-700 rounded">
+            <!-- Error: runtime not available -->
+            <div v-if="hasError && errorType === 'runtime_unavailable'" class="p-4 bg-red-900/30 border border-red-700 rounded space-y-3">
+              <p class="text-sm font-semibold text-red-400">{{ errorMessage }}</p>
+              <div class="text-xs text-gray-300 space-y-1">
+                <p class="font-medium text-gray-200">How to fix:</p>
+                <p><span class="text-yellow-400">Podman:</span> run <code class="bg-gray-700 px-1 rounded">systemctl --user start podman.socket</code></p>
+                <p><span class="text-blue-400">Docker:</span> start Docker Desktop, or run <code class="bg-gray-700 px-1 rounded">sudo systemctl start docker</code></p>
+              </div>
+              <div class="flex flex-wrap gap-2 pt-1">
+                <a href="https://podman.io/docs/installation" target="_blank"
+                   class="text-xs text-blue-400 underline hover:text-blue-300">Podman setup guide</a>
+                <span class="text-gray-600">·</span>
+                <a href="https://docs.docker.com/get-docker/" target="_blank"
+                   class="text-xs text-blue-400 underline hover:text-blue-300">Docker installation guide</a>
+              </div>
+            </div>
+
+            <!-- Error: container crashed on startup -->
+            <div v-else-if="hasError && errorType === 'startup_crash'" class="space-y-2">
+              <div class="p-3 bg-red-900/30 border border-red-700 rounded">
+                <p class="text-sm text-red-400">{{ errorMessage }}</p>
+              </div>
+              <div v-if="logOutput" class="bg-gray-900 border border-gray-600 rounded">
+                <div class="px-3 py-1 border-b border-gray-600 text-xs text-gray-400 font-medium">Container output</div>
+                <pre class="p-3 text-xs text-green-400 whitespace-pre-wrap max-h-48 overflow-y-auto font-mono">{{ logOutput }}</pre>
+              </div>
+            </div>
+
+            <!-- Error: generic -->
+            <div v-else-if="hasError" class="p-3 bg-red-900/30 border border-red-700 rounded">
               <p class="text-sm text-red-400">{{ errorMessage }}</p>
             </div>
           </div>
