@@ -8,6 +8,7 @@ interface ProgressEvent {
   progress: number     // 0-100
   error_type?: string  // "runtime_unavailable" | "startup_crash"
   log_output?: string  // container stdout/stderr for startup_crash
+  platform?: string    // "linux" | "windows" | "darwin"
 }
 
 const props = defineProps<{
@@ -27,6 +28,7 @@ const hasError = ref<boolean>(false)
 const errorMessage = ref<string>('')
 const errorType = ref<string>('')
 const logOutput = ref<string>('')
+const platform = ref<string>('')
 
 // Watch for show prop changes to reset state
 watch(() => props.show, (newVal) => {
@@ -38,6 +40,7 @@ watch(() => props.show, (newVal) => {
     errorMessage.value = ''
     errorType.value = ''
     logOutput.value = ''
+    platform.value = ''
   }
 })
 
@@ -52,6 +55,7 @@ function updateProgress(event: ProgressEvent) {
     errorMessage.value = event.message
     errorType.value = event.error_type ?? ''
     logOutput.value = event.log_output ?? ''
+    platform.value = event.platform ?? ''
   } else if (event.stage === 'ready') {
     // Auto-close after 1 second when ready
     setTimeout(() => {
@@ -164,12 +168,28 @@ defineExpose({ updateProgress })
               <p class="text-sm font-semibold text-red-400">{{ errorMessage }}</p>
               <div class="text-xs text-gray-300 space-y-1">
                 <p class="font-medium text-gray-200">How to fix:</p>
-                <p><span class="text-yellow-400">Podman:</span> run <code class="bg-gray-700 px-1 rounded">systemctl --user start podman.socket</code></p>
-                <p><span class="text-blue-400">Docker:</span> start Docker Desktop, or run <code class="bg-gray-700 px-1 rounded">sudo systemctl start docker</code></p>
+
+                <!-- Windows -->
+                <template v-if="platform === 'windows'">
+                  <p><span class="text-yellow-400">Podman:</span> open <strong>Podman Desktop</strong> from the Start Menu, or run <code class="bg-gray-700 px-1 rounded">podman machine start</code> in a terminal</p>
+                  <p><span class="text-blue-400">Docker:</span> open <strong>Docker Desktop</strong> from the Start Menu</p>
+                </template>
+
+                <!-- macOS -->
+                <template v-else-if="platform === 'darwin'">
+                  <p><span class="text-yellow-400">Podman:</span> open <strong>Podman Desktop</strong> from Applications, or run <code class="bg-gray-700 px-1 rounded">podman machine start</code> in a terminal</p>
+                  <p><span class="text-blue-400">Docker:</span> open <strong>Docker Desktop</strong> from Applications</p>
+                </template>
+
+                <!-- Linux (default) -->
+                <template v-else>
+                  <p><span class="text-yellow-400">Podman:</span> run <code class="bg-gray-700 px-1 rounded">systemctl --user start podman.socket</code></p>
+                  <p><span class="text-blue-400">Docker:</span> run <code class="bg-gray-700 px-1 rounded">sudo systemctl start docker</code></p>
+                </template>
               </div>
               <div class="flex flex-wrap gap-2 pt-1">
-                <a href="https://podman.io/docs/installation" target="_blank"
-                   class="text-xs text-blue-400 underline hover:text-blue-300">Podman setup guide</a>
+                <a href="https://podman-desktop.io/" target="_blank"
+                   class="text-xs text-blue-400 underline hover:text-blue-300">Podman Desktop</a>
                 <span class="text-gray-600">·</span>
                 <a href="https://docs.docker.com/get-docker/" target="_blank"
                    class="text-xs text-blue-400 underline hover:text-blue-300">Docker installation guide</a>

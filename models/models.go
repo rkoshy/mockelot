@@ -351,6 +351,7 @@ type ContainerStartProgress struct {
 	Progress   int    `json:"progress"`             // 0-100 percentage
 	ErrorType  string `json:"error_type,omitempty"` // "runtime_unavailable", "startup_crash"
 	LogOutput  string `json:"log_output,omitempty"` // container stdout/stderr for startup_crash
+	Platform   string `json:"platform,omitempty"`   // "linux", "windows", "darwin"
 }
 
 // ContainerStats represents real-time container resource usage metrics

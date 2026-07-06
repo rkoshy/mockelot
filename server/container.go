@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"time"
@@ -99,7 +100,16 @@ func (c *ContainerHandler) StartContainer(ctx context.Context, endpoint *models.
 		if msg == "" {
 			msg = "No container runtime is available. Make sure Docker or Podman is installed and running."
 		}
-		c.emitProgressFull(endpoint.ID, "error", msg, 0, "runtime_unavailable", "")
+		event := models.ContainerStartProgress{
+			EndpointID: endpoint.ID,
+			Stage:      "error",
+			Message:    msg,
+			ErrorType:  "runtime_unavailable",
+			Platform:   goruntime.GOOS,
+		}
+		if c.eventSender != nil {
+			c.eventSender.SendEvent("ctr:progress", event)
+		}
 		return fmt.Errorf("%s", msg)
 	}
 
