@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"time"
@@ -27,18 +28,19 @@ type EventSender interface {
 
 // ContainerHandler handles container endpoint requests
 type ContainerHandler struct {
-	runtime        runtime.ContainerRuntime
-	logger         RequestLogger
-	eventSender    EventSender // For progress and status events
-	proxyHandler   *ProxyHandler // For header manipulation
-	healthStatus   map[string]*models.HealthStatus
-	containerStatus map[string]*models.ContainerStatus // Track container running state
-	containerStats  map[string]*models.ContainerStats  // Track container resource usage
-	healthMutex    sync.RWMutex
-	statusMutex    sync.RWMutex // Mutex for container status map
-	statsMutex     sync.RWMutex // Mutex for container stats map
-	stopStatusPoll chan struct{} // Channel to signal status polling goroutine to stop
-	stopStatsPoll  chan struct{} // Channel to signal stats polling goroutine to stop
+	runtime              runtime.ContainerRuntime
+	runtimeUnavailableMsg string // user-facing message when runtime could not be detected
+	logger               RequestLogger
+	eventSender          EventSender // For progress and status events
+	proxyHandler         *ProxyHandler // For header manipulation
+	healthStatus         map[string]*models.HealthStatus
+	containerStatus      map[string]*models.ContainerStatus // Track container running state
+	containerStats       map[string]*models.ContainerStats  // Track container resource usage
+	healthMutex          sync.RWMutex
+	statusMutex          sync.RWMutex // Mutex for container status map
+	statsMutex           sync.RWMutex // Mutex for container stats map
+	stopStatusPoll       chan struct{} // Channel to signal status polling goroutine to stop
+	stopStatsPoll        chan struct{} // Channel to signal stats polling goroutine to stop
 }
 
 // sanitizeContainerName converts endpoint name to valid container name
@@ -63,14 +65,16 @@ func NewContainerHandler(logger RequestLogger, eventSender EventSender, proxyHan
 	// Detect runtime instead of hardcoding Docker
 	containerRuntime, err := runtime.DetectRuntime()
 	if err != nil {
+		unavailableMsg := buildRuntimeUnavailableMessage(err)
 		log.Printf("Warning: Failed to detect container runtime: %v. Container endpoints will not be available.", err)
 		return &ContainerHandler{
-			logger:          logger,
-			eventSender:     eventSender,
-			proxyHandler:    proxyHandler,
-			healthStatus:    make(map[string]*models.HealthStatus),
-			containerStatus: make(map[string]*models.ContainerStatus),
-			containerStats:  make(map[string]*models.ContainerStats),
+			runtimeUnavailableMsg: unavailableMsg,
+			logger:                logger,
+			eventSender:           eventSender,
+			proxyHandler:          proxyHandler,
+			healthStatus:          make(map[string]*models.HealthStatus),
+			containerStatus:       make(map[string]*models.ContainerStatus),
+			containerStats:        make(map[string]*models.ContainerStats),
 		}
 	}
 
@@ -92,7 +96,21 @@ func NewContainerHandler(logger RequestLogger, eventSender EventSender, proxyHan
 // StartContainer pulls image, creates and starts a container
 func (c *ContainerHandler) StartContainer(ctx context.Context, endpoint *models.Endpoint) error {
 	if c.runtime == nil {
-		return fmt.Errorf("container runtime not available")
+		msg := c.runtimeUnavailableMsg
+		if msg == "" {
+			msg = "No container runtime is available. Make sure Docker or Podman is installed and running."
+		}
+		event := models.ContainerStartProgress{
+			EndpointID: endpoint.ID,
+			Stage:      "error",
+			Message:    msg,
+			ErrorType:  "runtime_unavailable",
+			Platform:   goruntime.GOOS,
+		}
+		if c.eventSender != nil {
+			c.eventSender.SendEvent("ctr:progress", event)
+		}
+		return fmt.Errorf("%s", msg)
 	}
 
 	cfg := endpoint.ContainerConfig
@@ -213,6 +231,23 @@ func (c *ContainerHandler) StartContainer(ctx context.Context, endpoint *models.
 		c.emitProgress(endpoint.ID, "error", "Startup cancelled by user", 0)
 		return ctx.Err()
 	default:
+	}
+
+	// Verify the container is still running — it may have exited immediately due to a
+	// startup panic, missing directory, bad config, etc.
+	c.emitProgress(endpoint.ID, "starting", "Verifying container is running...", 90)
+	select {
+	case <-time.After(1500 * time.Millisecond):
+	case <-ctx.Done():
+		c.emitProgress(endpoint.ID, "error", "Startup cancelled by user", 0)
+		return ctx.Err()
+	}
+
+	if info, inspectErr := c.runtime.InspectContainer(ctx, containerID); inspectErr == nil && !info.Running {
+		logs, _ := c.runtime.GetContainerLogs(ctx, containerID, 200)
+		errMsg := fmt.Sprintf("Container exited immediately after starting (status: %s). See logs below.", info.Status)
+		c.emitProgressFull(endpoint.ID, "error", errMsg, 0, "startup_crash", logs)
+		return fmt.Errorf("container exited immediately (status: %s)", info.Status)
 	}
 
 	c.emitProgress(endpoint.ID, "ready", "Container ready", 100)
@@ -909,6 +944,11 @@ func (c *ContainerHandler) logPendingRequest(requestID string, endpoint *models.
 
 // emitProgress emits a container startup progress event to the frontend
 func (c *ContainerHandler) emitProgress(endpointID, stage, message string, progress int) {
+	c.emitProgressFull(endpointID, stage, message, progress, "", "")
+}
+
+// emitProgressFull emits a progress event with optional errorType and logOutput fields
+func (c *ContainerHandler) emitProgressFull(endpointID, stage, message string, progress int, errorType, logOutput string) {
 	if c.eventSender == nil {
 		log.Printf("WARNING: eventSender is nil, cannot emit progress event")
 		return
@@ -919,9 +959,41 @@ func (c *ContainerHandler) emitProgress(endpointID, stage, message string, progr
 		Stage:      stage,
 		Message:    message,
 		Progress:   progress,
+		ErrorType:  errorType,
+		LogOutput:  logOutput,
 	}
 
 	c.eventSender.SendEvent("ctr:progress", event)
+}
+
+// buildRuntimeUnavailableMessage converts a runtime detection error into a user-friendly message
+func buildRuntimeUnavailableMessage(err error) string {
+	detectionErr, ok := err.(*runtime.RuntimeDetectionError)
+	if !ok {
+		return "No container runtime is available. Make sure Docker or Podman is installed and running."
+	}
+
+	dockerRunning := detectionErr.DockerError == ""
+	podmanRunning := detectionErr.PodmanError == ""
+
+	if dockerRunning || podmanRunning {
+		return "Container runtime available."
+	}
+
+	dockerNotResponding := strings.Contains(detectionErr.DockerError, "not responding") ||
+		strings.Contains(detectionErr.DockerError, "connection refused") ||
+		strings.Contains(detectionErr.DockerError, "no such file")
+	podmanNotResponding := strings.Contains(detectionErr.PodmanError, "not responding") ||
+		strings.Contains(detectionErr.PodmanError, "connection refused") ||
+		strings.Contains(detectionErr.PodmanError, "no such file")
+
+	if podmanNotResponding && !dockerNotResponding {
+		return "Podman is not running or its socket is not accessible."
+	}
+	if dockerNotResponding && !podmanNotResponding {
+		return "The Docker Engine is not running or is not accessible via the Docker socket."
+	}
+	return "No container runtime is available. Neither Docker nor Podman could be reached."
 }
 
 // streamPullProgress parses Docker/Podman pull progress and emits updates
