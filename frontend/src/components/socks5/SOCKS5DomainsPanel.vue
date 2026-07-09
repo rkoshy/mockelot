@@ -7,8 +7,8 @@
         {{ filteredDomains.length }}
         {{ filterPattern ? 'filtered' : 'unique' }}
         domain{{ filteredDomains.length !== 1 ? 's' : '' }}
-        <span v-if="filterPattern && domains.length > filteredDomains.length">
-          ({{ domains.length }} total)
+        <span v-if="filterPattern && serverStore.socks5Domains.length > filteredDomains.length">
+          ({{ serverStore.socks5Domains.length }} total)
         </span>
       </p>
     </div>
@@ -39,7 +39,7 @@
 
     <!-- Domain List -->
     <div class="flex-1 overflow-y-auto">
-      <div v-if="domains.length === 0" class="px-4 py-8 text-center text-gray-500">
+      <div v-if="serverStore.socks5Domains.length === 0" class="px-4 py-8 text-center text-gray-500">
         <p class="mb-2">No domains accessed yet through SOCKS5</p>
         <p class="text-xs">Configure your browser to use SOCKS5 proxy at localhost:{{ socks5Port }}</p>
       </div>
@@ -94,36 +94,23 @@
       <span class="text-xs text-gray-500">
         Auto-refreshes with traffic logs
       </span>
-      <button @click="refreshDomains"
-              :disabled="loading"
+      <button @click="serverStore.refreshSOCKS5Domains"
+              :disabled="serverStore.socks5DomainsLoading"
               class="px-3 py-1 text-xs text-blue-400 hover:text-blue-300 disabled:text-gray-500 transition-colors"
               title="Manually refresh domain list">
-        {{ loading ? 'Loading...' : 'Refresh' }}
+        {{ serverStore.socks5DomainsLoading ? 'Loading...' : 'Refresh' }}
       </button>
     </div>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { GetSOCKS5Domains, AddDomainToSOCKS5Takeover, GetSOCKS5Config, FrontendLog } from '../../../wailsjs/go/main/App'
-import { useServerStore } from '../../stores/server'
-
-// Define the domain info type
-interface SOCKS5DomainInfo {
-  domain: string
-  request_count: number
-  first_seen: string
-  last_seen: string
-  is_configured: boolean
-  is_intercepted: boolean
-}
+import { ref, computed, onMounted } from 'vue'
+import { GetSOCKS5Config, FrontendLog } from '../../../wailsjs/go/main/App'
+import { useServerStore, type SOCKS5DomainInfo } from '../../stores/server'
 
 const serverStore = useServerStore()
-const domains = ref<SOCKS5DomainInfo[]>([])
-const loading = ref(false)
 const adding = ref<Record<string, boolean>>({})
-const refreshInterval = ref<number | null>(null)
 const socks5Port = ref(1080)
 const filterPattern = ref('')
 const filterError = ref('')
@@ -142,7 +129,7 @@ const isRegexPattern = computed(() => {
 
 // Filtered and sorted domains
 const filteredDomains = computed(() => {
-  let result = [...domains.value]
+  let result = [...serverStore.socks5Domains]
 
   // Apply filter if present
   if (filterPattern.value) {
@@ -193,17 +180,6 @@ function escapeHtml(text: string): string {
   return div.innerHTML
 }
 
-async function refreshDomains() {
-  loading.value = true
-  try {
-    domains.value = await GetSOCKS5Domains()
-  } catch (error) {
-    await FrontendLog(`[SOCKS5] Failed to get domains: ${error}`)
-  } finally {
-    loading.value = false
-  }
-}
-
 async function loadSOCKS5Config() {
   try {
     const config = await GetSOCKS5Config()
@@ -218,16 +194,8 @@ async function loadSOCKS5Config() {
 async function addDomain(domain: string) {
   adding.value[domain] = true
   try {
-    await AddDomainToSOCKS5Takeover(domain, true) // Enable overlay by default
-
-    // Log success
+    await serverStore.addSOCKS5Domain(domain)
     await FrontendLog(`[SOCKS5] Added domain to takeover list: ${domain}`)
-
-    // Refresh the server store config so the Server tab updates
-    await serverStore.refreshConfig()
-
-    // Refresh to update the is_configured status
-    await refreshDomains()
   } catch (error) {
     await FrontendLog(`[SOCKS5] Failed to add domain: ${error}`)
   } finally {
@@ -255,14 +223,5 @@ function formatFullTimestamp(timestamp: string): string {
 
 onMounted(() => {
   loadSOCKS5Config()
-  refreshDomains()
-  // Auto-refresh every 5 seconds
-  refreshInterval.value = window.setInterval(refreshDomains, 5000)
-})
-
-onUnmounted(() => {
-  if (refreshInterval.value) {
-    clearInterval(refreshInterval.value)
-  }
 })
 </script>

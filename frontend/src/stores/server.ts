@@ -37,8 +37,19 @@ import {
   GetContainerStatus,
   GetRequestLogDetails,
   PollRequestLogs,
-  ReorderEndpoints
+  ReorderEndpoints,
+  GetSOCKS5Domains,
+  AddDomainToSOCKS5Takeover,
 } from '../../wailsjs/go/main/App'
+
+export interface SOCKS5DomainInfo {
+  domain: string
+  request_count: number
+  first_seen: string
+  last_seen: string
+  is_configured: boolean
+  is_intercepted: boolean
+}
 import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 
 export const useServerStore = defineStore('server', () => {
@@ -653,6 +664,44 @@ export const useServerStore = defineStore('server', () => {
     }
   }
 
+  // SOCKS5 Domain State
+  const socks5Domains = ref<SOCKS5DomainInfo[]>([])
+  const socks5DomainsLoading = ref(false)
+
+  async function refreshSOCKS5Domains() {
+    socks5DomainsLoading.value = true
+    try {
+      socks5Domains.value = await GetSOCKS5Domains()
+    } catch (error) {
+      console.error('Failed to get SOCKS5 domains:', error)
+    } finally {
+      socks5DomainsLoading.value = false
+    }
+  }
+
+  async function addSOCKS5Domain(domain: string) {
+    await AddDomainToSOCKS5Takeover(domain, true)
+    await refreshConfig()
+    await refreshSOCKS5Domains()
+  }
+
+  let socks5DomainPollingInterval: number | null = null
+
+  function startSOCKS5DomainPolling() {
+    if (socks5DomainPollingInterval !== null) {
+      clearInterval(socks5DomainPollingInterval)
+    }
+    refreshSOCKS5Domains()
+    socks5DomainPollingInterval = window.setInterval(refreshSOCKS5Domains, 5000)
+  }
+
+  function stopSOCKS5DomainPolling() {
+    if (socks5DomainPollingInterval !== null) {
+      clearInterval(socks5DomainPollingInterval)
+      socks5DomainPollingInterval = null
+    }
+  }
+
   // Start health polling for proxy and container endpoints
   let healthPollingInterval: number | null = null
 
@@ -870,6 +919,9 @@ export const useServerStore = defineStore('server', () => {
 
     // Start request log polling
     startRequestLogPolling()
+
+    // Start SOCKS5 domain polling
+    startSOCKS5DomainPolling()
   }
 
   return {
@@ -955,6 +1007,12 @@ export const useServerStore = defineStore('server', () => {
     stopHealthPolling,
     startRequestLogPolling,
     stopRequestLogPolling,
+    socks5Domains,
+    socks5DomainsLoading,
+    refreshSOCKS5Domains,
+    addSOCKS5Domain,
+    startSOCKS5DomainPolling,
+    stopSOCKS5DomainPolling,
     initEventListeners,
   }
 })
