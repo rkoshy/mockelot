@@ -11,15 +11,15 @@ log_info "=== Mockelot Build All (v${VERSION}) ==="
 
 if [[ "${1:-}" == "--laminar" ]]; then
     log_info "Dispatching to Laminar CI jobs..."
-    laminarc run mockelot-linux-build &
+    laminarc run mockelot-linux-build VERSION=${VERSION} &
     PID_LINUX=$!
-    laminarc run mockelot-windows-build &
+    laminarc run mockelot-windows-build VERSION=${VERSION} &
     PID_WIN=$!
-    laminarc run mockelot-macos-build &
+    laminarc run mockelot-macos-build VERSION=${VERSION} &
     PID_MAC=$!
-    laminarc run mockelot-appimage-d12 &
+    laminarc run mockelot-appimage-d12 VERSION=${VERSION} &
     PID_D12=$!
-    laminarc run mockelot-appimage-d13 &
+    laminarc run mockelot-appimage-d13 VERSION=${VERSION} &
     PID_D13=$!
 
     log_info "Waiting for builds (monitor: http://localhost:9000)..."
