@@ -191,7 +191,7 @@ export function StopServer():Promise<void>;
 
 export function TerminateWSConnection(arg1:string):Promise<void>;
 
-export function TestContainerConfig(arg1:Record<string, any>):Promise<void>;
+export function TestContainerConfig(arg1:Record<string, any>):Promise<main.ContainerTestResult>;
 
 export function TestProxyConnection(arg1:string):Promise<void>;
 

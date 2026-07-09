@@ -1,5 +1,21 @@
 export namespace main {
 	
+	export class ContainerTestResult {
+	    success: boolean;
+	    message: string;
+	    logs?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ContainerTestResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.message = source["message"];
+	        this.logs = source["logs"];
+	    }
+	}
 	export class Event {
 	    source: string;
 	    data: Record<string, any>;
