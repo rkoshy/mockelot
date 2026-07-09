@@ -1361,10 +1361,10 @@ onMounted(async () => {
   loadDefaultCertNames()
   loadRuntimeOS()
   await loadDNSProviders()
-  if (serverStore.config) {
-    loadFromConfig(serverStore.config)
-  }
-
+  // Always fetch fresh config on mount so domain takeover list (which can be
+  // updated externally via AddDomainToSOCKS5Takeover) is never stale.
+  const freshConfig = await serverStore.refreshConfig()
+  loadFromConfig(freshConfig ?? serverStore.config)
 })
 
 

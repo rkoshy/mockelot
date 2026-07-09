@@ -805,6 +805,7 @@ export const useServerStore = defineStore('server', () => {
     EventsOff('config:path')
     EventsOff('config:port-changed')
     EventsOff('config:loaded')
+    EventsOff('config:domain-takeover-updated')
     // NOTE: ctr:* events are handled via polling in HeaderBar.vue
 
     console.log('Setting up script:error event listener')
@@ -866,6 +867,15 @@ export const useServerStore = defineStore('server', () => {
     EventsOn('endpoints:updated', (newEndpoints: models.Endpoint[]) => {
       console.log('[Event: endpoints:updated] Received', newEndpoints?.length || 0, 'endpoints')
       endpoints.value = newEndpoints
+    })
+
+    // Patch the config's domain_takeover in-place when it changes externally
+    // (e.g. via AddDomainToSOCKS5Takeover from the SOCKS5 domains panel).
+    // This keeps ServerTab's "Intercepted Domains" in sync without a full config reload.
+    EventsOn('config:domain-takeover-updated', (newDomainTakeover: any) => {
+      if (config.value) {
+        config.value = { ...config.value, domain_takeover: newDomainTakeover }
+      }
     })
 
     EventsOn('endpoint:selected', (endpointId: string) => {

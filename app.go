@@ -3674,7 +3674,15 @@ func (a *App) AddDomainToSOCKS5Takeover(domain string, enableOverlay bool) error
 		a.server.UpdateDomainTakeover(a.config.DomainTakeover)
 		// Ensure overlay endpoints are created if needed
 		a.ensureDomainTakeoverEndpoints()
+	} else {
+		a.ensureDomainTakeoverEndpoints()
 	}
+
+	// Notify frontend that endpoints and domain takeover have changed so the
+	// Server tab's "Intercepted Domains" list stays in sync without requiring
+	// an explicit refreshConfig() call from the component.
+	runtime.EventsEmit(a.ctx, "endpoints:updated", a.config.Endpoints)
+	runtime.EventsEmit(a.ctx, "config:domain-takeover-updated", a.config.DomainTakeover)
 
 	return nil
 }
