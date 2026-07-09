@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 )
 
@@ -221,17 +223,26 @@ func (d *DockerRuntime) GetContainerLogs(ctx context.Context, containerID string
 		Tail:       tailStr,
 	}
 
-	logs, err := d.client.ContainerLogs(ctx, containerID, options)
+	rc, err := d.client.ContainerLogs(ctx, containerID, options)
 	if err != nil {
 		return "", err
 	}
-	defer logs.Close()
+	defer rc.Close()
 
-	// Read all logs
-	logBytes, err := io.ReadAll(logs)
-	if err != nil {
-		return "", err
+	// Docker log stream is multiplexed (8-byte header per chunk).
+	// stdcopy.StdCopy strips the framing and merges stdout+stderr into
+	// the two writers; we merge both into the same buffer for display.
+	var buf bytes.Buffer
+	if _, err := stdcopy.StdCopy(&buf, &buf, rc); err != nil {
+		// Fall back to raw read if demuxing fails (e.g. TTY mode)
+		rc.Close()
+		rc2, err2 := d.client.ContainerLogs(ctx, containerID, options)
+		if err2 != nil {
+			return buf.String(), nil
+		}
+		defer rc2.Close()
+		io.Copy(&buf, rc2)
 	}
 
-	return string(logBytes), nil
+	return buf.String(), nil
 }

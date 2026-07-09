@@ -998,9 +998,10 @@ function handleKeydown(e: KeyboardEvent) {
               </div>
 
               <!-- Container output on failure -->
-              <div v-if="containerTestStatus === 'error' && containerTestLogs" class="bg-gray-900 border border-gray-600 rounded">
+              <div v-if="containerTestStatus === 'error'" class="bg-gray-900 border border-gray-600 rounded">
                 <div class="px-3 py-1.5 border-b border-gray-600 text-xs text-gray-400 font-medium">Container output</div>
-                <pre class="p-3 text-xs text-green-400 whitespace-pre-wrap max-h-48 overflow-y-auto font-mono">{{ containerTestLogs }}</pre>
+                <pre v-if="containerTestLogs" class="p-3 text-xs text-green-400 whitespace-pre-wrap max-h-64 overflow-y-auto font-mono">{{ containerTestLogs }}</pre>
+                <p v-else class="p-3 text-xs text-gray-500 italic">No output captured — the container may log to a file rather than stdout/stderr.</p>
               </div>
 
               <!-- Action Buttons -->
