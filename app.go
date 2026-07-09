@@ -1791,16 +1791,29 @@ func (a *App) GetContainerLogs(endpointID string, tail int) (string, error) {
 
 // TestContainerConfig tests a container configuration by creating a temporary container
 // This is called from the wizard before the endpoint is created
-func (a *App) TestContainerConfig(config map[string]interface{}) error {
+// ContainerTestResult is returned by TestContainerConfig.
+// Failures are reported as Success=false with a Message and optional Logs
+// rather than as Go errors, so the frontend can display the container output.
+type ContainerTestResult struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Logs    string `json:"logs,omitempty"`
+}
+
+func (a *App) TestContainerConfig(config map[string]interface{}) (ContainerTestResult, error) {
+	fail := func(msg string, logs string) (ContainerTestResult, error) {
+		return ContainerTestResult{Success: false, Message: msg, Logs: logs}, nil
+	}
+
 	// Parse configuration from frontend
 	imageName := getString(config, "image_name")
 	if imageName == "" {
-		return fmt.Errorf("image_name is required")
+		return fail("image_name is required", "")
 	}
 
 	containerPort := getInt(config, "container_port", 0)
 	if containerPort <= 0 {
-		return fmt.Errorf("container_port must be greater than 0")
+		return fail("container_port must be greater than 0", "")
 	}
 
 	// Parse volumes
@@ -1823,7 +1836,7 @@ func (a *App) TestContainerConfig(config map[string]interface{}) error {
 	// Create temporary container runtime
 	containerRuntime, err := containerruntime.DetectRuntime()
 	if err != nil {
-		return fmt.Errorf("Docker/Podman not available: %w", err)
+		return fail(fmt.Sprintf("Docker/Podman not available: %v", err), "")
 	}
 
 	// Generate unique test container name with timestamp
@@ -1850,14 +1863,14 @@ func (a *App) TestContainerConfig(config map[string]interface{}) error {
 		log.Printf("Pulling image for test: %s", imageName)
 		reader, err := containerRuntime.PullImage(ctx, imageName)
 		if err != nil {
-			return fmt.Errorf("failed to pull image: %w", err)
+			return fail(fmt.Sprintf("failed to pull image: %v", err), "")
 		}
 		defer reader.Close()
 
 		// Wait for pull to complete
 		_, err = io.Copy(io.Discard, reader)
 		if err != nil {
-			return fmt.Errorf("error during image pull: %w", err)
+			return fail(fmt.Sprintf("error during image pull: %v", err), "")
 		}
 	}
 
@@ -1900,12 +1913,18 @@ func (a *App) TestContainerConfig(config map[string]interface{}) error {
 
 	containerID, err = containerRuntime.CreateContainer(ctx, createConfig)
 	if err != nil {
-		return fmt.Errorf("failed to create test container: %w", err)
+		return fail(fmt.Sprintf("failed to create test container: %v", err), "")
+	}
+
+	// fetchLogs is a helper that grabs stdout/stderr from the test container.
+	fetchLogs := func() string {
+		logs, _ := containerRuntime.GetContainerLogs(ctx, containerID, 200)
+		return logs
 	}
 
 	// Start container
 	if err := containerRuntime.StartContainer(ctx, containerID); err != nil {
-		return fmt.Errorf("failed to start test container: %w", err)
+		return fail(fmt.Sprintf("failed to start test container: %v", err), fetchLogs())
 	}
 
 	// Wait a moment for container to initialize
@@ -1914,11 +1933,11 @@ func (a *App) TestContainerConfig(config map[string]interface{}) error {
 	// Check if container is still running
 	info, err := containerRuntime.InspectContainer(ctx, containerID)
 	if err != nil {
-		return fmt.Errorf("failed to inspect test container: %w", err)
+		return fail(fmt.Sprintf("failed to inspect test container: %v", err), fetchLogs())
 	}
 
 	if !info.Running {
-		return fmt.Errorf("container exited immediately (status: %s)", info.Status)
+		return fail(fmt.Sprintf("container exited immediately (status: %s)", info.Status), fetchLogs())
 	}
 
 	// Perform health check if enabled
@@ -1926,7 +1945,7 @@ func (a *App) TestContainerConfig(config map[string]interface{}) error {
 		portKey := fmt.Sprintf("%d/tcp", containerPort)
 		hostPort, ok := info.Ports[portKey]
 		if !ok || hostPort == "" {
-			return fmt.Errorf("container port %d not bound to host", containerPort)
+			return fail(fmt.Sprintf("container port %d not bound to host", containerPort), fetchLogs())
 		}
 
 		healthURL := fmt.Sprintf("http://127.0.0.1:%s%s", hostPort, healthCheckPath)
@@ -1934,17 +1953,17 @@ func (a *App) TestContainerConfig(config map[string]interface{}) error {
 
 		resp, err := client.Get(healthURL)
 		if err != nil {
-			return fmt.Errorf("health check failed: %w", err)
+			return fail(fmt.Sprintf("health check failed: %v", err), fetchLogs())
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode >= 500 {
-			return fmt.Errorf("health check returned status %d", resp.StatusCode)
+			return fail(fmt.Sprintf("health check returned status %d", resp.StatusCode), fetchLogs())
 		}
 	}
 
 	// Test succeeded - cleanup will happen in defer
-	return nil
+	return ContainerTestResult{Success: true, Message: "Container started successfully and is responding!"}, nil
 }
 
 // GetSelectedEndpointId returns the currently selected endpoint ID from memory

@@ -1361,8 +1361,6 @@ onMounted(async () => {
   loadDefaultCertNames()
   loadRuntimeOS()
   await loadDNSProviders()
-  // Always fetch fresh config on mount so domain takeover list (which can be
-  // updated externally via AddDomainToSOCKS5Takeover) is never stale.
   const freshConfig = await serverStore.refreshConfig()
   loadFromConfig(freshConfig ?? serverStore.config)
 })
@@ -1423,28 +1421,8 @@ function loadFromConfig(config: models.AppConfig) {
     },
   }
 
-  // Load DNS provider selection
-  if (config.dns_overrides?.use_system_dns) {
-    selectedDNSProvider.value = 'system'
-    customDNSServers.value = ''
-  } else if (config.dns_overrides?.upstream_servers && config.dns_overrides.upstream_servers.length > 0) {
-    // Check if these match a known provider
-    const serversStr = config.dns_overrides.upstream_servers.join(',')
-    let foundProvider = false
-
-    for (const [key, provider] of Object.entries(dnsProviders.value)) {
-      if (provider.servers.join(',') === serversStr) {
-        selectedDNSProvider.value = key
-        foundProvider = true
-        break
-      }
-    }
-
-    if (!foundProvider) {
-      selectedDNSProvider.value = 'custom'
-      customDNSServers.value = config.dns_overrides.upstream_servers.join('\n')
-    }
-  }
+  // Note: DNS provider selection (selectedDNSProvider / customDNSServers) is
+  // managed internally by DNSSection.vue — do not set it here.
 
   // Load domain takeover
   if (config.domain_takeover && config.domain_takeover.domains) {

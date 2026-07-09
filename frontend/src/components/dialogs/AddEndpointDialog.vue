@@ -54,6 +54,7 @@ const selectedPort = ref<string>('')  // For radio button selection when multipl
 // Container test state
 const containerTestStatus = ref<'idle' | 'testing' | 'success' | 'error'>('idle')
 const containerTestMessage = ref('')
+const containerTestLogs = ref('')
 const containerTestSkipped = ref(false)
 
 // Proxy config (Steps 2-3)
@@ -293,10 +294,10 @@ async function handleValidateImage() {
 async function handleTestContainer() {
   containerTestStatus.value = 'testing'
   containerTestMessage.value = 'Starting temporary container...'
+  containerTestLogs.value = ''
   containerTestSkipped.value = false
 
   try {
-    // Build container configuration for testing
     const testConfig = {
       image_name: containerImageName.value.trim(),
       container_port: containerPort.value,
@@ -308,11 +309,15 @@ async function handleTestContainer() {
       health_check_path: healthCheckPath.value
     }
 
-    // Call backend to test container configuration
-    await TestContainerConfig(testConfig)
-
-    containerTestStatus.value = 'success'
-    containerTestMessage.value = 'Container started successfully and is responding!'
+    const result = await TestContainerConfig(testConfig) as any
+    if (result?.success === false) {
+      containerTestStatus.value = 'error'
+      containerTestMessage.value = `Container test failed: ${result.message}`
+      containerTestLogs.value = result.logs || ''
+    } else {
+      containerTestStatus.value = 'success'
+      containerTestMessage.value = result?.message || 'Container started successfully and is responding!'
+    }
   } catch (error) {
     containerTestStatus.value = 'error'
     containerTestMessage.value = `Container test failed: ${error}`
@@ -990,6 +995,12 @@ function handleKeydown(e: KeyboardEvent) {
                     </p>
                   </div>
                 </div>
+              </div>
+
+              <!-- Container output on failure -->
+              <div v-if="containerTestStatus === 'error' && containerTestLogs" class="bg-gray-900 border border-gray-600 rounded">
+                <div class="px-3 py-1.5 border-b border-gray-600 text-xs text-gray-400 font-medium">Container output</div>
+                <pre class="p-3 text-xs text-green-400 whitespace-pre-wrap max-h-48 overflow-y-auto font-mono">{{ containerTestLogs }}</pre>
               </div>
 
               <!-- Action Buttons -->
