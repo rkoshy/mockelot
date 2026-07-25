@@ -16,6 +16,21 @@ import (
 	"mockelot/config"
 )
 
+func init() {
+	// On Linux with NVIDIA (and some other GPU drivers), WebKit2GTK 2.44+
+	// enables the DMABuf renderer and GPU compositing by default, which
+	// causes the WebView to render as a blank/black window. Force software
+	// rendering unless the caller has already set these vars explicitly.
+	if runtime.GOOS == "linux" {
+		if _, ok := os.LookupEnv("WEBKIT_DISABLE_DMABUF_RENDERER"); !ok {
+			os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+		}
+		if _, ok := os.LookupEnv("WEBKIT_DISABLE_COMPOSITING_MODE"); !ok {
+			os.Setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
+		}
+	}
+}
+
 // Command-line flags
 var logRequestMatching = flag.Bool("log-request-matching", false, "Enable verbose logging for request matching (logs to mockelot-matching.log)")
 
