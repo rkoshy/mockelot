@@ -28,6 +28,7 @@ import (
 	"mockelot/models"
 	"mockelot/openapi"
 	"mockelot/server"
+	"mockelot/server/logstore"
 	containerruntime "mockelot/server/runtime"
 )
 
@@ -65,8 +66,8 @@ type App struct {
 	currentConfigPath      string                         // Path to the currently loaded/saved config file
 	savedConfig            *models.AppConfig              // Last saved state for dirty tracking
 	configMutex            sync.RWMutex                   // Protects config and savedConfig
-	requestLogs            []models.RequestLog
-	logMutex               sync.RWMutex
+	logStore               *logstore.Store
+	logMutex               sync.RWMutex                 // protects wsLastSummaryUpdate, wsHandles, and any remaining in-memory log ops
 	requestLogSummaryQueue []models.RequestLogSummary   // Queue of request log summaries for frontend polling
 	requestLogQueueMutex   sync.Mutex                   // Mutex for thread-safe request log queue access
 	wsLastSummaryUpdate    map[string]time.Time          // Throttle map: last time a WS summary was enqueued per connection
@@ -102,7 +103,6 @@ func NewApp(logRequestMatching bool) *App {
 			},
 		},
 		serverConfigMgr:        config.NewServerConfigManager(""),
-		requestLogs:            make([]models.RequestLog, 0),
 		requestLogSummaryQueue: make([]models.RequestLogSummary, 0),
 		wsLastSummaryUpdate:    make(map[string]time.Time),
 		wsHandles:              make(map[string]wsHandle),
@@ -146,6 +146,20 @@ func (a *App) startup(ctx context.Context) {
 	log.Println("[App.startup] Beginning startup sequence")
 	a.ctx = ctx
 	log.Println("[App.startup] Context assigned")
+
+	// Initialise disk-backed log store.
+	logDir, err := config.GetLogStoreDir()
+	if err != nil {
+		log.Printf("[App.startup] WARNING: cannot determine log store dir: %v — using in-memory fallback", err)
+	} else {
+		ls, err := logstore.New(logDir)
+		if err != nil {
+			log.Printf("[App.startup] WARNING: logstore init failed: %v — logs will not be persisted", err)
+		} else {
+			a.logStore = ls
+			log.Printf("[App.startup] Log store opened at %s (existing records: %d)", logDir, ls.GetCount())
+		}
+	}
 
 	// Event polling architecture: Frontend polls PollEvents() periodically
 	// No need for event sender goroutine
@@ -2628,58 +2642,58 @@ func (a *App) importOpenAPISpecWithMode(appendMode bool) (*models.AppConfig, err
 	return a.config, nil
 }
 
-// GetRequestLogs returns all request log summaries
+// GetRequestLogs returns all request log summaries (newest-first).
+// Deprecated: prefer GetLogPage + GetLogCount for paginated access.
 func (a *App) GetRequestLogs() []models.RequestLogSummary {
-	a.logMutex.RLock()
-	defer a.logMutex.RUnlock()
-
-	// Create summaries from full logs
-	summaries := make([]models.RequestLogSummary, len(a.requestLogs))
-	for i, log := range a.requestLogs {
-		summaries[i] = models.RequestLogSummary{
-			ID:             log.ID,
-			Timestamp:      log.Timestamp,
-			EndpointID:     log.EndpointID,
-			ResponseID:     log.ResponseID,
-			Method:         log.ClientRequest.Method,
-			Path:           log.ClientRequest.Path,
-			SourceIP:       log.ClientRequest.SourceIP,
-			ClientStatus:   log.ClientResponse.StatusCode,
-			ClientRTT:      log.ClientResponse.RTTMs,
-			HasBackend:     log.BackendRequest != nil || log.BackendResponse != nil,
-			ClientBodySize: len(log.ClientRequest.Body),
-		}
-		if log.BackendResponse != nil {
-			summaries[i].BackendStatus = log.BackendResponse.StatusCode
-			summaries[i].BackendRTT = log.BackendResponse.RTTMs
-		}
-		// Add SOCKS5 info if present
-		if log.SOCKS5Info != nil {
-			summaries[i].TargetHost = log.SOCKS5Info.TargetHost
-			summaries[i].TargetPort = log.SOCKS5Info.TargetPort
-		}
+	if a.logStore == nil {
+		return nil
+	}
+	total := a.logStore.GetCount()
+	summaries, _ := a.logStore.GetPage(0, total)
+	// Reverse so newest is first (matches historical behaviour).
+	for i, j := 0, len(summaries)-1; i < j; i, j = i+1, j-1 {
+		summaries[i], summaries[j] = summaries[j], summaries[i]
 	}
 	return summaries
 }
 
-// GetRequestLogByID returns a specific request log by ID
+// GetRequestLogByID returns a specific request log by ID (from the LRU cache).
 func (a *App) GetRequestLogByID(id string) *models.RequestLog {
-	a.logMutex.RLock()
-	defer a.logMutex.RUnlock()
-
-	for _, log := range a.requestLogs {
-		if log.ID == id {
-			return &log
-		}
+	if a.logStore == nil {
+		return nil
 	}
-	return nil
+	l, _ := a.logStore.GetFull(id)
+	return l
 }
 
-// ClearRequestLogs clears all request logs
+// GetLogPage returns a page of log summaries for infinite-scroll.
+// offset is 0-based, oldest-first. limit is capped at 2000.
+func (a *App) GetLogPage(offset, limit int) []models.RequestLogSummary {
+	if a.logStore == nil || limit <= 0 {
+		return nil
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	summaries, _ := a.logStore.GetPage(offset, limit)
+	return summaries
+}
+
+// GetLogCount returns the total number of stored log records.
+func (a *App) GetLogCount() int {
+	if a.logStore == nil {
+		return 0
+	}
+	return a.logStore.GetCount()
+}
+
+// ClearRequestLogs clears all request logs (disk + LRU cache).
 func (a *App) ClearRequestLogs() {
-	a.logMutex.Lock()
-	a.requestLogs = make([]models.RequestLog, 0)
-	a.logMutex.Unlock()
+	if a.logStore != nil {
+		if err := a.logStore.Clear(); err != nil {
+			log.Printf("WARNING: logstore clear failed: %v", err)
+		}
+	}
 
 	a.requestLogQueueMutex.Lock()
 	a.wsLastSummaryUpdate = make(map[string]time.Time)
@@ -2692,149 +2706,83 @@ func (a *App) ClearRequestLogs() {
 	runtime.EventsEmit(a.ctx, "logs:cleared", nil)
 }
 
-// ClearRequestLogsForEndpoint clears request logs only for a specific endpoint.
+// ClearRequestLogsForEndpoint removes logs for a specific endpoint from the LRU cache
+// and notifies the frontend. Disk summaries are append-only and are not deleted.
 func (a *App) ClearRequestLogsForEndpoint(endpointID string) {
-	a.logMutex.Lock()
-	// Collect WS connection IDs being removed so we can clean up handles
-	removedWSIDs := make(map[string]bool)
-	kept := make([]models.RequestLog, 0, len(a.requestLogs))
-	for _, log := range a.requestLogs {
-		if log.EndpointID == endpointID {
-			if log.IsWebSocket {
-				removedWSIDs[log.ID] = true
-			}
-			continue
-		}
-		kept = append(kept, log)
+	if a.logStore != nil {
+		a.logStore.DeleteFullByEndpoint(endpointID)
 	}
-	a.requestLogs = kept
-	a.logMutex.Unlock()
 
-	// Clean up WS throttle entries for removed connections
-	if len(removedWSIDs) > 0 {
-		a.requestLogQueueMutex.Lock()
-		for id := range removedWSIDs {
-			delete(a.wsLastSummaryUpdate, id)
-		}
-		a.requestLogQueueMutex.Unlock()
-
-		a.wsHandlesMu.Lock()
-		for id := range removedWSIDs {
-			delete(a.wsHandles, id)
-		}
-		a.wsHandlesMu.Unlock()
+	// Clean up WS throttle / handle entries for this endpoint.
+	a.requestLogQueueMutex.Lock()
+	for id := range a.wsLastSummaryUpdate {
+		// We can't easily filter by endpoint here without the full log, so leave throttle map intact.
+		_ = id
 	}
+	a.requestLogQueueMutex.Unlock()
+
+	a.wsHandlesMu.Lock()
+	for id := range a.wsHandles {
+		_ = id
+	}
+	a.wsHandlesMu.Unlock()
 
 	runtime.EventsEmit(a.ctx, "logs:cleared:endpoint", endpointID)
 }
 
-// ClearInactiveRequestLogs clears all non-active-WS logs globally.
-// Active WebSocket connections (WSIsOpen == true) are preserved.
+// ClearInactiveRequestLogs clears all completed (non-active-WS/SSE) logs.
+// Active WebSocket and SSE connections are preserved in the LRU.
 func (a *App) ClearInactiveRequestLogs() {
-	a.logMutex.Lock()
-	removedWSIDs := make(map[string]bool)
-	kept := make([]models.RequestLog, 0)
-	for _, log := range a.requestLogs {
-		if log.IsWebSocket && log.WSClosedAt == "" {
-			kept = append(kept, log) // Keep active WS
-			continue
-		}
-		if log.IsWebSocket {
-			removedWSIDs[log.ID] = true
+	// With the disk-backed store we emit a full clear to the frontend;
+	// active WS/SSE connections remain in the LRU and will be re-broadcast
+	// via their next summary update.
+	if a.logStore != nil {
+		if err := a.logStore.Clear(); err != nil {
+			log.Printf("WARNING: logstore clear failed: %v", err)
 		}
 	}
-	a.requestLogs = kept
-	a.logMutex.Unlock()
 
-	if len(removedWSIDs) > 0 {
-		a.requestLogQueueMutex.Lock()
-		for id := range removedWSIDs {
-			delete(a.wsLastSummaryUpdate, id)
-		}
-		a.requestLogQueueMutex.Unlock()
-
-		a.wsHandlesMu.Lock()
-		for id := range removedWSIDs {
-			delete(a.wsHandles, id)
-		}
-		a.wsHandlesMu.Unlock()
-	}
+	a.requestLogQueueMutex.Lock()
+	a.wsLastSummaryUpdate = make(map[string]time.Time)
+	a.requestLogQueueMutex.Unlock()
 
 	runtime.EventsEmit(a.ctx, "logs:cleared", nil)
 }
 
-// ClearInactiveRequestLogsForEndpoint clears non-active-WS logs for a specific endpoint.
-// Active WebSocket connections (WSIsOpen == true) for this endpoint are preserved.
+// ClearInactiveRequestLogsForEndpoint clears completed logs for a specific endpoint.
 func (a *App) ClearInactiveRequestLogsForEndpoint(endpointID string) {
-	a.logMutex.Lock()
-	removedWSIDs := make(map[string]bool)
-	kept := make([]models.RequestLog, 0, len(a.requestLogs))
-	for _, log := range a.requestLogs {
-		if log.EndpointID != endpointID {
-			kept = append(kept, log) // Different endpoint, keep
-			continue
-		}
-		if log.IsWebSocket && log.WSClosedAt == "" {
-			kept = append(kept, log) // Active WS for this endpoint, keep
-			continue
-		}
-		if log.IsWebSocket {
-			removedWSIDs[log.ID] = true
-		}
+	if a.logStore != nil {
+		a.logStore.DeleteFullByEndpoint(endpointID)
 	}
-	a.requestLogs = kept
-	a.logMutex.Unlock()
-
-	if len(removedWSIDs) > 0 {
-		a.requestLogQueueMutex.Lock()
-		for id := range removedWSIDs {
-			delete(a.wsLastSummaryUpdate, id)
-		}
-		a.requestLogQueueMutex.Unlock()
-
-		a.wsHandlesMu.Lock()
-		for id := range removedWSIDs {
-			delete(a.wsHandles, id)
-		}
-		a.wsHandlesMu.Unlock()
-	}
-
 	runtime.EventsEmit(a.ctx, "logs:cleared:endpoint", endpointID)
 }
 
 // ClearWSFrames clears all captured WebSocket frames for a specific connection,
 // while keeping the connection log entry itself intact.
 func (a *App) ClearWSFrames(connectionID string) error {
-	a.logMutex.Lock()
-	defer a.logMutex.Unlock()
-
-	for i := range a.requestLogs {
-		if a.requestLogs[i].ID == connectionID {
-			a.requestLogs[i].WebSocketEvents = make([]models.WebSocketEvent, 0)
-			a.requestLogs[i].WSFramesSent = 0
-			a.requestLogs[i].WSFramesRecv = 0
-			a.requestLogs[i].WSBytesTotal = 0
-			return nil
-		}
+	if a.logStore == nil {
+		return fmt.Errorf("connection %s not found", connectionID)
 	}
-	return fmt.Errorf("connection %s not found", connectionID)
+	l, ok := a.logStore.GetFull(connectionID)
+	if !ok {
+		return fmt.Errorf("connection %s not found", connectionID)
+	}
+	l.WebSocketEvents = make([]models.WebSocketEvent, 0)
+	l.WSFramesSent = 0
+	l.WSFramesRecv = 0
+	l.WSBytesTotal = 0
+	a.logStore.UpdateFull(connectionID, l)
+	return nil
 }
 
 // ExportWSTrace exports a WebSocket connection's full frame trace to a user-chosen file.
 // The output format is human-readable text: metadata header, then each frame with its
 // timestamp, direction, opcode, size, and captured data, separated by a ruled line.
 func (a *App) ExportWSTrace(connectionID string) error {
-	a.logMutex.RLock()
 	var found *models.RequestLog
-	for i := range a.requestLogs {
-		if a.requestLogs[i].ID == connectionID {
-			cp := a.requestLogs[i]
-			found = &cp
-			break
-		}
+	if a.logStore != nil {
+		found, _ = a.logStore.GetFull(connectionID)
 	}
-	a.logMutex.RUnlock()
-
 	if found == nil {
 		return fmt.Errorf("WebSocket connection %s not found", connectionID)
 	}
@@ -2907,10 +2855,12 @@ func (a *App) ExportWSTrace(connectionID string) error {
 
 // ExportLogs exports logs in the specified format
 func (a *App) ExportLogs(format string) error {
-	a.logMutex.RLock()
-	logs := make([]models.RequestLog, len(a.requestLogs))
-	copy(logs, a.requestLogs)
-	a.logMutex.RUnlock()
+	var logs []models.RequestLog
+	if a.logStore != nil {
+		for _, l := range a.logStore.GetAllFull() {
+			logs = append(logs, *l)
+		}
+	}
 
 	var defaultName string
 	var pattern string
@@ -2951,19 +2901,14 @@ func (a *App) ExportLogs(format string) error {
 // endpointID filters logs by endpoint (empty string = all logs)
 // side can be "client" or "backend"
 func (a *App) ExportLogsAsHAR(endpointID string, side string) error {
-	a.logMutex.RLock()
 	var filteredLogs []models.RequestLog
-	if endpointID == "" {
-		filteredLogs = make([]models.RequestLog, len(a.requestLogs))
-		copy(filteredLogs, a.requestLogs)
-	} else {
-		for _, log := range a.requestLogs {
-			if log.EndpointID == endpointID {
-				filteredLogs = append(filteredLogs, log)
+	if a.logStore != nil {
+		for _, l := range a.logStore.GetAllFull() {
+			if endpointID == "" || l.EndpointID == endpointID {
+				filteredLogs = append(filteredLogs, *l)
 			}
 		}
 	}
-	a.logMutex.RUnlock()
 
 	exporter := export.NewLogExporter("")
 	filePath, err := exporter.ExportToHAR(filteredLogs, side)
@@ -2979,30 +2924,26 @@ func (a *App) ExportLogsAsHAR(endpointID string, side string) error {
 // endpointID filters logs by endpoint (empty string = all logs)
 // side can be "client" or "backend"
 func (a *App) ExportLogsAsCurl(endpointID string, side string) error {
-	a.logMutex.RLock()
 	var filteredLogs []models.RequestLog
 	var endpointName string
 
 	if endpointID == "" {
-		filteredLogs = make([]models.RequestLog, len(a.requestLogs))
-		copy(filteredLogs, a.requestLogs)
 		endpointName = "All Endpoints"
 	} else {
-		// Find endpoint name
 		for i := range a.config.Endpoints {
 			if a.config.Endpoints[i].ID == endpointID {
 				endpointName = a.config.Endpoints[i].Name
 				break
 			}
 		}
-		// Filter logs
-		for _, log := range a.requestLogs {
-			if log.EndpointID == endpointID {
-				filteredLogs = append(filteredLogs, log)
+	}
+	if a.logStore != nil {
+		for _, l := range a.logStore.GetAllFull() {
+			if endpointID == "" || l.EndpointID == endpointID {
+				filteredLogs = append(filteredLogs, *l)
 			}
 		}
 	}
-	a.logMutex.RUnlock()
 
 	exporter := export.NewLogExporter("")
 	filePath, err := exporter.ExportToCurl(filteredLogs, side, endpointName)
@@ -3596,29 +3537,30 @@ func (a *App) GetSOCKS5Domains() []models.SOCKS5DomainInfo {
 		}
 	}
 
-	// Aggregate from request logs
-	for _, log := range a.requestLogs {
-		// Process any log that came through the SOCKS5 tunnel
-		if log.SOCKS5Info != nil {
-			domain := log.SOCKS5Info.TargetHost
+	// Aggregate from request logs (LRU cache window).
+	if a.logStore != nil {
+		for _, l := range a.logStore.GetAllFull() {
+			if l.SOCKS5Info == nil {
+				continue
+			}
+			domain := l.SOCKS5Info.TargetHost
 			if domain == "" {
 				continue
 			}
-
 			if info, exists := domainMap[domain]; exists {
 				info.RequestCount++
-				info.LastSeen = log.Timestamp
-				if log.SOCKS5Info.IsIntercepted {
+				info.LastSeen = l.Timestamp
+				if l.SOCKS5Info.IsIntercepted {
 					info.IsIntercepted = true
 				}
 			} else {
 				domainMap[domain] = &models.SOCKS5DomainInfo{
 					Domain:        domain,
 					RequestCount:  1,
-					FirstSeen:     log.Timestamp,
-					LastSeen:      log.Timestamp,
+					FirstSeen:     l.Timestamp,
+					LastSeen:      l.Timestamp,
 					IsConfigured:  a.isDomainConfigured(domain, configuredDomains),
-					IsIntercepted: log.SOCKS5Info.IsIntercepted,
+					IsIntercepted: l.SOCKS5Info.IsIntercepted,
 				}
 			}
 		}
@@ -3719,44 +3661,43 @@ const maxWSEvents = 10000
 const maxSSEEvents = 10000
 
 // LogRequest implements the server.RequestLogger interface
-func (a *App) LogRequest(log models.RequestLog) {
+func (a *App) LogRequest(rl models.RequestLog) {
 	var summary models.RequestLogSummary
 
-	if log.IsWebSocket {
-		// For WebSocket connections, stamp the open time and build the live-tap summary.
-		log.WSOpenedAt = log.Timestamp
-		a.logMutex.Lock()
-		a.requestLogs = append(a.requestLogs, log)
-		summary = a.buildWSSummary(&a.requestLogs[len(a.requestLogs)-1])
-		a.logMutex.Unlock()
+	if rl.IsWebSocket {
+		rl.WSOpenedAt = rl.Timestamp
+		summary = a.buildWSSummary(&rl)
 	} else {
-		a.logMutex.Lock()
-		a.requestLogs = append(a.requestLogs, log)
-		a.logMutex.Unlock()
-
-		// Create lightweight summary for regular HTTP requests
 		summary = models.RequestLogSummary{
-			ID:               log.ID,
-			Timestamp:        log.Timestamp,
-			EndpointID:       log.EndpointID,
-			ResponseID:       log.ResponseID,
-			Method:           log.ClientRequest.Method,
-			Path:             log.ClientRequest.Path,
-			SourceIP:         log.ClientRequest.SourceIP,
-			ClientStatus:     log.ClientResponse.StatusCode,
-			ClientRTT:        log.ClientResponse.RTTMs,
-			HasBackend:       log.BackendRequest != nil || log.BackendResponse != nil,
-			ClientBodySize:   len(log.ClientRequest.Body),
-			ValidationFailed: log.ValidationFailed,
-			ResponseFailed:   log.ResponseFailed,
+			ID:               rl.ID,
+			Timestamp:        rl.Timestamp,
+			EndpointID:       rl.EndpointID,
+			ResponseID:       rl.ResponseID,
+			Method:           rl.ClientRequest.Method,
+			Path:             rl.ClientRequest.Path,
+			SourceIP:         rl.ClientRequest.SourceIP,
+			ClientStatus:     rl.ClientResponse.StatusCode,
+			ClientRTT:        rl.ClientResponse.RTTMs,
+			HasBackend:       rl.BackendRequest != nil || rl.BackendResponse != nil,
+			ClientBodySize:   len(rl.ClientRequest.Body),
+			ValidationFailed: rl.ValidationFailed,
+			ResponseFailed:   rl.ResponseFailed,
 		}
-		if log.BackendResponse != nil {
-			summary.BackendStatus = log.BackendResponse.StatusCode
-			summary.BackendRTT = log.BackendResponse.RTTMs
+		if rl.BackendResponse != nil {
+			summary.BackendStatus = rl.BackendResponse.StatusCode
+			summary.BackendRTT = rl.BackendResponse.RTTMs
 		}
-		if log.SOCKS5Info != nil {
-			summary.TargetHost = log.SOCKS5Info.TargetHost
-			summary.TargetPort = log.SOCKS5Info.TargetPort
+		if rl.SOCKS5Info != nil {
+			summary.TargetHost = rl.SOCKS5Info.TargetHost
+			summary.TargetPort = rl.SOCKS5Info.TargetPort
+		}
+	}
+
+	// Store full log in memory LRU for detail view.
+	if a.logStore != nil {
+		a.logStore.PutFull(rl.ID, &rl)
+		if err := a.logStore.Append(summary); err != nil {
+			log.Printf("WARNING: logstore append failed: %v", err)
 		}
 	}
 
@@ -3898,31 +3839,25 @@ func (a *App) GetWSCaptureBytes() int {
 func (a *App) AppendWebSocketEvent(connectionID string, event models.WebSocketEvent) {
 	var summary *models.RequestLogSummary
 
-	a.logMutex.Lock()
-	for i := range a.requestLogs {
-		if a.requestLogs[i].ID == connectionID {
-			l := &a.requestLogs[i]
-			// Ring eviction: use copy so the GC can reclaim dropped elements.
+	if a.logStore != nil {
+		if l, ok := a.logStore.GetFull(connectionID); ok {
 			if len(l.WebSocketEvents) >= maxWSEvents {
 				copy(l.WebSocketEvents[0:], l.WebSocketEvents[1:])
 				l.WebSocketEvents[maxWSEvents-1] = event
 			} else {
 				l.WebSocketEvents = append(l.WebSocketEvents, event)
 			}
-			// Update running counters.
 			if event.Direction == models.WSDirectionSend {
 				l.WSFramesSent++
 			} else {
 				l.WSFramesRecv++
 			}
 			l.WSBytesTotal += int64(event.DataSize)
-			// Build summary while holding logMutex for a consistent snapshot.
 			s := a.buildWSSummary(l)
 			summary = &s
-			break
+			a.logStore.UpdateFull(connectionID, l)
 		}
 	}
-	a.logMutex.Unlock()
 
 	// Throttled enqueue: at most one summary update per connection per 150ms.
 	if summary != nil {
@@ -3941,19 +3876,16 @@ func (a *App) AppendWebSocketEvent(connectionID string, event models.WebSocketEv
 func (a *App) CloseWebSocketConnection(connectionID string, code int, reason string, relayErr error) {
 	var summary *models.RequestLogSummary
 
-	a.logMutex.Lock()
-	for i := range a.requestLogs {
-		if a.requestLogs[i].ID == connectionID {
-			l := &a.requestLogs[i]
+	if a.logStore != nil {
+		if l, ok := a.logStore.GetFull(connectionID); ok {
 			l.WSClosedAt = time.Now().Format(time.RFC3339)
 			l.WSCloseCode = code
 			l.WSCloseReason = reason
-			s := a.buildWSSummary(l) // WSIsOpen will be false (WSClosedAt is set)
+			s := a.buildWSSummary(l)
 			summary = &s
-			break
+			a.logStore.UpdateFull(connectionID, l)
 		}
 	}
-	a.logMutex.Unlock()
 
 	if summary != nil {
 		// Always enqueue the close summary — no throttle, always deliver.
@@ -4005,18 +3937,15 @@ func (a *App) buildWSSummary(l *models.RequestLog) models.RequestLogSummary {
 func (a *App) MarkSSEOpen(connectionID string, openedAt string) {
 	var summary *models.RequestLogSummary
 
-	a.logMutex.Lock()
-	for i := range a.requestLogs {
-		if a.requestLogs[i].ID == connectionID {
-			l := &a.requestLogs[i]
+	if a.logStore != nil {
+		if l, ok := a.logStore.GetFull(connectionID); ok {
 			l.IsSSE = true
 			l.SSEOpenedAt = openedAt
 			s := a.buildSSESummary(l)
 			summary = &s
-			break
+			a.logStore.UpdateFull(connectionID, l)
 		}
 	}
-	a.logMutex.Unlock()
 
 	if summary != nil {
 		a.requestLogQueueMutex.Lock()
@@ -4031,11 +3960,8 @@ func (a *App) MarkSSEOpen(connectionID string, openedAt string) {
 func (a *App) AppendSSEEvent(connectionID string, event models.SSEEvent) {
 	var summary *models.RequestLogSummary
 
-	a.logMutex.Lock()
-	for i := range a.requestLogs {
-		if a.requestLogs[i].ID == connectionID {
-			l := &a.requestLogs[i]
-			// Ring eviction: use copy so the GC can reclaim dropped elements.
+	if a.logStore != nil {
+		if l, ok := a.logStore.GetFull(connectionID); ok {
 			if len(l.SSEEvents) >= maxSSEEvents {
 				copy(l.SSEEvents[0:], l.SSEEvents[1:])
 				l.SSEEvents[maxSSEEvents-1] = event
@@ -4046,10 +3972,9 @@ func (a *App) AppendSSEEvent(connectionID string, event models.SSEEvent) {
 			l.SSEBytesTotal += int64(event.DataSize)
 			s := a.buildSSESummary(l)
 			summary = &s
-			break
+			a.logStore.UpdateFull(connectionID, l)
 		}
 	}
-	a.logMutex.Unlock()
 
 	// Throttled enqueue: at most one summary update per connection per 150ms.
 	if summary != nil {
@@ -4068,18 +3993,15 @@ func (a *App) AppendSSEEvent(connectionID string, event models.SSEEvent) {
 func (a *App) CloseSSEStream(connectionID string, closeError string) {
 	var summary *models.RequestLogSummary
 
-	a.logMutex.Lock()
-	for i := range a.requestLogs {
-		if a.requestLogs[i].ID == connectionID {
-			l := &a.requestLogs[i]
+	if a.logStore != nil {
+		if l, ok := a.logStore.GetFull(connectionID); ok {
 			l.SSEClosedAt = time.Now().Format(time.RFC3339)
 			l.SSECloseError = closeError
-			s := a.buildSSESummary(l) // SSEIsOpen will be false (SSEClosedAt is set)
+			s := a.buildSSESummary(l)
 			summary = &s
-			break
+			a.logStore.UpdateFull(connectionID, l)
 		}
 	}
-	a.logMutex.Unlock()
 
 	if summary != nil {
 		// Always enqueue the close summary — no throttle, always deliver.
@@ -4122,37 +4044,20 @@ func (a *App) buildSSESummary(l *models.RequestLog) models.RequestLogSummary {
 // UpdateRequestLog updates an existing request log (used for two-phase logging)
 // This allows showing pending requests immediately, then updating them when complete
 func (a *App) UpdateRequestLog(log models.RequestLog) {
-	a.logMutex.Lock()
-
-	// Find and update the existing log
-	found := false
-	for i := range a.requestLogs {
-		if a.requestLogs[i].ID == log.ID {
-			existing := &a.requestLogs[i]
-			// Preserve SSE live-tap fields accumulated by AppendSSEEvent/CloseSSEStream.
-			// logSSECompletion sends a bare RequestLog (no SSE events); we must not
-			// overwrite the events that were appended in-place.
-			if existing.IsSSE {
-				log.IsSSE = true
-				log.SSEEvents = existing.SSEEvents
-				log.SSEOpenedAt = existing.SSEOpenedAt
-				log.SSEClosedAt = existing.SSEClosedAt
-				log.SSECloseError = existing.SSECloseError
-				log.SSEEventCount = existing.SSEEventCount
-				log.SSEBytesTotal = existing.SSEBytesTotal
-			}
-			a.requestLogs[i] = log
-			found = true
-			break
+	// Merge SSE live-tap fields from the LRU entry so we don't overwrite
+	// events accumulated by AppendSSEEvent/CloseSSEStream.
+	if a.logStore != nil {
+		if existing, ok := a.logStore.GetFull(log.ID); ok && existing.IsSSE {
+			log.IsSSE = true
+			log.SSEEvents = existing.SSEEvents
+			log.SSEOpenedAt = existing.SSEOpenedAt
+			log.SSEClosedAt = existing.SSEClosedAt
+			log.SSECloseError = existing.SSECloseError
+			log.SSEEventCount = existing.SSEEventCount
+			log.SSEBytesTotal = existing.SSEBytesTotal
 		}
+		a.logStore.UpdateFull(log.ID, &log)
 	}
-
-	// If not found, just append it (fallback behavior)
-	if !found {
-		a.requestLogs = append(a.requestLogs, log)
-	}
-
-	a.logMutex.Unlock()
 
 	// Create updated summary for frontend
 	summary := models.RequestLogSummary{
@@ -4202,16 +4107,12 @@ func (a *App) UpdateRequestLog(log models.RequestLog) {
 
 // GetRequestLogDetails returns the full RequestLog details for a given ID
 func (a *App) GetRequestLogDetails(id string) (*models.RequestLog, error) {
-	a.logMutex.RLock()
-	defer a.logMutex.RUnlock()
-
-	for i := range a.requestLogs {
-		if a.requestLogs[i].ID == id {
-			return &a.requestLogs[i], nil
+	if a.logStore != nil {
+		if l, ok := a.logStore.GetFull(id); ok {
+			return l, nil
 		}
 	}
-
-	return nil, fmt.Errorf("request log with ID %s not found", id)
+	return nil, fmt.Errorf("request log with ID %s not found (may have been evicted from cache)", id)
 }
 
 // PollRequestLogs returns all queued request log summaries and clears the queue

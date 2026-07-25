@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useServerStore } from '../../stores/server'
 import { ExportLogs } from '../../../wailsjs/go/main/App'
 import RequestInspectorModal from '../inspector/RequestInspectorModal.vue'
@@ -285,6 +285,40 @@ function handleClearCancel() {
   showClearDialog.value = false
 }
 
+// Global clear (no endpoint filter, no WS dialog)
+async function handleGlobalClear() {
+  await serverStore.clearLogs()
+}
+
+// ── Infinite scroll sentinel ─────────────────────────────────────────────
+const sentinel = ref<HTMLElement | null>(null)
+const loadingOlder = ref(false)
+let observer: IntersectionObserver | null = null
+
+async function triggerLoadOlder() {
+  if (loadingOlder.value || serverStore.allLogsLoaded) return
+  loadingOlder.value = true
+  try {
+    await serverStore.loadOlderLogs()
+  } finally {
+    loadingOlder.value = false
+  }
+}
+
+onMounted(() => {
+  observer = new IntersectionObserver(
+    (entries) => {
+      if (entries[0]?.isIntersecting) triggerLoadOlder()
+    },
+    { threshold: 0.1 }
+  )
+  if (sentinel.value) observer.observe(sentinel.value)
+})
+
+onUnmounted(() => {
+  observer?.disconnect()
+})
+
 // Expose openWSTab/openSSETab so the inspector modal can call them
 defineExpose({ openWSTab, openSSETab })
 </script>
@@ -417,14 +451,24 @@ defineExpose({ openWSTab, openSSETab })
           </button>
         </div>
 
-        <span class="text-xs text-gray-400 whitespace-nowrap">{{ filteredLogs.length }} reqs</span>
+        <span class="text-xs text-gray-400 whitespace-nowrap">
+          {{ filteredLogs.length }} shown
+          <span v-if="serverStore.totalLogCount > filteredLogs.length" class="text-gray-500">/ {{ serverStore.totalLogCount }} total</span>
+        </span>
         <button @click="handleExportJSON" :disabled="filteredLogs.length === 0" class="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">JSON</button>
         <button @click="handleExportCSV"  :disabled="filteredLogs.length === 0" class="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">CSV</button>
         <button
           @click="handleClear"
           :disabled="filteredLogs.length === 0"
           class="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-xs text-white disabled:opacity-50 disabled:cursor-not-allowed"
-        >{{ serverStore.selectedEndpointId ? 'Clear' : 'Clear All' }}</button>
+        >{{ serverStore.selectedEndpointId ? 'Clear' : 'Clear' }}</button>
+        <button
+          v-if="serverStore.selectedEndpointId"
+          @click="handleGlobalClear"
+          :disabled="serverStore.totalLogCount === 0"
+          class="px-2 py-1 bg-red-800 hover:bg-red-900 rounded text-xs text-white disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Clear all logs across all endpoints"
+        >Clear All</button>
       </div>
 
       <!-- Log List -->
@@ -441,6 +485,13 @@ defineExpose({ openWSTab, openSSETab })
         </div>
 
         <div v-else class="divide-y divide-gray-800">
+          <!-- Sentinel: triggers loading older records when scrolled into view -->
+          <div ref="sentinel" class="px-3 py-2 flex items-center justify-center">
+            <span v-if="loadingOlder" class="text-xs text-gray-500 animate-pulse">Loading older logs…</span>
+            <span v-else-if="serverStore.allLogsLoaded && serverStore.totalLogCount > 0" class="text-xs text-gray-600">— beginning of log history —</span>
+            <span v-else-if="!serverStore.allLogsLoaded" class="text-xs text-gray-600 cursor-pointer hover:text-gray-400" @click="triggerLoadOlder">Load older…</span>
+          </div>
+
           <div
             v-for="log in filteredLogs"
             :key="log.id"
