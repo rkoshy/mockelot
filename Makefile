@@ -4,7 +4,7 @@
 WAILS := $(HOME)/go/bin/wails
 BINARY := build/bin/mockelot
 
-.PHONY: build dev run clean
+.PHONY: build dev run deb clean
 
 ## build: compile a runnable binary for Debian 13
 build:
@@ -17,6 +17,10 @@ dev:
 ## run: build then launch
 run: build
 	./$(BINARY)
+
+## deb: build a native Debian 13 .deb package for local testing
+deb:
+	./scripts/build-deb-native.sh
 
 ## clean: remove build artifacts
 clean:
