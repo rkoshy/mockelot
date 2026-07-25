@@ -1,16 +1,27 @@
 #!/bin/bash
 set -e
 
+APPIMAGE_NAME="mockelot-@VERSION@.AppImage"
+
 case "$1" in
     configure)
-        # Make AppImage executable
-        chmod +x /opt/mockelot/bin/mockelot-*.AppImage
+        APPIMAGE="/opt/mockelot/bin/${APPIMAGE_NAME}"
 
-        # Create version-agnostic symlink
-        cd /opt/mockelot/bin
-        ln -sf mockelot-*.AppImage mockelot.AppImage
+        if [ ! -f "$APPIMAGE" ]; then
+            echo "ERROR: Expected AppImage not found: $APPIMAGE" >&2
+            exit 1
+        fi
 
-        # Create command-line symlink
+        # Make the AppImage executable
+        chmod +x "$APPIMAGE"
+
+        # Remove any stale symlinks or old AppImages left by previous versions
+        find /opt/mockelot/bin -name 'mockelot-*.AppImage' ! -name "$APPIMAGE_NAME" -delete 2>/dev/null || true
+        rm -f /opt/mockelot/bin/mockelot.AppImage
+        rm -f /usr/bin/mockelot
+
+        # Create version-agnostic symlinks
+        ln -sf "$APPIMAGE" /opt/mockelot/bin/mockelot.AppImage
         ln -sf /opt/mockelot/bin/mockelot.AppImage /usr/bin/mockelot
 
         # Update desktop database

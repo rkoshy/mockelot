@@ -37,9 +37,9 @@ chmod 755 "$PKGDIR/opt/mockelot/bin/mockelot-${VERSION}.AppImage"
 echo "  Generating control file..."
 sed "s/\${VERSION}/$VERSION/g" debian/control > "$PKGDIR/DEBIAN/control"
 
-# Copy scripts
+# Copy scripts (substitute version placeholder in postinst)
 echo "  Copying postinst and prerm scripts..."
-cp debian/postinst "$PKGDIR/DEBIAN/"
+sed "s/@VERSION@/${VERSION}/g" debian/postinst > "$PKGDIR/DEBIAN/postinst"
 cp debian/prerm "$PKGDIR/DEBIAN/"
 chmod 755 "$PKGDIR/DEBIAN/postinst"
 chmod 755 "$PKGDIR/DEBIAN/prerm"
