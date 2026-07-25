@@ -174,6 +174,14 @@ export function GetItems() {
   return window['go']['main']['App']['GetItems']();
 }
 
+export function GetLogCount() {
+  return window['go']['main']['App']['GetLogCount']();
+}
+
+export function GetLogPage(arg1, arg2) {
+  return window['go']['main']['App']['GetLogPage'](arg1, arg2);
+}
+
 export function GetRecentFiles() {
   return window['go']['main']['App']['GetRecentFiles']();
 }
@@ -276,14 +284,6 @@ export function PollEvents() {
 
 export function PollRequestLogs() {
   return window['go']['main']['App']['PollRequestLogs']();
-}
-
-export function GetLogPage(arg1, arg2) {
-  return window['go']['main']['App']['GetLogPage'](arg1, arg2);
-}
-
-export function GetLogCount() {
-  return window['go']['main']['App']['GetLogCount']();
 }
 
 export function PullDockerImage(arg1) {

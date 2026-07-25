@@ -89,6 +89,10 @@ export function GetEndpoints():Promise<Array<models.Endpoint>>;
 
 export function GetItems():Promise<Array<models.ResponseItem>>;
 
+export function GetLogCount():Promise<number>;
+
+export function GetLogPage(arg1:number,arg2:number):Promise<Array<models.RequestLogSummary>>;
+
 export function GetRecentFiles():Promise<Array<models.RecentFile>>;
 
 export function GetRequestLogByID(arg1:string):Promise<models.RequestLog>;
@@ -140,8 +144,6 @@ export function MarkSSEOpen(arg1:string,arg2:string):Promise<void>;
 export function PollEvents():Promise<Array<main.Event>>;
 
 export function PollRequestLogs():Promise<Array<models.RequestLogSummary>>;
-export function GetLogPage(arg1:number,arg2:number):Promise<Array<models.RequestLogSummary>>;
-export function GetLogCount():Promise<number>;
 
 export function PullDockerImage(arg1:string):Promise<void>;
 
