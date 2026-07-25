@@ -37,6 +37,8 @@ import {
   GetContainerStatus,
   GetRequestLogDetails,
   PollRequestLogs,
+  GetLogPage,
+  GetLogCount,
   ReorderEndpoints,
   GetSOCKS5Domains,
   AddDomainToSOCKS5Takeover,
@@ -55,8 +57,11 @@ import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 export const useServerStore = defineStore('server', () => {
   // State
   const status = ref<main.ServerStatus>(new main.ServerStatus({ running: false, port: 8080 }))
-  const requestLogs = ref<models.RequestLogSummary[]>([])
+  const requestLogs = ref<models.RequestLogSummary[]>([])   // visible window, newest-first
   const requestLogCache = ref<Map<string, models.RequestLog>>(new Map())
+  const totalLogCount = ref<number>(0)          // total records on disk
+  const allLogsLoaded = ref<boolean>(false)     // true when oldest record is in the window
+  const LOG_WINDOW = 2000                       // max summaries held in JS memory
   const selectedLogId = ref<string | null>(null)
   // Use shallowRef to avoid deep reactivity tracking on large item arrays
   // This significantly improves performance with many response entries
@@ -296,7 +301,10 @@ export const useServerStore = defineStore('server', () => {
     try {
       await ClearRequestLogs()
       requestLogs.value = []
+      requestLogCache.value.clear()
       selectedLogId.value = null
+      totalLogCount.value = 0
+      allLogsLoaded.value = true
     } catch (error) {
       console.error('Failed to clear logs:', error)
     }
@@ -761,24 +769,61 @@ export const useServerStore = defineStore('server', () => {
       try {
         const summaries = await PollRequestLogs()
         if (summaries && summaries.length > 0) {
-          // For each new summary, either update existing log (if ID matches) or append new
-          const existingLogs = [...requestLogs.value]
+          // Newest-first: prepend new entries, update in-place for updates.
+          const current = [...requestLogs.value]
+          const newEntries: models.RequestLogSummary[] = []
           summaries.forEach(newLog => {
-            const existingIndex = existingLogs.findIndex(log => log.id === newLog.id)
-            if (existingIndex >= 0) {
-              // Update existing log (e.g., pending → complete)
-              existingLogs[existingIndex] = newLog
+            const idx = current.findIndex(log => log.id === newLog.id)
+            if (idx >= 0) {
+              current[idx] = newLog  // update (e.g., pending → complete)
             } else {
-              // Append new log
-              existingLogs.push(newLog)
+              newEntries.push(newLog)  // brand-new entry
             }
           })
-          requestLogs.value = existingLogs
+          // Prepend newest entries; cap the window.
+          const merged = [...newEntries.reverse(), ...current]
+          requestLogs.value = merged.length > LOG_WINDOW ? merged.slice(0, LOG_WINDOW) : merged
+          totalLogCount.value = await GetLogCount()
+          // If we trimmed, we definitely haven't loaded all — reset the flag.
+          if (merged.length > LOG_WINDOW) allLogsLoaded.value = false
         }
       } catch (error) {
         // Ignore errors during polling to prevent console spam
       }
     }, 200)
+  }
+
+  // Load an older page of logs and append to the bottom of the visible window.
+  // offset is the global 0-based index (oldest-first) of the oldest record we want.
+  async function loadOlderLogs() {
+    if (allLogsLoaded.value) return
+
+    // The visible window is newest-first. The oldest visible record maps to
+    // global offset = (totalLogCount - requestLogs.length).
+    // We want the page immediately before that.
+    const oldestVisibleOffset = totalLogCount.value - requestLogs.value.length
+    if (oldestVisibleOffset <= 0) {
+      allLogsLoaded.value = true
+      return
+    }
+
+    const pageSize = 1000
+    const pageStart = Math.max(0, oldestVisibleOffset - pageSize)
+    const limit = oldestVisibleOffset - pageStart
+
+    try {
+      const page = await GetLogPage(pageStart, limit)
+      if (!page || page.length === 0) {
+        allLogsLoaded.value = true
+        return
+      }
+      // page is oldest-first; append to the BOTTOM of the window (oldest).
+      const merged = [...requestLogs.value, ...page.reverse()]
+      requestLogs.value = merged.length > LOG_WINDOW ? merged.slice(0, LOG_WINDOW) : merged
+      if (pageStart === 0) allLogsLoaded.value = true
+    } catch (error) {
+      console.error('loadOlderLogs failed:', error)
+    }
   }
 
   function stopRequestLogPolling() {
@@ -846,6 +891,8 @@ export const useServerStore = defineStore('server', () => {
       requestLogs.value = []
       requestLogCache.value.clear()
       selectedLogId.value = null
+      totalLogCount.value = 0
+      allLogsLoaded.value = true
     })
 
     EventsOn('logs:cleared:endpoint', (endpointId: string) => {
@@ -938,6 +985,8 @@ export const useServerStore = defineStore('server', () => {
     // State
     status,
     requestLogs,
+    totalLogCount,
+    allLogsLoaded,
     selectedLogId,
     items,
     expandedItemId,
@@ -1015,6 +1064,7 @@ export const useServerStore = defineStore('server', () => {
     restartContainerEndpoint,
     startHealthPolling,
     stopHealthPolling,
+    loadOlderLogs,
     startRequestLogPolling,
     stopRequestLogPolling,
     socks5Domains,

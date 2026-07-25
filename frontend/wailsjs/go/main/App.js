@@ -278,6 +278,14 @@ export function PollRequestLogs() {
   return window['go']['main']['App']['PollRequestLogs']();
 }
 
+export function GetLogPage(arg1, arg2) {
+  return window['go']['main']['App']['GetLogPage'](arg1, arg2);
+}
+
+export function GetLogCount() {
+  return window['go']['main']['App']['GetLogCount']();
+}
+
 export function PullDockerImage(arg1) {
   return window['go']['main']['App']['PullDockerImage'](arg1);
 }

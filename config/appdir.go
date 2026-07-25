@@ -84,6 +84,15 @@ func GetCertsDir() (string, error) {
 	return certsDir, nil
 }
 
+// GetLogStoreDir returns the directory used by the disk-backed request log store.
+func GetLogStoreDir() (string, error) {
+	appDir, err := GetAppDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(appDir, "request-logs"), nil
+}
+
 // GetLogFilePath returns the path to the application log file.
 func GetLogFilePath() (string, error) {
 	appDir, err := GetAppDataDir()
