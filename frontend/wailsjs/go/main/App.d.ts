@@ -19,6 +19,8 @@ export function AppendSSEEvent(arg1:string,arg2:models.SSEEvent):Promise<void>;
 
 export function AppendWebSocketEvent(arg1:string,arg2:models.WebSocketEvent):Promise<void>;
 
+export function BuildCSPHeader(arg1:models.CSPConfig):Promise<string>;
+
 export function CancelContainerStart(arg1:string):Promise<void>;
 
 export function ClearInactiveRequestLogs():Promise<void>;
@@ -78,6 +80,8 @@ export function GetCurrentConfigPath():Promise<string>;
 export function GetDNSOverrides():Promise<models.DNSOverrideConfig>;
 
 export function GetDNSProviders():Promise<Record<string, models.DNSProvider>>;
+
+export function GetDefaultCSPConfig():Promise<models.CSPConfig>;
 
 export function GetDefaultCertNames():Promise<Array<string>>;
 

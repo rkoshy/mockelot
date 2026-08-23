@@ -126,10 +126,11 @@ func (f *FileServerHandler) ServeHTTP(
 		ct = "text/html; charset=utf-8"
 	}
 
-	// --- Apply outbound header manipulation from ProxyConfig --------------
+	// --- Apply outbound header manipulation and CSP from ProxyConfig ------
 	w.Header().Set("Content-Type", ct)
 	if cfg.ProxyConfig != nil && f.proxyHandler != nil {
 		f.proxyHandler.applyHeaderManipulation(w.Header(), cfg.ProxyConfig.OutboundHeaders, r)
+		applyCSP(w.Header(), cfg.ProxyConfig.CSP)
 	}
 
 	// --- Status code translation ------------------------------------------

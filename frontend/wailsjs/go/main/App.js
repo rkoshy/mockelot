@@ -34,6 +34,10 @@ export function AppendWebSocketEvent(arg1, arg2) {
   return window['go']['main']['App']['AppendWebSocketEvent'](arg1, arg2);
 }
 
+export function BuildCSPHeader(arg1) {
+  return window['go']['main']['App']['BuildCSPHeader'](arg1);
+}
+
 export function CancelContainerStart(arg1) {
   return window['go']['main']['App']['CancelContainerStart'](arg1);
 }
@@ -152,6 +156,10 @@ export function GetDNSOverrides() {
 
 export function GetDNSProviders() {
   return window['go']['main']['App']['GetDNSProviders']();
+}
+
+export function GetDefaultCSPConfig() {
+  return window['go']['main']['App']['GetDefaultCSPConfig']();
 }
 
 export function GetDefaultCertNames() {

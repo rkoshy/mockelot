@@ -266,6 +266,9 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, endpoin
 	// Apply outbound header manipulation
 	p.applyHeaderManipulation(w.Header(), cfg.OutboundHeaders, r)
 
+	// Apply Content-Security-Policy if configured
+	applyCSP(w.Header(), cfg.CSP)
+
 	// Capture final response headers for logging
 	finalRespHeaders := make(map[string][]string, len(w.Header()))
 	for name, values := range w.Header() {
@@ -326,6 +329,17 @@ func (p *ProxyHandler) InvalidateExpressionCache() {
 	p.cacheMutex.Lock()
 	p.expressionCache = make(map[string]*goja.Program)
 	p.cacheMutex.Unlock()
+}
+
+// applyCSP writes the Content-Security-Policy header if the CSPConfig is enabled and non-empty.
+// It always overwrites any existing CSP header set by upstream.
+func applyCSP(headers http.Header, csp *models.CSPConfig) {
+	if csp == nil || !csp.Enabled {
+		return
+	}
+	if value := csp.BuildHeader(); value != "" {
+		headers.Set("Content-Security-Policy", value)
+	}
 }
 
 // applyHeaderManipulation applies header manipulation rules
@@ -926,6 +940,7 @@ func (p *ProxyHandler) streamSSEResponse(
 		}
 	}
 	p.applyHeaderManipulation(w.Header(), cfg.OutboundHeaders, r)
+	applyCSP(w.Header(), cfg.CSP)
 	w.WriteHeader(statusCode)
 
 	// Flush — for socks5StreamWriter this signals streaming mode and writes the

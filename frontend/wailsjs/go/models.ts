@@ -486,6 +486,7 @@ export namespace models {
 	    health_check_enabled: boolean;
 	    health_check_interval: number;
 	    health_check_path?: string;
+	    csp?: CSPConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProxyConfig(source);
@@ -504,6 +505,7 @@ export namespace models {
 	        this.health_check_enabled = source["health_check_enabled"];
 	        this.health_check_interval = source["health_check_interval"];
 	        this.health_check_path = source["health_check_path"];
+	        this.csp = this.convertValues(source["csp"], CSPConfig);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -686,6 +688,52 @@ export namespace models {
 		    return a;
 		}
 	}
+	export class CSPDirective {
+	    name: string;
+	    sources: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new CSPDirective(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.sources = source["sources"];
+	    }
+	}
+	export class CSPConfig {
+	    enabled: boolean;
+	    directives?: CSPDirective[];
+	
+	    static createFrom(source: any = {}) {
+	        return new CSPConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.directives = this.convertValues(source["directives"], CSPDirective);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class HeaderValidation {
 	    name: string;
 	    mode?: string;
@@ -760,6 +808,7 @@ export namespace models {
 	    script_body?: string;
 	    request_validation?: RequestValidation;
 	    use_global_cors?: boolean;
+	    csp?: CSPConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new MethodResponse(source);
@@ -780,6 +829,7 @@ export namespace models {
 	        this.script_body = source["script_body"];
 	        this.request_validation = this.convertValues(source["request_validation"], RequestValidation);
 	        this.use_global_cors = source["use_global_cors"];
+	        this.csp = this.convertValues(source["csp"], CSPConfig);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -883,6 +933,8 @@ export namespace models {
 	        this.generated = source["generated"];
 	    }
 	}
+	
+	
 	
 	
 	

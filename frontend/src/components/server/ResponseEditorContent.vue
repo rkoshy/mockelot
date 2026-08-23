@@ -19,6 +19,7 @@ import ContentTypeSelector from '../shared/ContentTypeSelector.vue'
 import ComboBox from '../shared/ComboBox.vue'
 import ScriptEditorModal from '../shared/ScriptEditorModal.vue'
 import HeaderValidationList from '../dialogs/HeaderValidationList.vue'
+import CSPEditor from '../dialogs/CSPEditor.vue'
 import type { ScriptErrorInfo } from './ScriptErrorLogDialog.vue'
 
 const props = withDefaults(defineProps<{
@@ -156,6 +157,12 @@ function removeHeader(key: string) {
   const headers = { ...props.localResponse.headers }
   delete headers[key]
   const updated = new models.MethodResponse({ ...props.localResponse, headers })
+  emit('update:localResponse', updated)
+}
+
+// Update CSP
+function updateCSP(csp: models.CSPConfig | null) {
+  const updated = new models.MethodResponse({ ...props.localResponse, csp: csp ?? undefined })
   emit('update:localResponse', updated)
 }
 
@@ -516,6 +523,17 @@ result.vars.action = json.action || 'default';"
               Add
             </button>
           </div>
+        </div>
+      </div>
+
+      <!-- Content Security Policy -->
+      <div class="space-y-1">
+        <label class="block text-[10px] font-medium text-gray-500">Content Security Policy</label>
+        <div class="border border-gray-700 rounded overflow-hidden">
+          <CSPEditor
+            :model-value="localResponse.csp"
+            @update:modelValue="updateCSP"
+          />
         </div>
       </div>
 

@@ -1076,6 +1076,9 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 		w.Header().Set(name, value)
 	}
 
+	// Apply Content-Security-Policy if configured on the matched response
+	applyCSP(w.Header(), matchedResponse.CSP)
+
 	// Capture time before first byte (right before WriteHeader)
 	firstByteTime := time.Now()
 
@@ -1345,6 +1348,9 @@ func (h *ResponseHandler) handleMockRequest(w http.ResponseWriter, r *http.Reque
 	for name, value := range finalHeaders {
 		w.Header().Set(name, value)
 	}
+
+	// Apply Content-Security-Policy if configured on the matched response
+	applyCSP(w.Header(), matchedResponse.CSP)
 
 	// Capture time before first byte (right before WriteHeader)
 	firstByteTime := time.Now()

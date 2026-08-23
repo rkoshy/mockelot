@@ -125,6 +125,100 @@ const (
 	EndpointTypeFileServer = "file_server" // Serve a local directory
 )
 
+// CSP directive name constants — all standard directives recognised by browsers
+const (
+	CSPDirectiveDefaultSrc              = "default-src"
+	CSPDirectiveScriptSrc               = "script-src"
+	CSPDirectiveStyleSrc                = "style-src"
+	CSPDirectiveImgSrc                  = "img-src"
+	CSPDirectiveConnectSrc              = "connect-src"
+	CSPDirectiveFontSrc                 = "font-src"
+	CSPDirectiveFrameSrc                = "frame-src"
+	CSPDirectiveFrameAncestors          = "frame-ancestors"
+	CSPDirectiveFormAction              = "form-action"
+	CSPDirectiveMediaSrc                = "media-src"
+	CSPDirectiveObjectSrc               = "object-src"
+	CSPDirectiveWorkerSrc               = "worker-src"
+	CSPDirectiveManifestSrc             = "manifest-src"
+	CSPDirectiveBaseURI                 = "base-uri"
+	CSPDirectiveChildSrc                = "child-src"
+	CSPDirectiveNavigateTo              = "navigate-to"
+	CSPDirectiveUpgradeInsecureRequests = "upgrade-insecure-requests"
+	CSPDirectiveBlockAllMixedContent    = "block-all-mixed-content"
+	CSPDirectiveReportURI               = "report-uri"
+	CSPDirectiveReportTo                = "report-to"
+)
+
+// CSPDirective represents a single CSP directive (e.g. "img-src" with its source list)
+type CSPDirective struct {
+	Name    string   `json:"name" yaml:"name"`       // e.g. "default-src", "img-src"
+	Sources []string `json:"sources" yaml:"sources"` // e.g. ["'self'", "blob:", "*.example.com"]
+}
+
+// CSPConfig holds a structured Content-Security-Policy definition
+type CSPConfig struct {
+	Enabled    bool           `json:"enabled" yaml:"enabled"`
+	Directives []CSPDirective `json:"directives,omitempty" yaml:"directives,omitempty"`
+}
+
+// BuildHeader serialises the CSPConfig into a Content-Security-Policy header value.
+// Returns an empty string when not enabled or when there are no directives.
+func (c *CSPConfig) BuildHeader() string {
+	if c == nil || !c.Enabled || len(c.Directives) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, d := range c.Directives {
+		if d.Name == "" {
+			continue
+		}
+		// Directives with no sources (e.g. upgrade-insecure-requests) are emitted as bare names
+		if len(d.Sources) == 0 {
+			parts = append(parts, d.Name)
+		} else {
+			parts = append(parts, d.Name+" "+joinSources(d.Sources))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	result := ""
+	for i, p := range parts {
+		if i > 0 {
+			result += "; "
+		}
+		result += p
+	}
+	return result
+}
+
+// joinSources joins CSP source tokens with a single space.
+func joinSources(sources []string) string {
+	result := ""
+	for i, s := range sources {
+		if i > 0 {
+			result += " "
+		}
+		result += s
+	}
+	return result
+}
+
+// DefaultCSPConfig returns a sensible baseline CSP configuration that allows
+// normal single-origin web app operation without breaking common patterns.
+func DefaultCSPConfig() *CSPConfig {
+	return &CSPConfig{
+		Enabled: true,
+		Directives: []CSPDirective{
+			{Name: CSPDirectiveDefaultSrc, Sources: []string{"'self'", "blob:", "data:", "ws:"}},
+			{Name: CSPDirectiveScriptSrc, Sources: []string{"'self'", "'unsafe-eval'"}},
+			{Name: CSPDirectiveStyleSrc, Sources: []string{"'self'", "'unsafe-inline'"}},
+			{Name: CSPDirectiveImgSrc, Sources: []string{"'self'", "blob:", "data:"}},
+			{Name: CSPDirectiveWorkerSrc, Sources: []string{"'self'", "blob:"}},
+		},
+	}
+}
+
 // HeaderManipulation mode constants for proxy endpoints
 const (
 	HeaderModeDrop       = "drop"       // Drop the header
@@ -173,6 +267,7 @@ type MethodResponse struct {
 	ScriptBody         string             `json:"script_body,omitempty" yaml:"script_body,omitempty"`           // JavaScript code for script mode
 	RequestValidation  *RequestValidation `json:"request_validation,omitempty" yaml:"request_validation,omitempty"` // Request body validation config
 	UseGlobalCORS      *bool              `json:"use_global_cors,omitempty" yaml:"use_global_cors,omitempty"`   // Whether to use global CORS (nil=use group setting, true=use, false=disable)
+	CSP                *CSPConfig         `json:"csp,omitempty" yaml:"csp,omitempty"`                           // Structured Content-Security-Policy header
 }
 
 // IsEnabled returns whether this response rule is enabled (defaults to true if not set)
@@ -245,6 +340,9 @@ type ProxyConfig struct {
 	HealthCheckEnabled  bool   `json:"health_check_enabled" yaml:"health_check_enabled"`
 	HealthCheckInterval int    `json:"health_check_interval" yaml:"health_check_interval"`         // Seconds, default: 30
 	HealthCheckPath     string `json:"health_check_path,omitempty" yaml:"health_check_path,omitempty"` // Default: "/"
+
+	// Content Security Policy — structured CSP header generation
+	CSP *CSPConfig `json:"csp,omitempty" yaml:"csp,omitempty"`
 }
 
 // DefaultContainerInboundHeaders returns the default inbound header manipulation rules for container endpoints.

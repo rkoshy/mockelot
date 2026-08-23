@@ -685,6 +685,17 @@ func (a *App) GetDefaultContainerHeaders() []models.HeaderManipulation {
 	return models.DefaultContainerInboundHeaders()
 }
 
+// GetDefaultCSPConfig returns the default baseline CSP configuration
+func (a *App) GetDefaultCSPConfig() *models.CSPConfig {
+	return models.DefaultCSPConfig()
+}
+
+// BuildCSPHeader serialises a CSPConfig into its Content-Security-Policy header value.
+// Useful for the frontend to preview the effective header without a round-trip.
+func (a *App) BuildCSPHeader(csp models.CSPConfig) string {
+	return csp.BuildHeader()
+}
+
 // AddEndpoint adds a new endpoint with specified type
 func (a *App) AddEndpoint(name string, pathPrefix string, translationMode string, endpointType string) (models.Endpoint, error) {
 	log.Printf("AddEndpoint called with: name=%s, pathPrefix=%s, translationMode=%s, endpointType=%s", name, pathPrefix, translationMode, endpointType)

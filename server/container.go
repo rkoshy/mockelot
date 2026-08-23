@@ -561,6 +561,12 @@ func (c *ContainerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, end
 		}
 	}
 
+	// Apply outbound header manipulation
+	c.proxyHandler.applyHeaderManipulation(w.Header(), cfg.ProxyConfig.OutboundHeaders, r)
+
+	// Apply Content-Security-Policy if configured
+	applyCSP(w.Header(), cfg.ProxyConfig.CSP)
+
 	// Capture final response headers for logging
 	finalRespHeaders := make(map[string][]string, len(w.Header()))
 	for name, values := range w.Header() {

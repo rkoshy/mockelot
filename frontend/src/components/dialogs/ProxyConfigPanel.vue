@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { TestProxyConnection, GetDefaultContainerHeaders } from '../../../wailsjs/go/main/App'
 import HeaderManipulationList from './HeaderManipulationList.vue'
 import StatusTranslationList from './StatusTranslationList.vue'
+import CSPEditor from './CSPEditor.vue'
 import { models } from '../../../wailsjs/go/models'
 import { Codemirror } from 'vue-codemirror'
 import { javascript } from '@codemirror/lang-javascript'
@@ -31,9 +32,10 @@ const healthCheckPath = ref(props.config.health_check_path || '/')
 const inboundHeaders = ref<models.HeaderManipulation[]>(props.config.inbound_headers || [])
 const outboundHeaders = ref<models.HeaderManipulation[]>(props.config.outbound_headers || [])
 const statusTranslation = ref<models.StatusTranslation[]>(props.config.status_translation || [])
+const csp = ref<models.CSPConfig | null | undefined>(props.config.csp ?? null)
 
 // Sub-tab state — file server endpoints skip Backend and Health tabs
-const activeSubTab = ref<'backend' | 'headers' | 'transformation' | 'health'>(
+const activeSubTab = ref<'backend' | 'headers' | 'csp' | 'transformation' | 'health'>(
   props.isFileServerEndpoint ? 'headers' : 'backend'
 )
 
@@ -52,7 +54,8 @@ const updatedConfig = computed((): models.ProxyConfig => new models.ProxyConfig(
   health_check_path: healthCheckPath.value,
   inbound_headers: inboundHeaders.value,
   outbound_headers: outboundHeaders.value,
-  status_translation: statusTranslation.value
+  status_translation: statusTranslation.value,
+  csp: csp.value ?? undefined,
 }))
 
 // Emit updates
@@ -182,6 +185,17 @@ async function resetToDefaults() {
         ]"
       >
         Headers
+      </button>
+      <button
+        @click="activeSubTab = 'csp'"
+        :class="[
+          'px-3 py-2 text-sm font-medium transition-colors',
+          activeSubTab === 'csp'
+            ? 'text-blue-400 border-b-2 border-blue-400'
+            : 'text-gray-400 hover:text-gray-300'
+        ]"
+      >
+        CSP
       </button>
       <button
         @click="activeSubTab = 'transformation'"
@@ -320,6 +334,14 @@ async function resetToDefaults() {
           Headers to modify on responses <strong>from</strong> the backend
         </p>
       </div>
+    </div>
+
+    <!-- CSP Tab -->
+    <div v-if="activeSubTab === 'csp'">
+      <CSPEditor
+        v-model="csp"
+        @update:modelValue="emitUpdate"
+      />
     </div>
 
     <!-- Transformation Tab -->
