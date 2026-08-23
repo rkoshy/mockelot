@@ -98,23 +98,11 @@ func (f *FileServerHandler) ServeHTTP(
 	fileBytes, err := os.ReadFile(cleanDisk)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// File not found on disk — fall back to the overlay (real server).
-			// This handles files that exist on the real server but not locally
-			// (e.g. branding assets, generated resources, etc.).
-			log.Printf("[FileServer] %s not found locally, falling back to overlay", cleanDisk)
-			requestDomain := extractDomain(r)
-			responseHandler.configMutex.RLock()
-			domainTakeover := responseHandler.config.DomainTakeover
-			responseHandler.configMutex.RUnlock()
-			if responseHandler.overlayHandler != nil &&
-				responseHandler.overlayHandler.shouldUseOverlay(requestDomain, domainTakeover) {
-				if err := responseHandler.overlayHandler.handleOverlay(w, r, requestDomain); err != nil {
-					log.Printf("[FileServer] Overlay fallback failed for %s: %v", r.URL.Path, err)
-					http.Error(w, "Not Found", http.StatusNotFound)
-				}
-			} else {
-				http.Error(w, "Not Found", http.StatusNotFound)
-			}
+			// File not found — the file server endpoint owns this path, return 404.
+			// We do NOT fall back to overlay here: once a file server endpoint has
+			// matched the request, it is responsible for the response.
+			f.logFileRequest(requestID, endpoint, r, translatedPath, cleanDisk, http.StatusNotFound, 0, startTime)
+			http.Error(w, "Not Found", http.StatusNotFound)
 		} else {
 			f.logFileRequest(requestID, endpoint, r, translatedPath, cleanDisk, http.StatusInternalServerError, 0, startTime)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
