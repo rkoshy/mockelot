@@ -73,7 +73,7 @@ func (f *FileServerHandler) ServeHTTP(
 ) {
 	cfg := endpoint.FileServerConfig
 	if cfg == nil {
-		http.Error(w, "File server configuration missing", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
@@ -91,7 +91,7 @@ func (f *FileServerHandler) ServeHTTP(
 	cleanBase := filepath.Clean(basePath)
 	cleanDisk := filepath.Clean(diskPath)
 	if !strings.HasPrefix(cleanDisk, cleanBase+string(filepath.Separator)) && cleanDisk != cleanBase {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 
@@ -102,11 +102,15 @@ func (f *FileServerHandler) ServeHTTP(
 			// File not found — the file server endpoint owns this path, return 404.
 			// We do NOT fall back to overlay here: once a file server endpoint has
 			// matched the request, it is responsible for the response.
+			// Send bare status with no body/content-type — a text/plain body with
+			// X-Content-Type-Options: nosniff causes browsers to log a MIME mismatch
+			// error for sub-resources (scripts, stylesheets) that expected a
+			// different content type.
 			f.logFileRequest(requestID, endpoint, r, translatedPath, cleanDisk, http.StatusNotFound, 0, startTime)
-			http.Error(w, "Not Found", http.StatusNotFound)
+			w.WriteHeader(http.StatusNotFound)
 		} else {
 			f.logFileRequest(requestID, endpoint, r, translatedPath, cleanDisk, http.StatusInternalServerError, 0, startTime)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			w.WriteHeader(http.StatusInternalServerError)
 		}
 		return
 	}
