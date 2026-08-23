@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { GetDefaultCSPConfig } from '../../../wailsjs/go/main/App'
 import { models } from '../../../wailsjs/go/models'
 
@@ -8,51 +8,49 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  'update:modelValue': [csp: models.CSPConfig | null]
+  'update:modelValue': [csp: models.CSPConfig]
 }>()
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-/** All known CSP directive names with descriptions for the "Add Directive" menu */
 const ALL_DIRECTIVES: { name: string; description: string; noSources?: boolean }[] = [
-  { name: 'default-src',              description: 'Fallback for all fetch directives' },
-  { name: 'script-src',               description: 'Valid sources for JavaScript' },
-  { name: 'style-src',                description: 'Valid sources for stylesheets' },
-  { name: 'img-src',                  description: 'Valid sources for images' },
-  { name: 'connect-src',              description: 'Valid targets for fetch, XHR, WebSocket' },
-  { name: 'font-src',                 description: 'Valid sources for fonts' },
-  { name: 'frame-src',                description: 'Valid sources for frames / iframes' },
-  { name: 'frame-ancestors',          description: 'Controls which pages can embed this page' },
-  { name: 'form-action',              description: 'Valid endpoints for form submission' },
-  { name: 'media-src',                description: 'Valid sources for audio and video' },
-  { name: 'object-src',               description: 'Valid sources for <object> and <embed>' },
-  { name: 'worker-src',               description: 'Valid sources for Workers and ServiceWorkers' },
-  { name: 'manifest-src',             description: 'Valid sources for Web App Manifests' },
-  { name: 'child-src',                description: 'Valid sources for Workers and nested browsing contexts' },
-  { name: 'base-uri',                 description: 'Restricts URLs in <base>' },
-  { name: 'navigate-to',             description: 'Restricts URLs the document can navigate to' },
-  { name: 'upgrade-insecure-requests',description: 'Upgrade HTTP to HTTPS automatically', noSources: true },
-  { name: 'block-all-mixed-content',  description: 'Block all HTTP resources on HTTPS pages', noSources: true },
-  { name: 'report-uri',               description: 'URL to receive violation reports (deprecated, use report-to)' },
-  { name: 'report-to',                description: 'Reporting endpoint group name' },
+  { name: 'default-src',               description: 'Fallback for all fetch directives' },
+  { name: 'script-src',                description: 'Valid sources for JavaScript' },
+  { name: 'style-src',                 description: 'Valid sources for stylesheets' },
+  { name: 'img-src',                   description: 'Valid sources for images' },
+  { name: 'connect-src',               description: 'Valid targets for fetch, XHR, WebSocket' },
+  { name: 'font-src',                  description: 'Valid sources for fonts' },
+  { name: 'frame-src',                 description: 'Valid sources for frames / iframes' },
+  { name: 'frame-ancestors',           description: 'Controls which pages can embed this page' },
+  { name: 'form-action',               description: 'Valid endpoints for form submission' },
+  { name: 'media-src',                 description: 'Valid sources for audio and video' },
+  { name: 'object-src',                description: 'Valid sources for <object> and <embed>' },
+  { name: 'worker-src',                description: 'Valid sources for Workers and ServiceWorkers' },
+  { name: 'manifest-src',              description: 'Valid sources for Web App Manifests' },
+  { name: 'child-src',                 description: 'Valid sources for Workers + nested browsing' },
+  { name: 'base-uri',                  description: 'Restricts URLs in <base>' },
+  { name: 'navigate-to',               description: 'Restricts URLs the document can navigate to' },
+  { name: 'upgrade-insecure-requests', description: 'Upgrade HTTP to HTTPS automatically', noSources: true },
+  { name: 'block-all-mixed-content',   description: 'Block all HTTP on HTTPS pages', noSources: true },
+  { name: 'report-uri',                description: 'URL to receive violation reports (deprecated)' },
+  { name: 'report-to',                 description: 'Reporting endpoint group name' },
 ]
 
-/** Common keyword sources shown as toggleable pills */
 const KEYWORD_SOURCES = [
-  { value: "'self'",          label: "'self'",          title: 'Same origin' },
-  { value: "'none'",          label: "'none'",          title: 'Block all sources' },
-  { value: "'unsafe-inline'", label: "'unsafe-inline'", title: 'Allow inline code (risky)' },
-  { value: "'unsafe-eval'",   label: "'unsafe-eval'",   title: 'Allow eval() (risky)' },
-  { value: "'strict-dynamic'",label: "'strict-dynamic'",title: 'Trust scripts allowed by nonces/hashes' },
-  { value: 'blob:',           label: 'blob:',           title: 'Blob URLs' },
-  { value: 'data:',           label: 'data:',           title: 'Data URLs' },
-  { value: 'ws:',             label: 'ws:',             title: 'WebSocket (insecure)' },
-  { value: 'wss:',            label: 'wss:',            title: 'WebSocket (secure)' },
-  { value: 'https:',          label: 'https:',          title: 'Any HTTPS source' },
-  { value: '*',               label: '*',               title: 'Any source (dangerous)' },
+  { value: "'self'",           label: "'self'",           title: 'Same origin' },
+  { value: "'none'",           label: "'none'",           title: 'Block all sources' },
+  { value: "'unsafe-inline'",  label: "'unsafe-inline'",  title: 'Allow inline code (risky)' },
+  { value: "'unsafe-eval'",    label: "'unsafe-eval'",    title: 'Allow eval() (risky)' },
+  { value: "'strict-dynamic'", label: "'strict-dynamic'", title: 'Trust nonce/hash-allowlisted scripts' },
+  { value: 'blob:',            label: 'blob:',            title: 'Blob URLs' },
+  { value: 'data:',            label: 'data:',            title: 'Data URLs' },
+  { value: 'ws:',              label: 'ws:',              title: 'WebSocket (insecure)' },
+  { value: 'wss:',             label: 'wss:',             title: 'WebSocket (secure)' },
+  { value: 'https:',           label: 'https:',           title: 'Any HTTPS source' },
+  { value: '*',                label: '*',                title: 'Any source (dangerous)' },
 ]
 
-// ── Local State ──────────────────────────────────────────────────────────────
+// ── Local State ───────────────────────────────────────────────────────────────
 
 interface LocalDirective {
   id: string
@@ -60,13 +58,20 @@ interface LocalDirective {
   sources: string[]
   expanded: boolean
   noSources: boolean
-  hostInput: string // staging area for the host text input
+  hostInput: string
 }
 
-const enabled = ref<boolean>(props.modelValue?.enabled ?? false)
+const enabled    = ref<boolean>(props.modelValue?.enabled ?? false)
 const directives = ref<LocalDirective[]>([])
-const showAddMenu = ref(false)
-const loading = ref(false)
+const loading    = ref(false)
+
+// Paste-CSP panel state
+const showPastePanel = ref(false)
+const pasteText      = ref('')
+const pasteError     = ref('')
+
+// Add-directive panel (inline, no dropdown)
+const showAddPanel = ref(false)
 
 function directiveDef(name: string) {
   return ALL_DIRECTIVES.find(d => d.name === name)
@@ -86,36 +91,33 @@ function buildLocals(cfg: models.CSPConfig | null | undefined): LocalDirective[]
 
 directives.value = buildLocals(props.modelValue)
 
-// Sync from parent (e.g. when user clicks "load defaults")
+// ── Prop → local sync ────────────────────────────────────────────────────────
+
 let syncFromProp = false
 watch(() => props.modelValue, (v) => {
   if (syncFromProp) return
   syncFromProp = true
-  enabled.value = v?.enabled ?? false
+  enabled.value    = v?.enabled ?? false
   directives.value = buildLocals(v)
-  syncFromProp = false
+  nextTick(() => { syncFromProp = false })
 }, { deep: true })
 
-// ── Computed ─────────────────────────────────────────────────────────────────
+// ── Computed ──────────────────────────────────────────────────────────────────
 
-/** Directives not yet added — drives the Add menu */
 const availableDirectives = computed(() =>
   ALL_DIRECTIVES.filter(d => !directives.value.some(ld => ld.name === d.name))
 )
 
-/** The effective CSP header value as a string for the preview box */
 const effectiveHeader = computed((): string => {
   if (!enabled.value || directives.value.length === 0) return ''
-  const parts = directives.value
+  return directives.value
     .filter(d => d.name)
-    .map(d => {
-      if (d.noSources || d.sources.length === 0) return d.name
-      return `${d.name} ${d.sources.join(' ')}`
-    })
-  return parts.join(';\n')
+    .map(d => d.noSources || d.sources.length === 0
+      ? d.name
+      : `${d.name} ${d.sources.join(' ')}`)
+    .join(';\n')
 })
 
-/** The current CSPConfig to emit */
 const currentConfig = computed((): models.CSPConfig => new models.CSPConfig({
   enabled: enabled.value,
   directives: directives.value.map(d => new models.CSPDirective({
@@ -124,17 +126,14 @@ const currentConfig = computed((): models.CSPConfig => new models.CSPConfig({
   })),
 }))
 
-// ── Emit helpers ─────────────────────────────────────────────────────────────
+// ── Emit ──────────────────────────────────────────────────────────────────────
 
 function emitUpdate() {
   if (syncFromProp) return
-  emit('update:modelValue', enabled.value || directives.value.length > 0
-    ? currentConfig.value
-    : null
-  )
+  emit('update:modelValue', currentConfig.value)
 }
 
-watch(enabled, emitUpdate)
+watch(enabled,    emitUpdate)
 watch(directives, emitUpdate, { deep: true })
 
 // ── Actions ───────────────────────────────────────────────────────────────────
@@ -144,7 +143,7 @@ async function loadDefaults() {
   try {
     const defaults = await GetDefaultCSPConfig()
     if (defaults) {
-      enabled.value = defaults.enabled ?? true
+      enabled.value    = defaults.enabled ?? true
       directives.value = buildLocals(defaults)
     }
   } catch (e) {
@@ -164,7 +163,7 @@ function addDirective(name: string) {
     noSources: def?.noSources ?? false,
     hostInput: '',
   })
-  showAddMenu.value = false
+  showAddPanel.value = false
 }
 
 function removeDirective(index: number) {
@@ -176,28 +175,23 @@ function toggleSource(d: LocalDirective, kw: string) {
   if (idx >= 0) {
     d.sources.splice(idx, 1)
   } else {
-    // Remove 'none' if adding something else
     if (kw !== "'none'") {
-      const noneIdx = d.sources.indexOf("'none'")
-      if (noneIdx >= 0) d.sources.splice(noneIdx, 1)
+      const ni = d.sources.indexOf("'none'")
+      if (ni >= 0) d.sources.splice(ni, 1)
     } else {
-      // Adding 'none' — clear everything else
       d.sources.splice(0, d.sources.length)
     }
     d.sources.push(kw)
   }
 }
 
-function hasSource(d: LocalDirective, kw: string): boolean {
+function hasSource(d: LocalDirective, kw: string) {
   return d.sources.includes(kw)
 }
 
 function addHost(d: LocalDirective) {
   const host = d.hostInput.trim()
-  if (!host || d.sources.includes(host)) {
-    d.hostInput = ''
-    return
-  }
+  if (!host || d.sources.includes(host)) { d.hostInput = ''; return }
   d.sources.push(host)
   d.hostInput = ''
 }
@@ -207,16 +201,63 @@ function removeSource(d: LocalDirective, src: string) {
   if (idx >= 0) d.sources.splice(idx, 1)
 }
 
-function isKeyword(src: string): boolean {
+function isKeyword(src: string) {
   return KEYWORD_SOURCES.some(k => k.value === src)
 }
 
-/** Custom (host/scheme) sources — not keywords */
-function customSources(d: LocalDirective): string[] {
+function customSources(d: LocalDirective) {
   return d.sources.filter(s => !isKeyword(s))
 }
 
-let copyFeedback = ref(false)
+// ── Parse pasted CSP ─────────────────────────────────────────────────────────
+
+function parseCSPString(raw: string): LocalDirective[] | null {
+  // Strip optional "Content-Security-Policy:" prefix
+  let text = raw.trim()
+  const headerPrefixRe = /^content-security-policy\s*:\s*/i
+  if (headerPrefixRe.test(text)) {
+    text = text.replace(headerPrefixRe, '').trim()
+  }
+
+  if (!text) return null
+
+  const result: LocalDirective[] = []
+  // Directives are separated by semicolons
+  const parts = text.split(';').map(p => p.trim()).filter(Boolean)
+  for (const part of parts) {
+    const tokens = part.split(/\s+/)
+    const name = tokens[0].toLowerCase()
+    if (!name) continue
+    const def = directiveDef(name)
+    const sources = tokens.slice(1)
+    result.push({
+      id: `d-${result.length}-${Date.now()}`,
+      name,
+      sources,
+      expanded: false,
+      noSources: def?.noSources ?? false,
+      hostInput: '',
+    })
+  }
+  return result.length > 0 ? result : null
+}
+
+function applyPaste() {
+  pasteError.value = ''
+  const parsed = parseCSPString(pasteText.value)
+  if (!parsed) {
+    pasteError.value = 'Could not parse a valid CSP. Check the format and try again.'
+    return
+  }
+  directives.value  = parsed
+  enabled.value     = true
+  pasteText.value   = ''
+  showPastePanel.value = false
+}
+
+// ── Copy header ───────────────────────────────────────────────────────────────
+
+const copyFeedback = ref(false)
 async function copyHeader() {
   try {
     await navigator.clipboard.writeText(
@@ -229,10 +270,10 @@ async function copyHeader() {
 </script>
 
 <template>
-  <div class="space-y-5 p-4">
+  <div class="space-y-4 p-4">
 
-    <!-- ── Enable toggle + load defaults ──────────────────────────────────── -->
-    <div class="flex items-center justify-between">
+    <!-- ── Top bar: enable toggle + action buttons ────────────────────────── -->
+    <div class="flex items-center justify-between gap-2 flex-wrap">
       <label class="flex items-center gap-3 cursor-pointer select-none">
         <div
           @click="enabled = !enabled"
@@ -251,84 +292,85 @@ async function copyHeader() {
         </span>
       </label>
 
-      <button
-        @click="loadDefaults"
-        :disabled="loading"
-        class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded
-               transition-colors flex items-center gap-1.5 disabled:opacity-50"
-        title="Load sensible default directives"
-      >
-        <svg v-if="loading" class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-        </svg>
-        <svg v-else class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-        </svg>
-        Load Defaults
-      </button>
+      <div class="flex gap-2">
+        <button
+          @click="showPastePanel = !showPastePanel; showAddPanel = false"
+          class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded
+                 transition-colors flex items-center gap-1.5"
+          title="Paste an existing CSP header to import it"
+        >
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+          </svg>
+          Paste CSP
+        </button>
+        <button
+          @click="loadDefaults"
+          :disabled="loading"
+          class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded
+                 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+          title="Load a sensible default CSP"
+        >
+          <svg v-if="loading" class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+          </svg>
+          <svg v-else class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          Load Defaults
+        </button>
+      </div>
     </div>
 
-    <!-- ── Info banner ─────────────────────────────────────────────────────── -->
+    <!-- ── Paste CSP panel (inline, no floating) ──────────────────────────── -->
+    <div v-if="showPastePanel" class="border border-indigo-700 rounded bg-indigo-900/20 p-3 space-y-2">
+      <p class="text-xs text-indigo-300 font-medium">Paste a CSP header value</p>
+      <p class="text-xs text-gray-400">
+        Paste the full header value or just the directive string. Any existing directives will be replaced.
+      </p>
+      <textarea
+        v-model="pasteText"
+        rows="3"
+        placeholder="e.g. default-src 'self'; script-src 'self' 'unsafe-eval'; img-src *"
+        class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-white text-xs font-mono
+               focus:outline-none focus:border-indigo-500 resize-none"
+      />
+      <p v-if="pasteError" class="text-xs text-red-400">{{ pasteError }}</p>
+      <div class="flex gap-2">
+        <button
+          @click="applyPaste"
+          class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs rounded transition-colors"
+        >Apply</button>
+        <button
+          @click="showPastePanel = false; pasteText = ''; pasteError = ''"
+          class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors"
+        >Cancel</button>
+      </div>
+    </div>
+
+    <!-- ── Info banner ────────────────────────────────────────────────────── -->
     <div class="p-3 bg-blue-900/20 border border-blue-800 rounded text-xs text-blue-200">
-      Content Security Policy (CSP) tells browsers which sources are trusted for scripts, styles,
-      images and other resources. When enabled, Mockelot injects a
-      <code class="text-blue-300 font-mono">Content-Security-Policy</code> header on every response,
-      overwriting any value set by an upstream server.
+      CSP tells browsers which sources are trusted for scripts, styles, images and other resources.
+      When enabled, Mockelot injects
+      <code class="text-blue-300 font-mono">Content-Security-Policy</code>
+      on every response, overwriting any upstream value.
     </div>
 
     <div v-if="enabled" class="space-y-4">
 
-      <!-- ── Directives list ───────────────────────────────────────────────── -->
+      <!-- ── Directive list ─────────────────────────────────────────────── -->
       <div class="space-y-2">
-        <div class="flex items-center justify-between">
-          <h4 class="text-sm font-medium text-white">Directives</h4>
-
-          <!-- Add Directive button + dropdown -->
-          <div class="relative">
-            <button
-              @click="showAddMenu = !showAddMenu"
-              class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded
-                     transition-colors flex items-center gap-1.5"
-            >
-              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-              </svg>
-              Add Directive
-              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-
-            <!-- Dropdown menu -->
-            <div
-              v-if="showAddMenu"
-              class="absolute right-0 top-full mt-1 z-50 w-80 bg-gray-800 border border-gray-600 rounded shadow-xl overflow-y-auto max-h-72"
-            >
-              <!-- click-outside shim -->
-              <div
-                class="fixed inset-0 z-[-1]"
-                @click="showAddMenu = false"
-              />
-              <div v-if="availableDirectives.length === 0" class="px-4 py-3 text-xs text-gray-400">
-                All directives already added.
-              </div>
-              <button
-                v-for="d in availableDirectives"
-                :key="d.name"
-                @click="addDirective(d.name)"
-                class="w-full text-left px-4 py-2 hover:bg-gray-700 transition-colors"
-              >
-                <div class="text-sm font-mono text-blue-300">{{ d.name }}</div>
-                <div class="text-xs text-gray-400">{{ d.description }}</div>
-              </button>
-            </div>
-          </div>
-        </div>
+        <h4 class="text-sm font-medium text-white">Directives</h4>
 
         <!-- Empty state -->
-        <div v-if="directives.length === 0" class="text-center py-8 text-gray-400 text-sm border border-dashed border-gray-600 rounded">
-          No directives configured. Click "Load Defaults" for a baseline, or "Add Directive" to start from scratch.
+        <div
+          v-if="directives.length === 0 && !showAddPanel"
+          class="text-center py-6 text-gray-400 text-sm border border-dashed border-gray-600 rounded"
+        >
+          No directives. Use <strong>Load Defaults</strong>, <strong>Paste CSP</strong>, or <strong>Add Directive</strong>.
         </div>
 
         <!-- Directive cards -->
@@ -337,13 +379,12 @@ async function copyHeader() {
           :key="d.id"
           class="border border-gray-600 rounded"
         >
-          <!-- Directive header row -->
+          <!-- Header row -->
           <div
-            class="flex items-center gap-3 px-3 py-2 bg-gray-700/60 cursor-pointer select-none rounded"
-            :class="d.expanded ? 'rounded-b-none' : ''"
+            class="flex items-center gap-3 px-3 py-2 bg-gray-700/60 cursor-pointer select-none"
+            :class="d.expanded ? 'rounded-t' : 'rounded'"
             @click="d.expanded = !d.expanded"
           >
-            <!-- Expand chevron -->
             <svg
               class="w-4 h-4 text-gray-400 flex-shrink-0 transition-transform"
               :class="d.expanded ? 'rotate-90' : ''"
@@ -352,24 +393,19 @@ async function copyHeader() {
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
             </svg>
 
-            <!-- Directive name -->
-            <span class="font-mono text-sm text-blue-300 flex-shrink-0">{{ d.name }}</span>
+            <span class="font-mono text-sm text-blue-300 flex-shrink-0 w-44 truncate">{{ d.name }}</span>
 
-            <!-- Source pills preview (collapsed) -->
-            <div v-if="!d.expanded" class="flex flex-wrap gap-1 flex-1 min-w-0">
+            <!-- Source preview when collapsed -->
+            <div v-if="!d.expanded" class="flex flex-wrap gap-1 flex-1 min-w-0 overflow-hidden">
               <span
-                v-for="src in d.sources.slice(0, 6)"
-                :key="src"
-                class="px-1.5 py-0.5 bg-gray-600 text-gray-200 text-xs rounded font-mono truncate max-w-[160px]"
+                v-for="src in d.sources.slice(0, 5)" :key="src"
+                class="px-1.5 py-0.5 bg-gray-600 text-gray-200 text-xs rounded font-mono"
               >{{ src }}</span>
-              <span v-if="d.sources.length > 6" class="text-xs text-gray-500">
-                +{{ d.sources.length - 6 }} more
-              </span>
-              <span v-if="d.noSources" class="text-xs text-gray-500 italic">(no sources)</span>
+              <span v-if="d.sources.length > 5" class="text-xs text-gray-500">+{{ d.sources.length - 5 }}</span>
+              <span v-if="d.noSources" class="text-xs text-gray-500 italic">(flag)</span>
               <span v-if="!d.noSources && d.sources.length === 0" class="text-xs text-gray-500 italic">inherits default-src</span>
             </div>
 
-            <!-- Remove button -->
             <button
               @click.stop="removeDirective(idx)"
               class="ml-auto p-1 text-gray-500 hover:text-red-400 transition-colors flex-shrink-0"
@@ -383,10 +419,8 @@ async function copyHeader() {
 
           <!-- Expanded body -->
           <div v-if="d.expanded" class="p-3 bg-gray-800/60 space-y-3 border-t border-gray-700 rounded-b">
-
-            <!-- No-sources directives (flags) -->
             <p v-if="d.noSources" class="text-xs text-gray-400 italic">
-              This directive has no source list — it acts as a flag.
+              This directive acts as a flag — no source list needed.
             </p>
 
             <!-- Keyword pills -->
@@ -394,8 +428,7 @@ async function copyHeader() {
               <p class="text-xs text-gray-400 mb-2">Keywords</p>
               <div class="flex flex-wrap gap-1.5">
                 <button
-                  v-for="kw in KEYWORD_SOURCES"
-                  :key="kw.value"
+                  v-for="kw in KEYWORD_SOURCES" :key="kw.value"
                   @click="toggleSource(d, kw.value)"
                   :title="kw.title"
                   :class="[
@@ -404,40 +437,30 @@ async function copyHeader() {
                       ? 'bg-blue-600 border-blue-500 text-white'
                       : 'bg-gray-700 border-gray-600 text-gray-300 hover:border-gray-400'
                   ]"
-                >
-                  {{ kw.label }}
-                </button>
+                >{{ kw.label }}</button>
               </div>
             </div>
 
             <!-- Custom host sources -->
             <div v-if="!d.noSources">
               <p class="text-xs text-gray-400 mb-2">Hosts / Schemes</p>
-
-              <!-- Existing custom sources as removable pills -->
               <div class="flex flex-wrap gap-1.5 mb-2">
                 <span
-                  v-for="src in customSources(d)"
-                  :key="src"
-                  class="flex items-center gap-1 px-2 py-0.5 bg-indigo-700/60 border border-indigo-600 rounded text-xs font-mono text-indigo-200"
+                  v-for="src in customSources(d)" :key="src"
+                  class="flex items-center gap-1 px-2 py-0.5 bg-indigo-700/60 border border-indigo-600
+                         rounded text-xs font-mono text-indigo-200"
                 >
                   {{ src }}
-                  <button
-                    @click="removeSource(d, src)"
-                    class="text-indigo-400 hover:text-red-400 transition-colors leading-none"
-                    title="Remove"
-                  >×</button>
+                  <button @click="removeSource(d, src)" class="text-indigo-400 hover:text-red-400 leading-none">×</button>
                 </span>
               </div>
-
-              <!-- Host input -->
               <div class="flex gap-2">
                 <input
                   v-model="d.hostInput"
                   type="text"
-                  placeholder="e.g. *.example.com or https://api.example.com"
-                  class="flex-1 px-3 py-1.5 bg-gray-700 border border-gray-600 rounded text-white text-xs font-mono
-                         focus:outline-none focus:border-blue-500"
+                  placeholder="e.g. *.example.com"
+                  class="flex-1 px-3 py-1.5 bg-gray-700 border border-gray-600 rounded text-white
+                         text-xs font-mono focus:outline-none focus:border-blue-500"
                   @keydown.enter.prevent="addHost(d)"
                 />
                 <button
@@ -446,28 +469,57 @@ async function copyHeader() {
                 >Add</button>
               </div>
             </div>
+          </div>
+        </div>
 
-            <!-- report-uri / report-to hint -->
-            <div
-              v-if="d.name === 'report-uri' || d.name === 'report-to'"
-              class="p-2 bg-yellow-900/20 border border-yellow-800 rounded text-xs text-yellow-200"
+        <!-- ── Add Directive — inline panel, no floating dropdown ────────── -->
+        <div v-if="!showAddPanel && availableDirectives.length > 0">
+          <button
+            @click="showAddPanel = true; showPastePanel = false"
+            class="w-full py-2 border border-dashed border-gray-600 rounded text-xs text-gray-400
+                   hover:border-gray-400 hover:text-gray-300 transition-colors flex items-center justify-center gap-1.5"
+          >
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+            </svg>
+            Add Directive
+          </button>
+        </div>
+
+        <div v-if="showAddPanel" class="border border-gray-600 rounded bg-gray-800/60 p-3 space-y-2">
+          <div class="flex items-center justify-between mb-1">
+            <p class="text-xs font-medium text-gray-300">Choose a directive to add</p>
+            <button
+              @click="showAddPanel = false"
+              class="text-gray-500 hover:text-gray-300 text-xs transition-colors"
+            >✕ Close</button>
+          </div>
+          <div class="grid grid-cols-1 gap-1">
+            <button
+              v-for="d in availableDirectives" :key="d.name"
+              @click="addDirective(d.name)"
+              class="text-left px-3 py-2 rounded hover:bg-gray-700 transition-colors border border-transparent
+                     hover:border-gray-600 flex items-baseline gap-3"
             >
-              Add the report endpoint URL or group name as a host source above.
-            </div>
+              <span class="font-mono text-xs text-blue-300 flex-shrink-0 w-44">{{ d.name }}</span>
+              <span class="text-xs text-gray-400 truncate">{{ d.description }}</span>
+            </button>
           </div>
         </div>
       </div>
 
-      <!-- ── Effective Header preview ──────────────────────────────────────── -->
+      <!-- ── Effective Header preview ───────────────────────────────────── -->
       <div class="border border-gray-600 rounded overflow-hidden">
         <div class="flex items-center justify-between px-3 py-2 bg-gray-700/60 border-b border-gray-600">
           <span class="text-xs font-medium text-gray-300">Effective Header</span>
           <button
             @click="copyHeader"
-            class="px-2 py-1 text-xs rounded transition-colors flex items-center gap-1"
-            :class="copyFeedback
-              ? 'bg-green-700 text-green-100'
-              : 'bg-gray-600 hover:bg-gray-500 text-gray-300'"
+            :class="[
+              'px-2 py-1 text-xs rounded transition-colors flex items-center gap-1',
+              copyFeedback
+                ? 'bg-green-700 text-green-100'
+                : 'bg-gray-600 hover:bg-gray-500 text-gray-300'
+            ]"
           >
             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -482,15 +534,15 @@ async function copyHeader() {
             <pre class="text-green-300 whitespace-pre-wrap mt-1 leading-relaxed">{{ effectiveHeader }}</pre>
           </div>
           <div v-else class="text-gray-500 italic">
-            {{ directives.length === 0 ? 'No directives — no CSP header will be sent.' : 'CSP disabled.' }}
+            {{ directives.length === 0 ? 'No directives — no CSP header will be sent.' : 'Add directives above.' }}
           </div>
         </div>
       </div>
 
     </div>
 
-    <!-- ── Disabled placeholder ──────────────────────────────────────────── -->
-    <div v-else class="py-6 text-center text-gray-500 text-sm">
+    <!-- Disabled placeholder -->
+    <div v-else class="py-4 text-center text-gray-500 text-sm">
       Enable CSP above to configure directives.
     </div>
 
