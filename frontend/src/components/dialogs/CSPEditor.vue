@@ -16,6 +16,8 @@ const emit = defineEmits<{
 const ALL_DIRECTIVES: { name: string; description: string; noSources?: boolean }[] = [
   { name: 'default-src',               description: 'Fallback for all fetch directives' },
   { name: 'script-src',                description: 'Valid sources for JavaScript' },
+  { name: 'script-src-attr',           description: 'Valid sources for inline event handlers (onclick=, onload=, etc.)' },
+  { name: 'script-src-elem',           description: 'Valid sources for <script> elements' },
   { name: 'style-src',                 description: 'Valid sources for stylesheets' },
   { name: 'img-src',                   description: 'Valid sources for images' },
   { name: 'connect-src',               description: 'Valid targets for fetch, XHR, WebSocket' },
@@ -211,23 +213,44 @@ function customSources(d: LocalDirective) {
 
 // ── Parse pasted CSP ─────────────────────────────────────────────────────────
 
+// A valid CSP directive name: hyphenated fetch/navigation/document directives,
+// or the known single-word ones. This rejects nginx keywords like "always".
+const CSP_DIRECTIVE_RE = /^[a-z][-a-z]+(-(src|uri|action|ancestors|to))?$|^(upgrade-insecure-requests|block-all-mixed-content|report-uri|report-to|base-uri|navigate-to)$/
+
+function isValidDirectiveName(name: string): boolean {
+  // Must contain at least one hyphen OR be a known single-word directive,
+  // and must not be a bare nginx/shell keyword like "always".
+  return CSP_DIRECTIVE_RE.test(name) || ALL_DIRECTIVES.some(d => d.name === name)
+}
+
 function parseCSPString(raw: string): LocalDirective[] | null {
-  // Strip optional "Content-Security-Policy:" prefix
   let text = raw.trim()
-  const headerPrefixRe = /^content-security-policy\s*:\s*/i
-  if (headerPrefixRe.test(text)) {
-    text = text.replace(headerPrefixRe, '').trim()
+
+  // Strip optional nginx add_header prefix: add_header Content-Security-Policy "..." always;
+  text = text.replace(/^add_header\s+content-security-policy\s+["']?/i, '').replace(/["']?\s*always\s*;?\s*$/i, '').trim()
+
+  // Strip optional bare header prefix: Content-Security-Policy:
+  text = text.replace(/^content-security-policy\s*:\s*/i, '').trim()
+
+  // Strip surrounding quotes the user may have copy-pasted from nginx config
+  if ((text.startsWith('"') && text.endsWith('"')) ||
+      (text.startsWith("'") && text.endsWith("'"))) {
+    text = text.slice(1, -1).trim()
   }
+
+  // Strip trailing nginx "always" that may remain after semicolon
+  text = text.replace(/;\s*always\s*;?\s*$/i, '').trim()
 
   if (!text) return null
 
   const result: LocalDirective[] = []
-  // Directives are separated by semicolons
   const parts = text.split(';').map(p => p.trim()).filter(Boolean)
   for (const part of parts) {
     const tokens = part.split(/\s+/)
     const name = tokens[0].toLowerCase()
     if (!name) continue
+    // Skip non-CSP tokens (e.g. nginx "always" leaking in after a semicolon)
+    if (!isValidDirectiveName(name)) continue
     const def = directiveDef(name)
     const sources = tokens.slice(1)
     result.push({
