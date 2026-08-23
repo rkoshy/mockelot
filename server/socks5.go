@@ -1599,8 +1599,8 @@ func (s *SOCKS5Server) writeResponse(conn net.Conn, rec *responseRecorder) error
 		}
 	}
 
-	// Add Content-Length if not already present
-	if !hasContentLength && len(bodyBytes) > 0 {
+	// Always emit Content-Length — same reasoning as writeBuffered.
+	if !hasContentLength {
 		fmt.Fprintf(&buf, "Content-Length: %d\r\n", len(bodyBytes))
 	}
 
@@ -1722,7 +1722,11 @@ func (sw *socks5StreamWriter) writeBuffered() error {
 			fmt.Fprintf(&buf, "%s: %s\r\n", key, value)
 		}
 	}
-	if !hasContentLength && len(bodyBytes) > 0 {
+	// Always emit Content-Length — HTTP/1.1 keep-alive requires it so the
+	// client knows where this response ends and the next begins. Omitting it
+	// on short error responses (404 "Not Found\n") causes Firefox to report
+	// NS_ERROR_CORRUPTED_CONTENT because it can't frame the response.
+	if !hasContentLength {
 		fmt.Fprintf(&buf, "Content-Length: %d\r\n", len(bodyBytes))
 	}
 	buf.WriteString("\r\n")
