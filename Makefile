@@ -4,11 +4,15 @@
 WAILS := $(HOME)/go/bin/wails
 BINARY := build/bin/mockelot
 
-.PHONY: build dev run deb clean
+.PHONY: build race dev run deb clean
 
 ## build: compile a runnable binary for Debian 13
 build:
 	$(WAILS) build -tags webkit2_41
+
+## race: compile with Go race detector enabled (for debugging data races)
+race:
+	$(WAILS) build -tags webkit2_41 -race
 
 ## dev: hot-reload dev server (Debian 13)
 dev:

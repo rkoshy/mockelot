@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -154,6 +155,11 @@ func (s *SOCKS5Server) Start() error {
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[SOCKS5] Panic in connection handler: %v\n%s", r, debug.Stack())
+				}
+			}()
 			s.handleConnection(conn)
 		}()
 	}

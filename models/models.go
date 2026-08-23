@@ -103,6 +103,13 @@ const (
 	CORSModeScript  = "script"  // Use custom JavaScript script
 )
 
+// TranslationRule is a single regex match/replace pair used in multi-rule translation.
+// Rules are evaluated in order; the first matching rule wins (nginx `rewrite ... break` semantics).
+type TranslationRule struct {
+	Pattern string `json:"pattern" yaml:"pattern"` // Go regex applied to the request path
+	Replace string `json:"replace" yaml:"replace"` // Replacement string ($1, $2, … for capture groups)
+}
+
 // PathTranslationMode constants for endpoint path translation
 const (
 	TranslationModeNone      = "none"      // No translation - use path as-is
@@ -112,9 +119,10 @@ const (
 
 // EndpointType constants for different endpoint behaviors
 const (
-	EndpointTypeMock      = "mock"      // Script-based mock responses
-	EndpointTypeProxy     = "proxy"     // Reverse proxy with translation
-	EndpointTypeContainer = "container" // Docker container management
+	EndpointTypeMock       = "mock"        // Script-based mock responses
+	EndpointTypeProxy      = "proxy"       // Reverse proxy with translation
+	EndpointTypeContainer  = "container"   // Docker container management
+	EndpointTypeFileServer = "file_server" // Serve a local directory
 )
 
 // HeaderManipulation mode constants for proxy endpoints
@@ -281,6 +289,20 @@ type EnvironmentVar struct {
 	Expression string `json:"expression,omitempty" yaml:"expression,omitempty"` // JS expression for dynamic value
 }
 
+// FileServerConfig contains configuration for file server endpoints.
+// A file server endpoint serves files from a local directory, with optional SSI processing.
+// Path translation uses the endpoint's TranslationMode/TranslatePattern/TranslateReplace fields
+// (identical to proxy endpoints). The translated path is joined onto BasePath to locate the file.
+//
+// SSI virtual includes (<!--#include virtual="..."-->) are resolved by re-issuing the virtual
+// path as a new internal sub-request through the full endpoint matching pipeline — the same way
+// a browser request would be handled. No separate path-mapping config is needed.
+type FileServerConfig struct {
+	BasePath    string       `json:"base_path" yaml:"base_path"`                           // Filesystem directory to serve from
+	EnableSSI   bool         `json:"enable_ssi" yaml:"enable_ssi"`                         // Process SSI directives in .shtml files
+	ProxyConfig *ProxyConfig `json:"proxy_config,omitempty" yaml:"proxy_config,omitempty"` // Header manipulation and status translation
+}
+
 // DomainFilter defines domain-based filtering for endpoints (SOCKS5 proxy)
 // Allows endpoints to be scoped to specific domains from the takeover list
 type DomainFilter struct {
@@ -374,9 +396,10 @@ type Endpoint struct {
 	ID               string         `json:"id" yaml:"id"`                                                   // Unique identifier
 	Name             string         `json:"name" yaml:"name"`                                               // Display name
 	PathPrefix       string         `json:"path_prefix" yaml:"path_prefix"`                                 // Path prefix to match (e.g., "/api/v1")
-	TranslationMode  string         `json:"translation_mode" yaml:"translation_mode"`                       // Translation mode: "none", "strip", "translate"
-	TranslatePattern string         `json:"translate_pattern,omitempty" yaml:"translate_pattern,omitempty"` // Regex pattern for translate mode
-	TranslateReplace string         `json:"translate_replace,omitempty" yaml:"translate_replace,omitempty"` // Replacement for translate mode
+	TranslationMode  string            `json:"translation_mode" yaml:"translation_mode"`                             // Translation mode: "none", "strip", "translate"
+	TranslatePattern string            `json:"translate_pattern,omitempty" yaml:"translate_pattern,omitempty"`       // Legacy single regex pattern (translate mode)
+	TranslateReplace string            `json:"translate_replace,omitempty" yaml:"translate_replace,omitempty"`       // Legacy single replacement (translate mode)
+	TranslationRules []TranslationRule `json:"translation_rules,omitempty" yaml:"translation_rules,omitempty"`       // Ordered list of regex rules (translate mode); overrides single pattern/replace when non-empty
 	Enabled          *bool          `json:"enabled,omitempty" yaml:"enabled,omitempty"`                     // Whether endpoint is enabled (default: true)
 	IsSystem         bool           `json:"is_system,omitempty" yaml:"is_system,omitempty"`                 // System endpoint (cannot be deleted)
 	DisplayOrder     int            `json:"display_order,omitempty" yaml:"display_order,omitempty"`         // Order for request matching (lower = higher priority)
@@ -385,10 +408,11 @@ type Endpoint struct {
 	DomainFilter *DomainFilter `json:"domain_filter,omitempty" yaml:"domain_filter,omitempty"` // Domain filter for SOCKS5 intercepted domains
 
 	// Endpoint type and type-specific configurations
-	Type            string           `json:"type" yaml:"type"`                                         // "mock", "proxy", "container"
-	Items           []ResponseItem   `json:"items,omitempty" yaml:"items,omitempty"`                   // For mock type only
-	ProxyConfig     *ProxyConfig     `json:"proxy_config,omitempty" yaml:"proxy_config,omitempty"`     // For proxy type
-	ContainerConfig *ContainerConfig `json:"container_config,omitempty" yaml:"container_config,omitempty"` // For container type
+	Type             string            `json:"type" yaml:"type"`                                                   // "mock", "proxy", "container", "file_server"
+	Items            []ResponseItem    `json:"items,omitempty" yaml:"items,omitempty"`                             // For mock type only
+	ProxyConfig      *ProxyConfig      `json:"proxy_config,omitempty" yaml:"proxy_config,omitempty"`               // For proxy type
+	ContainerConfig  *ContainerConfig  `json:"container_config,omitempty" yaml:"container_config,omitempty"`       // For container type
+	FileServerConfig *FileServerConfig `json:"file_server_config,omitempty" yaml:"file_server_config,omitempty"`   // For file_server type
 }
 
 // IsEnabled returns whether this endpoint is enabled (defaults to true if not set)

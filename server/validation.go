@@ -252,7 +252,7 @@ func runValidationScript(vm *goja.Runtime, script string, body string, reqContex
 	_, err := vm.RunString(script)
 	if err != nil {
 		if jsErr, ok := err.(*goja.Exception); ok {
-			return nil, fmt.Errorf(jsErr.String())
+			return nil, fmt.Errorf("%s", jsErr.String())
 		}
 		return nil, err
 	}
@@ -463,7 +463,7 @@ func runHeaderValidationScript(vm *goja.Runtime, expression string, headerValue 
 	result, err := vm.RunString(expression)
 	if err != nil {
 		if jsErr, ok := err.(*goja.Exception); ok {
-			return false, fmt.Errorf(jsErr.String())
+			return false, fmt.Errorf("%s", jsErr.String())
 		}
 		return false, err
 	}

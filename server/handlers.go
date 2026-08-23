@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -53,19 +54,20 @@ const (
 )
 
 type ResponseHandler struct {
-	config             *models.AppConfig
-	configMutex        sync.RWMutex
-	requestLogger      RequestLogger
-	scriptErrorLogger  ScriptErrorLogger
-	corsProcessor      *CORSProcessor
-	proxyHandler       *ProxyHandler
-	containerHandler   *ContainerHandler
-	overlayHandler     *OverlayHandler
-	regexCache         map[string]*regexp.Regexp // Cache for compiled regexes
-	regexCacheMutex    sync.RWMutex              // Mutex for regex cache
-	logRequestMatching bool                      // Enable verbose request matching logs
-	overlaySimModes    *sync.Map                 // endpointID → OverlaySimMode constant; shared with HTTPServer
-	proxySimModes      *sync.Map                 // endpointID → OverlaySimConfig; shared with HTTPServer
+	config              *models.AppConfig
+	configMutex         sync.RWMutex
+	requestLogger       RequestLogger
+	scriptErrorLogger   ScriptErrorLogger
+	corsProcessor       *CORSProcessor
+	proxyHandler        *ProxyHandler
+	containerHandler    *ContainerHandler
+	fileServerHandler   *FileServerHandler
+	overlayHandler      *OverlayHandler
+	regexCache          map[string]*regexp.Regexp // Cache for compiled regexes
+	regexCacheMutex     sync.RWMutex              // Mutex for regex cache
+	logRequestMatching  bool                      // Enable verbose request matching logs
+	overlaySimModes     *sync.Map                 // endpointID → OverlaySimMode constant; shared with HTTPServer
+	proxySimModes       *sync.Map                 // endpointID → OverlaySimConfig; shared with HTTPServer
 }
 
 func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptErrorLogger ScriptErrorLogger, proxyHandler *ProxyHandler, containerHandler *ContainerHandler, logRequestMatching bool, dnsResolver *DNSResolver, overlaySimModes *sync.Map, proxySimModes *sync.Map) *ResponseHandler {
@@ -77,12 +79,54 @@ func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptEr
 		corsProcessor:      NewCORSProcessor(&config.CORS),
 		proxyHandler:       proxyHandler,
 		containerHandler:   containerHandler,
+		fileServerHandler:  NewFileServerHandler(proxyHandler),
 		overlayHandler:     overlayHandler,
 		regexCache:         make(map[string]*regexp.Regexp),
 		logRequestMatching: logRequestMatching,
 		overlaySimModes:    overlaySimModes,
 		proxySimModes:      proxySimModes,
 	}
+}
+
+// applyTranslation computes the translated path for an endpoint in "translate" mode.
+// If the endpoint has TranslationRules, they are tried in order and the first matching
+// rule's replacement is returned (nginx `rewrite ... break` semantics).
+// Falls back to the legacy single TranslatePattern/TranslateReplace pair if no rules defined.
+// Returns the original requestPath unchanged if nothing matches.
+func (h *ResponseHandler) applyTranslation(endpoint *models.Endpoint, requestPath string) string {
+	if endpoint == nil {
+		return requestPath
+	}
+	// Multi-rule path: first matching rule wins
+	if len(endpoint.TranslationRules) > 0 {
+		for _, rule := range endpoint.TranslationRules {
+			if rule.Pattern == "" {
+				continue
+			}
+			re, err := h.compileRegex(rule.Pattern)
+			if err != nil {
+				log.Printf("Invalid translation rule pattern %q in endpoint %s: %v", rule.Pattern, endpoint.Name, err)
+				continue
+			}
+			if re.MatchString(requestPath) {
+				return re.ReplaceAllString(requestPath, rule.Replace)
+			}
+		}
+		// No rule matched — return path unchanged
+		return requestPath
+	}
+
+	// Legacy single pattern/replace
+	if endpoint.TranslatePattern != "" {
+		re, err := h.compileRegex(endpoint.TranslatePattern)
+		if err != nil {
+			log.Printf("Invalid regex pattern in endpoint %s: %v", endpoint.Name, err)
+			return requestPath
+		}
+		return re.ReplaceAllString(requestPath, endpoint.TranslateReplace)
+	}
+
+	return requestPath
 }
 
 // compileRegex compiles a regex pattern and caches it
@@ -114,6 +158,71 @@ func (h *ResponseHandler) InvalidateRegexCache() {
 	h.regexCacheMutex.Lock()
 	h.regexCache = make(map[string]*regexp.Regexp)
 	h.regexCacheMutex.Unlock()
+}
+
+// WarmRegexCache pre-compiles all regexes from the current endpoint configuration
+// so that the first incoming request does not trigger regex compilation (and the
+// associated memory allocation / GC pressure that can cause signal-handler races
+// on Linux with WebKit2GTK's JSC).
+func (h *ResponseHandler) WarmRegexCache() {
+	h.configMutex.RLock()
+	endpoints := h.config.Endpoints
+	h.configMutex.RUnlock()
+
+	compiled := 0
+	for i := range endpoints {
+		ep := &endpoints[i]
+
+		// Path prefix (may be a regex)
+		if strings.HasPrefix(ep.PathPrefix, "^") {
+			if _, err := h.compileRegex(ep.PathPrefix); err == nil {
+				compiled++
+			}
+		}
+
+		// Legacy single translate pattern
+		if ep.TranslatePattern != "" {
+			if _, err := h.compileRegex(ep.TranslatePattern); err == nil {
+				compiled++
+			}
+		}
+
+		// Multi-rule translation patterns
+		for _, rule := range ep.TranslationRules {
+			if rule.Pattern != "" {
+				if _, err := h.compileRegex(rule.Pattern); err == nil {
+					compiled++
+				}
+			}
+		}
+
+		// Domain filter patterns (used in matchesDomain)
+		if ep.DomainFilter != nil {
+			for _, pat := range ep.DomainFilter.Patterns {
+				if pat != "" {
+					if _, err := h.compileRegex(pat); err == nil {
+						compiled++
+					}
+				}
+			}
+		}
+	}
+
+	// Also pre-compile domain takeover patterns (used in matchesDomain "all" mode)
+	h.configMutex.RLock()
+	dt := h.config.DomainTakeover
+	h.configMutex.RUnlock()
+	if dt != nil {
+		for _, d := range dt.Domains {
+			if d.Pattern != "" {
+				if _, err := h.compileRegex(d.Pattern); err == nil {
+					compiled++
+				}
+			}
+		}
+	}
+
+	log.Printf("[Server] Regex cache warmed: %d patterns pre-compiled", compiled)
 }
 
 // canMockEndpointHandleRequest checks if a mock endpoint has a response that can handle the request
@@ -436,16 +545,7 @@ func (h *ResponseHandler) FindEndpointMatch(r *http.Request) *EndpointMatch {
 				translatedPath = "/" + translatedPath
 			}
 		case models.TranslationModeTranslate:
-			if endpoint.TranslatePattern != "" {
-				re, err := h.compileRegex(endpoint.TranslatePattern)
-				if err != nil {
-					translatedPath = requestPath
-				} else {
-					translatedPath = re.ReplaceAllString(requestPath, endpoint.TranslateReplace)
-				}
-			} else {
-				translatedPath = requestPath
-			}
+			translatedPath = h.applyTranslation(endpoint, requestPath)
 		default:
 			translatedPath = requestPath
 		}
@@ -470,6 +570,13 @@ func (h *ResponseHandler) FindEndpointID(r *http.Request) string {
 }
 
 func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("[HANDLER] Panic handling %s %s: %v\n%s", r.Method, r.URL.Path, rec, debug.Stack())
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		}
+	}()
+
 	// Read request body
 	bodyBytes, _ := io.ReadAll(r.Body)
 	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
@@ -576,17 +683,7 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 					currentTranslatedPath = "/" + currentTranslatedPath
 				}
 			case models.TranslationModeTranslate:
-				if endpoint.TranslatePattern != "" {
-					re, err := h.compileRegex(endpoint.TranslatePattern)
-					if err != nil {
-						log.Printf("Invalid regex pattern in endpoint %s: %v", endpoint.Name, err)
-						currentTranslatedPath = requestPath
-					} else {
-						currentTranslatedPath = re.ReplaceAllString(requestPath, endpoint.TranslateReplace)
-					}
-				} else {
-					currentTranslatedPath = requestPath
-				}
+				currentTranslatedPath = h.applyTranslation(endpoint, requestPath)
 			default:
 				currentTranslatedPath = requestPath
 			}
@@ -710,6 +807,8 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 			h.handleProxyRequest(w, r, matchedEndpoint, translatedPath, captureGroups)
 		case models.EndpointTypeContainer:
 			h.handleContainerRequest(w, r, matchedEndpoint, translatedPath)
+		case models.EndpointTypeFileServer:
+			h.handleFileServerRequest(w, r, matchedEndpoint, translatedPath)
 		default:
 			http.Error(w, "Unknown endpoint type", http.StatusInternalServerError)
 		}
@@ -1323,6 +1422,15 @@ func (h *ResponseHandler) handleProxyRequest(w http.ResponseWriter, r *http.Requ
 
 	// Delegate to proxy handler
 	h.proxyHandler.ServeHTTP(w, r, endpoint, translatedPath, captureGroups)
+}
+
+// handleFileServerRequest handles file server endpoint requests
+func (h *ResponseHandler) handleFileServerRequest(w http.ResponseWriter, r *http.Request, endpoint *models.Endpoint, translatedPath string) {
+	if h.fileServerHandler == nil || endpoint.FileServerConfig == nil {
+		http.Error(w, "File server configuration missing", http.StatusInternalServerError)
+		return
+	}
+	h.fileServerHandler.ServeHTTP(w, r, endpoint, translatedPath, h)
 }
 
 // handleContainerRequest handles container endpoint requests

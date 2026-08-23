@@ -326,6 +326,40 @@ export namespace models {
 	        this.server_bundle_path = source["server_bundle_path"];
 	    }
 	}
+	export class FileServerConfig {
+	    base_path: string;
+	    enable_ssi: boolean;
+	    proxy_config?: ProxyConfig;
+	
+	    static createFrom(source: any = {}) {
+	        return new FileServerConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.base_path = source["base_path"];
+	        this.enable_ssi = source["enable_ssi"];
+	        this.proxy_config = this.convertValues(source["proxy_config"], ProxyConfig);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class EnvironmentVar {
 	    name: string;
 	    value?: string;
@@ -504,6 +538,20 @@ export namespace models {
 	        this.patterns = source["patterns"];
 	    }
 	}
+	export class TranslationRule {
+	    pattern: string;
+	    replace: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TranslationRule(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pattern = source["pattern"];
+	        this.replace = source["replace"];
+	    }
+	}
 	export class Endpoint {
 	    id: string;
 	    name: string;
@@ -511,6 +559,7 @@ export namespace models {
 	    translation_mode: string;
 	    translate_pattern?: string;
 	    translate_replace?: string;
+	    translation_rules?: TranslationRule[];
 	    enabled?: boolean;
 	    is_system?: boolean;
 	    display_order?: number;
@@ -519,6 +568,7 @@ export namespace models {
 	    items?: ResponseItem[];
 	    proxy_config?: ProxyConfig;
 	    container_config?: ContainerConfig;
+	    file_server_config?: FileServerConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new Endpoint(source);
@@ -532,6 +582,7 @@ export namespace models {
 	        this.translation_mode = source["translation_mode"];
 	        this.translate_pattern = source["translate_pattern"];
 	        this.translate_replace = source["translate_replace"];
+	        this.translation_rules = this.convertValues(source["translation_rules"], TranslationRule);
 	        this.enabled = source["enabled"];
 	        this.is_system = source["is_system"];
 	        this.display_order = source["display_order"];
@@ -540,6 +591,7 @@ export namespace models {
 	        this.items = this.convertValues(source["items"], ResponseItem);
 	        this.proxy_config = this.convertValues(source["proxy_config"], ProxyConfig);
 	        this.container_config = this.convertValues(source["container_config"], ContainerConfig);
+	        this.file_server_config = this.convertValues(source["file_server_config"], FileServerConfig);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -921,6 +973,7 @@ export namespace models {
 	        this.is_http_service = source["is_http_service"];
 	    }
 	}
+	
 	
 	
 	
@@ -1315,6 +1368,7 @@ export namespace models {
 		    return a;
 		}
 	}
+	
 	
 	
 

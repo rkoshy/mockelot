@@ -16,7 +16,9 @@ import OverlaySimPanel from './OverlaySimPanel.vue'
 import ProxySimPanel from './ProxySimPanel.vue'
 import EndpointNavigator from './EndpointNavigator.vue'
 import ProxyConfigPanel from '../dialogs/ProxyConfigPanel.vue'
+import TranslationRuleList from '../dialogs/TranslationRuleList.vue'
 import ContainerConfigPanel from '../dialogs/ContainerConfigPanel.vue'
+import FileServerConfigPanel from '../dialogs/FileServerConfigPanel.vue'
 import CustomSelect from '../common/CustomSelect.vue'
 import DomainFilterInput from '../common/DomainFilterInput.vue'
 
@@ -290,7 +292,7 @@ function handleCancelEndpointSettings() {
 }
 
 // ── Inline endpoint editing ──────────────────────────────────────────────
-const inlineActiveTab = ref<'general' | 'proxy' | 'container'>('general')
+const inlineActiveTab = ref<'general' | 'proxy' | 'container' | 'fileserver'>('general')
 
 // Dropdown options for inline editor
 const translationModeOptions = [
@@ -310,11 +312,13 @@ const inlinePathPrefix = ref('/')
 const inlineTranslationMode = ref('none')
 const inlineTranslatePattern = ref('')
 const inlineTranslateReplace = ref('')
+const inlineTranslationRules = ref<models.TranslationRule[]>([])
 const inlineEnabled = ref(true)
 const inlineDomainFilterMode = ref('any')
 const inlineDomainFilterPatterns = ref<string[]>([])
 const inlineProxyConfig = ref<models.ProxyConfig | null>(null)
 const inlineContainerConfig = ref<models.ContainerConfig | null>(null)
+const inlineFileServerConfig = ref<models.FileServerConfig | null>(null)
 
 // Load inline editor state when the selected endpoint ID changes (not on every reactive tick)
 let lastLoadedEndpointId = ''
@@ -328,11 +332,17 @@ watch(() => serverStore.currentEndpoint?.id, (newId) => {
   inlineTranslationMode.value = ep.translation_mode || 'none'
   inlineTranslatePattern.value = ep.translate_pattern || ''
   inlineTranslateReplace.value = ep.translate_replace || ''
+  inlineTranslationRules.value = ep.translation_rules?.map(r => new models.TranslationRule(r)) ?? []
+  // Silently promote legacy single translate_pattern/replace into the rules list
+  if (inlineTranslationRules.value.length === 0 && inlineTranslatePattern.value) {
+    inlineTranslationRules.value = [new models.TranslationRule({ pattern: inlineTranslatePattern.value, replace: inlineTranslateReplace.value })]
+  }
   inlineEnabled.value = ep.enabled !== false
   inlineDomainFilterMode.value = ep.domain_filter?.mode || 'any'
   inlineDomainFilterPatterns.value = ep.domain_filter?.patterns || []
   inlineProxyConfig.value = ep.proxy_config || null
   inlineContainerConfig.value = ep.container_config || null
+  inlineFileServerConfig.value = ep.file_server_config || null
   inlineActiveTab.value = 'general'
 }, { immediate: true })
 
@@ -358,11 +368,13 @@ async function saveInlineEndpoint() {
     translation_mode: inlineTranslationMode.value,
     translate_pattern: inlineTranslationMode.value === 'translate' ? inlineTranslatePattern.value.trim() : '',
     translate_replace: inlineTranslationMode.value === 'translate' ? inlineTranslateReplace.value.trim() : '',
+    translation_rules: inlineTranslationMode.value === 'translate' ? inlineTranslationRules.value : [],
     enabled: inlineEnabled.value,
     type: ep.type,
     items: ep.items,
     proxy_config: inlineProxyConfig.value || undefined,
     container_config: inlineContainerConfig.value || undefined,
+    file_server_config: inlineFileServerConfig.value || undefined,
     domain_filter: domainFilter
   })
 
@@ -390,6 +402,11 @@ function handleInlineProxyConfigUpdate(config: models.ProxyConfig) {
 
 function handleInlineContainerConfigUpdate(config: models.ContainerConfig) {
   inlineContainerConfig.value = config
+  debouncedInlineSave()
+}
+
+function handleInlineFileServerConfigUpdate(config: models.FileServerConfig) {
+  inlineFileServerConfig.value = config
   debouncedInlineSave()
 }
 
@@ -429,6 +446,8 @@ function typeBadgeClass(type: string): string {
       return 'bg-green-900 text-green-300'
     case 'container':
       return 'bg-purple-900 text-purple-300'
+    case 'file_server':
+      return 'bg-yellow-900 text-yellow-300'
     case 'mock':
     default:
       return 'bg-blue-900 text-blue-300'
@@ -441,6 +460,8 @@ function typeDisplayName(type: string): string {
       return 'Proxy'
     case 'container':
       return 'Container'
+    case 'file_server':
+      return 'File Server'
     case 'mock':
     default:
       return 'Mock'
@@ -752,6 +773,15 @@ onUnmounted(() => {
               <span class="mx-2">•</span>
               <span class="font-medium text-gray-300">Image:</span> {{ serverStore.currentEndpoint.container_config.image_name }}
             </template>
+            <!-- File Server-specific info -->
+            <template v-if="serverStore.currentEndpoint.type === 'file_server' && serverStore.currentEndpoint.file_server_config">
+              <span class="mx-2">•</span>
+              <span class="font-medium text-gray-300">Path:</span> {{ serverStore.currentEndpoint.file_server_config.base_path }}
+              <template v-if="serverStore.currentEndpoint.file_server_config.enable_ssi">
+                <span class="mx-2">•</span>
+                <span class="text-yellow-400">SSI on</span>
+              </template>
+            </template>
           </p>
         </div>
         <!-- SETTINGS button -->
@@ -974,6 +1004,7 @@ onUnmounted(() => {
                       <button @click="inlineActiveTab = 'general'" :class="['px-3 py-1.5 text-xs font-medium transition-colors', inlineActiveTab === 'general' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-300']">General</button>
                       <button v-if="serverStore.currentEndpoint.type === 'proxy' || serverStore.currentEndpoint.type === 'container'" @click="inlineActiveTab = 'proxy'" :class="['px-3 py-1.5 text-xs font-medium transition-colors', inlineActiveTab === 'proxy' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-300']">Proxy Settings</button>
                       <button v-if="serverStore.currentEndpoint.type === 'container'" @click="inlineActiveTab = 'container'" :class="['px-3 py-1.5 text-xs font-medium transition-colors', inlineActiveTab === 'container' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-300']">Container</button>
+                      <button v-if="serverStore.currentEndpoint.type === 'file_server'" @click="inlineActiveTab = 'fileserver'" :class="['px-3 py-1.5 text-xs font-medium transition-colors', inlineActiveTab === 'fileserver' ? 'text-yellow-400 border-b-2 border-yellow-400' : 'text-gray-400 hover:text-gray-300']">File Server</button>
                     </div>
 
                     <div v-if="inlineActiveTab === 'general'" class="space-y-3">
@@ -1004,16 +1035,9 @@ onUnmounted(() => {
                         <label class="block text-xs font-medium text-gray-400 mb-1">Path Translation</label>
                         <CustomSelect v-model="inlineTranslationMode" :options="translationModeOptions" @update:model-value="debouncedInlineSave" />
                       </div>
-                      <div v-if="inlineTranslationMode === 'translate'" class="space-y-2">
-                        <div>
-                          <label class="block text-xs font-medium text-gray-400 mb-1">Match Pattern</label>
-                          <input v-model="inlineTranslatePattern" type="text" @input="debouncedInlineSave" class="w-full px-2 py-1.5 bg-gray-700 border border-gray-600 rounded text-sm text-white font-mono focus:outline-none focus:border-blue-500" />
-                        </div>
-                        <div>
-                          <label class="block text-xs font-medium text-gray-400 mb-1">Replace With</label>
-                          <input v-model="inlineTranslateReplace" type="text" @input="debouncedInlineSave" class="w-full px-2 py-1.5 bg-gray-700 border border-gray-600 rounded text-sm text-white font-mono focus:outline-none focus:border-blue-500" />
-                        </div>
-                      </div>
+                       <div v-if="inlineTranslationMode === 'translate'">
+                         <TranslationRuleList v-model="inlineTranslationRules" @update:model-value="debouncedInlineSave" />
+                       </div>
                     </div>
 
                     <div v-if="inlineActiveTab === 'proxy'" class="space-y-3">
@@ -1023,6 +1047,10 @@ onUnmounted(() => {
 
                     <div v-if="inlineActiveTab === 'container' && serverStore.currentEndpoint.type === 'container' && inlineContainerConfig" class="space-y-3">
                       <ContainerConfigPanel :config="inlineContainerConfig" :endpoint-id="serverStore.currentEndpoint.id" :is-running="serverStore.isRunning" @update:config="handleInlineContainerConfigUpdate" />
+                    </div>
+
+                    <div v-if="inlineActiveTab === 'fileserver' && serverStore.currentEndpoint.type === 'file_server' && inlineFileServerConfig" class="space-y-3">
+                      <FileServerConfigPanel :config="inlineFileServerConfig" @update:config="handleInlineFileServerConfigUpdate" />
                     </div>
                   </div>
 

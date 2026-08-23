@@ -30,6 +30,7 @@ type HTTPServer struct {
 	certCache          *CertCache // Certificate cache for SOCKS5 TLS interception
 	proxyHandler       *ProxyHandler
 	containerHandler   *ContainerHandler
+	responseHandler    *ResponseHandler   // shared response handler — kept for regex cache warming on config updates
 	startupCtx         context.Context    // Context for container startup
 	startupCancel      context.CancelFunc // Cancel function for startup
 	logRequestMatching bool               // Enable verbose request matching logs
@@ -343,6 +344,8 @@ func (s *HTTPServer) Start() error {
 
 	if socks5Config != nil && (socks5Config.Enabled || serverMode == models.ServerModeSOCKS5) {
 		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver, &s.overlaySimModes, &s.proxySimModes)
+		s.responseHandler = responseHandler
+		responseHandler.WarmRegexCache()
 
 		// Initialize certificate cache for TLS interception if HTTPS is enabled
 		// This allows SOCKS5 to intercept HTTPS connections for domains in the takeover list
@@ -591,6 +594,17 @@ func (s *HTTPServer) UpdateConfig(newConfig *models.AppConfig) {
 	s.configMutex.Lock()
 	defer s.configMutex.Unlock()
 	s.config = newConfig
+
+	// Invalidate and re-warm the regex cache so all new patterns are pre-compiled
+	// before the next request arrives. This runs in a goroutine to avoid blocking
+	// the caller (app.go) while potentially compiling many new regexes.
+	if s.responseHandler != nil {
+		rh := s.responseHandler
+		go func() {
+			rh.InvalidateRegexCache()
+			rh.WarmRegexCache()
+		}()
+	}
 
 	// Update DNS resolver configuration
 	if s.dnsResolver != nil {

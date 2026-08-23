@@ -784,20 +784,45 @@ func (a *App) AddEndpointWithConfig(config map[string]interface{}) (models.Endpo
 	// Validate endpoint type
 	if endpointType != models.EndpointTypeMock &&
 		endpointType != models.EndpointTypeProxy &&
-		endpointType != models.EndpointTypeContainer {
+		endpointType != models.EndpointTypeContainer &&
+		endpointType != models.EndpointTypeFileServer {
 		log.Printf("Invalid endpoint type '%s', defaulting to 'mock'", endpointType)
 		endpointType = models.EndpointTypeMock
+	}
+
+	// Extract translation pattern/replace (legacy single-rule, kept for backward compat)
+	translatePattern, _ := config["translate_pattern"].(string)
+	translateReplace, _ := config["translate_replace"].(string)
+
+	// Extract multi-rule translation list (takes precedence over single pattern/replace)
+	var translationRules []models.TranslationRule
+	if rawRules, ok := config["translation_rules"].([]interface{}); ok {
+		for _, rawRule := range rawRules {
+			if ruleMap, ok := rawRule.(map[string]interface{}); ok {
+				pattern, _ := ruleMap["pattern"].(string)
+				replace, _ := ruleMap["replace"].(string)
+				if pattern != "" {
+					translationRules = append(translationRules, models.TranslationRule{
+						Pattern: pattern,
+						Replace: replace,
+					})
+				}
+			}
+		}
 	}
 
 	// New endpoints are enabled by default
 	enabledTrue := true
 	endpoint := models.Endpoint{
-		ID:              uuid.New().String(),
-		Name:            name,
-		PathPrefix:      pathPrefix,
-		TranslationMode: translationMode,
-		Type:            endpointType,
-		Enabled:         &enabledTrue,
+		ID:               uuid.New().String(),
+		Name:             name,
+		PathPrefix:       pathPrefix,
+		TranslationMode:  translationMode,
+		TranslatePattern: translatePattern,
+		TranslateReplace: translateReplace,
+		TranslationRules: translationRules,
+		Type:             endpointType,
+		Enabled:          &enabledTrue,
 	}
 
 	// Initialize type-specific configuration from wizard data
@@ -834,6 +859,37 @@ func (a *App) AddEndpointWithConfig(config map[string]interface{}) (models.Endpo
 				BackendURL:        "",
 				TimeoutSeconds:    30,
 				StatusPassthrough: true,
+			}
+		}
+
+	case models.EndpointTypeFileServer:
+		fsCfg, _ := config["file_server_config"].(map[string]interface{})
+		if fsCfg != nil {
+			fsProxyConfig := &models.ProxyConfig{
+				StatusPassthrough: true,
+			}
+			if pc, ok := fsCfg["proxy_config"].(map[string]interface{}); ok {
+				fsProxyConfig.StatusPassthrough = getBool(pc, "status_passthrough", true)
+				if inbound, ok := pc["inbound_headers"].([]interface{}); ok {
+					fsProxyConfig.InboundHeaders = parseHeaderManipulations(inbound)
+				}
+				if outbound, ok := pc["outbound_headers"].([]interface{}); ok {
+					fsProxyConfig.OutboundHeaders = parseHeaderManipulations(outbound)
+				}
+				if st, ok := pc["status_translation"].([]interface{}); ok {
+					fsProxyConfig.StatusTranslation = parseStatusTranslations(st)
+				}
+			}
+			endpoint.FileServerConfig = &models.FileServerConfig{
+				BasePath:    getString(fsCfg, "base_path"),
+				EnableSSI:   getBool(fsCfg, "enable_ssi", false),
+				ProxyConfig: fsProxyConfig,
+			}
+		} else {
+			endpoint.FileServerConfig = &models.FileServerConfig{
+				BasePath:    "",
+				EnableSSI:   false,
+				ProxyConfig: &models.ProxyConfig{StatusPassthrough: true},
 			}
 		}
 

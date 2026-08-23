@@ -4,6 +4,8 @@ import { models } from '../../../wailsjs/go/models'
 import { useServerStore } from '../../stores/server'
 import ProxyConfigPanel from './ProxyConfigPanel.vue'
 import ContainerConfigPanel from './ContainerConfigPanel.vue'
+import FileServerConfigPanel from './FileServerConfigPanel.vue'
+import TranslationRuleList from './TranslationRuleList.vue'
 import CustomSelect from '../common/CustomSelect.vue'
 import DomainFilterInput from '../common/DomainFilterInput.vue'
 
@@ -39,10 +41,12 @@ const pathPrefix = ref('/')
 const translationMode = ref('none')
 const translatePattern = ref('')
 const translateReplace = ref('')
+const translationRules = ref<models.TranslationRule[]>([])
 const enabled = ref(true)
 const proxyConfig = ref<models.ProxyConfig | null>(null)
 const containerConfig = ref<models.ContainerConfig | null>(null)
-const activeTab = ref<'general' | 'proxy' | 'container'>('general')
+const fileServerConfig = ref<models.FileServerConfig | null>(null)
+const activeTab = ref<'general' | 'proxy' | 'container' | 'fileserver'>('general')
 
 // Domain filter
 const domainFilterMode = ref<string>('any')
@@ -56,6 +60,11 @@ watch(() => props.show, (newVal) => {
     translationMode.value = props.endpoint.translation_mode || 'none'
     translatePattern.value = props.endpoint.translate_pattern || ''
     translateReplace.value = props.endpoint.translate_replace || ''
+    translationRules.value = props.endpoint.translation_rules?.map(r => new models.TranslationRule(r)) ?? []
+    // Silently promote legacy single translate_pattern/replace into the rules list
+    if (translationRules.value.length === 0 && translatePattern.value) {
+      translationRules.value = [new models.TranslationRule({ pattern: translatePattern.value, replace: translateReplace.value })]
+    }
     enabled.value = props.endpoint.enabled !== false
     activeTab.value = 'general' // Reset to general tab
 
@@ -67,6 +76,11 @@ watch(() => props.show, (newVal) => {
     // Load container config if this is a container endpoint
     if (props.endpoint.type === 'container' && props.endpoint.container_config) {
       containerConfig.value = props.endpoint.container_config
+    }
+
+    // Load file server config if this is a file_server endpoint
+    if (props.endpoint.type === 'file_server' && props.endpoint.file_server_config) {
+      fileServerConfig.value = props.endpoint.file_server_config
     }
 
     // Load domain filter
@@ -100,6 +114,10 @@ function handleContainerConfigUpdate(config: models.ContainerConfig) {
   containerConfig.value = config
 }
 
+function handleFileServerConfigUpdate(config: models.FileServerConfig) {
+  fileServerConfig.value = config
+}
+
 function handleSave() {
   if (!props.endpoint || !name.value.trim() || !pathPrefix.value.trim()) {
     return
@@ -118,11 +136,13 @@ function handleSave() {
     translation_mode: translationMode.value,
     translate_pattern: translationMode.value === 'translate' ? translatePattern.value.trim() : '',
     translate_replace: translationMode.value === 'translate' ? translateReplace.value.trim() : '',
+    translation_rules: translationMode.value === 'translate' ? translationRules.value : [],
     enabled: enabled.value,
     type: props.endpoint.type,
     items: props.endpoint.items,
     proxy_config: proxyConfig.value || undefined,
     container_config: containerConfig.value || undefined,
+    file_server_config: fileServerConfig.value || undefined,
     domain_filter: domainFilter
   })
 
@@ -193,6 +213,18 @@ function handleKeydown(e: KeyboardEvent) {
               ]"
             >
               Container Settings
+            </button>
+            <button
+              v-if="endpoint?.type === 'file_server'"
+              @click="activeTab = 'fileserver'"
+              :class="[
+                'px-4 py-2 text-sm font-medium transition-colors',
+                activeTab === 'fileserver'
+                  ? 'text-yellow-400 border-b-2 border-yellow-400'
+                  : 'text-gray-400 hover:text-gray-300'
+              ]"
+            >
+              File Server Settings
             </button>
           </div>
 
@@ -273,40 +305,11 @@ function handleKeydown(e: KeyboardEvent) {
                 />
               </div>
 
-              <!-- Translation Pattern (only for translate mode) -->
-              <div v-if="translationMode === 'translate'" class="space-y-3">
-                <div>
-                  <label class="block text-sm font-medium text-gray-300 mb-2">
-                    Match Pattern (Regex)
-                  </label>
-                  <input
-                    v-model="translatePattern"
-                    type="text"
-                    placeholder="e.g., ^/api/v1/(.*)"
-                    class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                  />
-                </div>
-
-                <div>
-                  <label class="block text-sm font-medium text-gray-300 mb-2">
-                    Replace With
-                  </label>
-                  <input
-                    v-model="translateReplace"
-                    type="text"
-                    placeholder="e.g., /$1"
-                    class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                  />
-                </div>
-
-                <div class="bg-gray-900 border border-gray-700 rounded p-3">
-                  <p class="text-xs text-gray-400 mb-2">Example:</p>
-                  <p class="text-xs text-gray-300 font-mono">Pattern: ^/api/v1/(.*)</p>
-                  <p class="text-xs text-gray-300 font-mono">Replace: /$1</p>
-                  <p class="text-xs text-gray-400 mt-2">
-                    Result: /api/v1/users → /users
-                  </p>
-                </div>
+              <!-- Translation Rules (only for translate mode) -->
+              <div v-if="translationMode === 'translate'">
+                <TranslationRuleList
+                  v-model="translationRules"
+                />
               </div>
 
               <!-- Translation Mode Info -->
@@ -351,6 +354,14 @@ function handleKeydown(e: KeyboardEvent) {
                 :endpoint-id="endpoint?.id"
                 :is-running="serverStore?.isRunning"
                 @update:config="handleContainerConfigUpdate"
+              />
+            </div>
+
+            <!-- File Server Settings Tab -->
+            <div v-if="activeTab === 'fileserver' && endpoint?.type === 'file_server' && fileServerConfig" class="space-y-4">
+              <FileServerConfigPanel
+                :config="fileServerConfig"
+                @update:config="handleFileServerConfigUpdate"
               />
             </div>
           </div>

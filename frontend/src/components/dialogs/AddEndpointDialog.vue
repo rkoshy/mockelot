@@ -6,8 +6,9 @@ import VolumeList from './VolumeList.vue'
 import EnvironmentVarList from './EnvironmentVarList.vue'
 import StatusTranslationList from './StatusTranslationList.vue'
 import HeaderManipulationList from './HeaderManipulationList.vue'
+import TranslationRuleList from './TranslationRuleList.vue'
 import { ValidateAndInspectDockerImage, PullDockerImage, TestContainerConfig, GetDefaultContainerHeaders } from '../../../wailsjs/go/main/App'
-import type { models } from '../../../wailsjs/go/models'
+import { models } from '../../../wailsjs/go/models'
 
 const props = defineProps<{
   show: boolean
@@ -26,6 +27,9 @@ const endpointType = ref('mock')
 const name = ref('')
 const pathPrefix = ref('/')
 const translationMode = ref('none')
+const translatePattern = ref('')
+const translateReplace = ref('')
+const translationRules = ref<models.TranslationRule[]>([])
 const domainFilterMode = ref('any')
 const domainFilterPatterns = ref<string[]>([])
 
@@ -65,11 +69,16 @@ const statusTranslations = ref<Array<{from_pattern: string, to_code: number}>>([
 const requestHeaders = ref<models.HeaderManipulation[]>([])
 const responseHeaders = ref<models.HeaderManipulation[]>([])
 
+// File server config (Step 3)
+const fileServerBasePath = ref('')
+const fileServerEnableSSI = ref(false)
+
 // Dropdown options
 const endpointTypeOptions = [
   { value: 'mock', label: 'Mock - Script-based responses' },
   { value: 'proxy', label: 'Proxy - Reverse proxy with translation' },
-  { value: 'container', label: 'Container - Docker container' }
+  { value: 'container', label: 'Container - Docker container' },
+  { value: 'file_server', label: 'File Server - Serve a local directory' }
 ]
 
 const translationModeOptions = [
@@ -93,14 +102,15 @@ const domainFilterModeOptions = [
 
 // Computed properties
 const totalSteps = computed(() => {
-  if (endpointType.value === 'container') return 8 // Basic, Domain, Container, Volumes, Env, Permissions, Proxy, Test
-  if (endpointType.value === 'proxy') return 4     // Basic, Domain, Backend, Headers
-  return 2                                          // Basic, Domain
+  if (endpointType.value === 'container') return 8  // Basic, Domain, Container, Volumes, Env, Permissions, Proxy, Test
+  if (endpointType.value === 'proxy') return 4      // Basic, Domain, Backend, Headers
+  if (endpointType.value === 'file_server') return 3 // Basic, Domain, Directory
+  return 2                                           // Basic, Domain
 })
 
 const canGoNext = computed(() => {
   if (currentStep.value === 1) {
-    return name.value.trim() && pathPrefix.value.trim()
+    return !!(name.value.trim() && pathPrefix.value.trim())
   }
   // Step 2 is Domain Filter - always can proceed
   if (currentStep.value === 2) {
@@ -118,6 +128,11 @@ const canGoNext = computed(() => {
   if (endpointType.value === 'proxy') {
     if (currentStep.value === 3) {
       return backendURL.value.trim()
+    }
+  }
+  if (endpointType.value === 'file_server') {
+    if (currentStep.value === 3) {
+      return fileServerBasePath.value.trim().length > 0
     }
   }
   return true
@@ -138,6 +153,9 @@ const stepTitle = computed(() => {
     if (currentStep.value === 3) return 'Backend Configuration'
     if (currentStep.value === 4) return 'Headers & Status Codes'
   }
+  if (endpointType.value === 'file_server') {
+    if (currentStep.value === 3) return 'Directory Configuration'
+  }
   return ''
 })
 
@@ -157,6 +175,9 @@ function resetForm() {
   name.value = ''
   pathPrefix.value = '/'
   translationMode.value = 'none'
+  translatePattern.value = ''
+  translateReplace.value = ''
+  translationRules.value = []
   domainFilterMode.value = 'any'
   domainFilterPatterns.value = []
 
@@ -386,6 +407,9 @@ function handleFinish() {
     name: name.value.trim(),
     path_prefix: pathPrefix.value.trim(),
     translation_mode: translationMode.value,
+    translate_pattern: translationMode.value === 'translate' ? translatePattern.value.trim() : '',
+    translate_replace: translationMode.value === 'translate' ? translateReplace.value.trim() : '',
+    translation_rules: translationMode.value === 'translate' ? translationRules.value : [],
     type: endpointType.value,
     domain_filter: domainFilterMode.value !== 'any' ? {
       mode: domainFilterMode.value,
@@ -426,6 +450,21 @@ function handleFinish() {
       status_translation: statusTranslations.value,
       inbound_headers: requestHeaders.value,
       outbound_headers: responseHeaders.value
+    }
+  } else if (endpointType.value === 'file_server') {
+    config.file_server_config = {
+      base_path: fileServerBasePath.value.trim(),
+      enable_ssi: fileServerEnableSSI.value,
+      proxy_config: {
+        backend_url: '',
+        timeout_seconds: 0,
+        status_passthrough: true,
+        status_translation: [],
+        inbound_headers: [],
+        outbound_headers: [],
+        health_check_enabled: false,
+        health_check_interval: 30,
+      }
     }
   }
 
@@ -552,9 +591,14 @@ function handleKeydown(e: KeyboardEvent) {
                     Prefix is removed before matching (e.g., /api/v1/users becomes /users)
                   </template>
                   <template v-else>
-                    Use regex to transform paths - configure pattern after creation
+                    Use a regex match/replace to rewrite the path before it is used.
                   </template>
                 </p>
+              </div>
+
+              <!-- Translation rules — only shown when translate mode is selected -->
+              <div v-if="translationMode === 'translate'">
+                <TranslationRuleList v-model="translationRules" />
               </div>
 
             </div>
@@ -1086,6 +1130,61 @@ function handleKeydown(e: KeyboardEvent) {
                     Return the exact status code from the backend (disable to use status code translations)
                   </p>
                 </div>
+              </div>
+            </div>
+
+            <!-- Step 3: Directory Configuration (File Server) -->
+            <div v-if="currentStep === 3 && endpointType === 'file_server'" class="space-y-6">
+              <!-- Base Path -->
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-2">
+                  Base Directory <span class="text-red-400">*</span>
+                </label>
+                <input
+                  v-model="fileServerBasePath"
+                  type="text"
+                  placeholder="/home/user/myapp/src"
+                  class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white
+                         placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-yellow-500 font-mono text-sm"
+                />
+                <p class="mt-2 text-sm text-gray-400">
+                  The filesystem directory to serve files from. The translated request path
+                  is joined onto this base path to locate files on disk.
+                  Supports <code class="text-gray-300">~</code> for home directory.
+                </p>
+              </div>
+
+              <!-- Enable SSI -->
+              <div class="flex items-start gap-3">
+                <input
+                  v-model="fileServerEnableSSI"
+                  type="checkbox"
+                  id="wizard-enable-ssi"
+                  class="mt-1 w-4 h-4 bg-gray-700 border-gray-600 rounded text-yellow-500 focus:ring-yellow-500"
+                />
+                <div>
+                  <label for="wizard-enable-ssi" class="block text-sm font-medium text-gray-300">
+                    Enable SSI (Server Side Includes)
+                  </label>
+                  <p class="text-sm text-gray-400 mt-1">
+                    Process <code class="text-gray-300">&lt;!--#include virtual="..."--&gt;</code>
+                    directives in <code class="text-gray-300">.shtml</code> and
+                    <code class="text-gray-300">.html</code> files. Virtual paths are resolved
+                    as internal sub-requests through the endpoint matching pipeline.
+                  </p>
+                </div>
+              </div>
+
+              <!-- Info -->
+              <div class="p-4 bg-yellow-900/20 border border-yellow-800 rounded">
+                <p class="text-sm font-medium text-yellow-300 mb-1">Path Translation</p>
+                <p class="text-xs text-yellow-200">
+                  Use the path prefix and translation settings on the previous step to control
+                  how request URLs are mapped to files on disk. The translated path is appended
+                  directly to the base directory — configure your endpoint prefix/translation
+                  to strip any version prefixes (e.g. <code class="text-yellow-100">/iris1-3.5.2010/</code>
+                  → <code class="text-yellow-100">/iris1/</code>) before joining with the base path.
+                </p>
               </div>
             </div>
 

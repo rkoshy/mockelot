@@ -13,6 +13,7 @@ import type { EditorView } from '@codemirror/view'
 const props = defineProps<{
   config: models.ProxyConfig
   isContainerEndpoint?: boolean
+  isFileServerEndpoint?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -31,8 +32,10 @@ const inboundHeaders = ref<models.HeaderManipulation[]>(props.config.inbound_hea
 const outboundHeaders = ref<models.HeaderManipulation[]>(props.config.outbound_headers || [])
 const statusTranslation = ref<models.StatusTranslation[]>(props.config.status_translation || [])
 
-// Sub-tab state
-const activeSubTab = ref<'backend' | 'headers' | 'transformation' | 'health'>('backend')
+// Sub-tab state — file server endpoints skip Backend and Health tabs
+const activeSubTab = ref<'backend' | 'headers' | 'transformation' | 'health'>(
+  props.isFileServerEndpoint ? 'headers' : 'backend'
+)
 
 // Connection test state
 const testingConnection = ref(false)
@@ -152,12 +155,13 @@ async function resetToDefaults() {
 <template>
   <div class="space-y-4">
     <h3 class="text-lg font-semibold text-white border-b border-gray-700 pb-2">
-      Proxy Configuration
+      {{ isFileServerEndpoint ? 'Response Configuration' : 'Proxy Configuration' }}
     </h3>
 
     <!-- Sub-Tabs -->
     <div class="flex border-b border-gray-700">
       <button
+        v-if="!isFileServerEndpoint"
         @click="activeSubTab = 'backend'"
         :class="[
           'px-3 py-2 text-sm font-medium transition-colors',
@@ -191,6 +195,7 @@ async function resetToDefaults() {
         Transformation
       </button>
       <button
+        v-if="!isFileServerEndpoint"
         @click="activeSubTab = 'health'"
         :class="[
           'px-3 py-2 text-sm font-medium transition-colors',
