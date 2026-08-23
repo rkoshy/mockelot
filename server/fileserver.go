@@ -1,10 +1,11 @@
+//go:generate go run ../tools/gen_mimetypes/main.go ../server/mimetypes_generated.go
+
 package server
 
 import (
 	"bytes"
 	"fmt"
 	"log"
-	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -117,17 +118,14 @@ func (f *FileServerHandler) ServeHTTP(
 	}
 
 	// --- Content-Type -----------------------------------------------------
-	ct := mime.TypeByExtension(filepath.Ext(cleanDisk))
-	if ct == "" {
-		ct = http.DetectContentType(body)
-	}
-	// .shtml should be served as text/html regardless of the SSI processing.
-	if strings.HasSuffix(strings.ToLower(cleanDisk), ".shtml") {
-		ct = "text/html; charset=utf-8"
-	}
+	ct := detectMimeType(cleanDisk, body)
 
 	// --- Apply outbound header manipulation and CSP from ProxyConfig ------
 	w.Header().Set("Content-Type", ct)
+	// Prevent browser MIME-sniffing from overriding the declared type.
+	// Critical for .js served as text/javascript — without this, browsers
+	// with X-Content-Type-Options enforcement will block mismatched types.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if cfg.ProxyConfig != nil && f.proxyHandler != nil {
 		f.proxyHandler.applyHeaderManipulation(w.Header(), cfg.ProxyConfig.OutboundHeaders, r)
 		applyCSP(w.Header(), cfg.ProxyConfig.CSP)
