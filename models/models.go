@@ -140,6 +140,7 @@ const (
 	CSPDirectiveObjectSrc               = "object-src"
 	CSPDirectiveWorkerSrc               = "worker-src"
 	CSPDirectiveScriptSrcAttr           = "script-src-attr"
+	CSPDirectiveScriptSrcElem           = "script-src-elem"
 	CSPDirectiveManifestSrc             = "manifest-src"
 	CSPDirectiveBaseURI                 = "base-uri"
 	CSPDirectiveChildSrc                = "child-src"
@@ -214,8 +215,10 @@ func DefaultCSPConfig() *CSPConfig {
 		{Name: CSPDirectiveDefaultSrc, Sources: []string{"'self'", "blob:", "data:", "ws:"}},
 		{Name: CSPDirectiveScriptSrc, Sources: []string{"'self'", "'unsafe-eval'"}},
 		// script-src-attr covers inline event handlers (onclick="...", onload="...", etc.)
-		// Browsers treat this separately from script-src; without it, inline handlers are blocked.
-		{Name: "script-src-attr", Sources: []string{"'unsafe-inline'"}},
+		// script-src-elem covers inline <script> blocks and external script URLs.
+		// Both are treated separately from script-src by modern browsers.
+		{Name: CSPDirectiveScriptSrcAttr, Sources: []string{"'unsafe-inline'"}},
+		{Name: "script-src-elem", Sources: []string{"'self'", "'unsafe-eval'", "'unsafe-inline'"}},
 		{Name: CSPDirectiveStyleSrc, Sources: []string{"'self'", "'unsafe-inline'"}},
 		{Name: CSPDirectiveImgSrc, Sources: []string{"'self'", "blob:", "data:"}},
 		{Name: CSPDirectiveWorkerSrc, Sources: []string{"'self'", "blob:"}},

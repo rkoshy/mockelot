@@ -262,6 +262,29 @@ function parseCSPString(raw: string): LocalDirective[] | null {
       hostInput: '',
     })
   }
+  // Auto-derive script-src-attr and script-src-elem from script-src if not present.
+  // Older CSPs (nginx configs predating ~2022) don't include them, but modern browsers
+  // enforce them as separate buckets. We add them automatically on paste.
+  const scriptSrc = result.find(d => d.name === 'script-src')
+  if (scriptSrc) {
+    for (const derived of ['script-src-attr', 'script-src-elem']) {
+      if (!result.some(d => d.name === derived)) {
+        result.push({
+          id: `d-${result.length}-${Date.now()}`,
+          name: derived,
+          // script-src-attr: inline event handlers only need 'unsafe-inline' (or 'unsafe-hashes')
+          // script-src-elem: inline <script> blocks — copy script-src sources + 'unsafe-inline'
+          sources: derived === 'script-src-attr'
+            ? ["'unsafe-inline'"]
+            : [...scriptSrc.sources, "'unsafe-inline'"],
+          expanded: false,
+          noSources: false,
+          hostInput: '',
+        })
+      }
+    }
+  }
+
   return result.length > 0 ? result : null
 }
 
