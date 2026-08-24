@@ -14,7 +14,6 @@ Mock endpoints provide static, template-based, or script-generated HTTP response
 - [Domain Filtering (SOCKS5 Integration)](#domain-filtering-socks5-integration)
 - [Request Validation](#request-validation)
 - [Response Configuration](#response-configuration)
-- [Organizing with Groups](#organizing-with-groups)
 - [Common Use Cases](#common-use-cases)
 - [Best Practices](#best-practices)
 
@@ -621,98 +620,64 @@ Temporarily disable a response without deleting it:
 enabled: false
 ```
 
-## Organizing with Groups
+Disabled responses are visually distinguished in the UI:
+- In the **endpoint sidebar**, the endpoint name is shown with strikethrough and reduced opacity
+- In the **response panel**, the disabled rule card is dimmed (reduced opacity and darker background)
 
-Groups help organize related responses and apply common settings.
-
-### Creating a Group
-
-```yaml
-- type: group
-  group:
-    name: "User API"
-    enabled: true
-    expanded: true
-    responses:
-      - path_pattern: "/api/users"
-        methods: ["GET"]
-        status_code: 200
-        body: '{"users": []}'
-
-      - path_pattern: "/api/users/:id"
-        methods: ["GET"]
-        status_code: 200
-        response_mode: "template"
-        body: '{"id": "{{.PathParams.id}}"}'
-```
-
-### Group Benefits
-
-1. **Organization** - Logical grouping of related endpoints
-2. **Bulk Enable/Disable** - Toggle entire API sections
-3. **Visual Hierarchy** - Collapsible groups in UI
-4. **CORS Settings** - Apply CORS to all responses in group
-
-### Group-Level Enable/Disable
-
-Disable an entire group:
-
-```yaml
-group:
-  name: "Admin API"
-  enabled: false  # Disables all responses in group
-  responses: [...]
-```
+This makes it easy to see at a glance which rules are active without having to open each one.
 
 ## Common Use Cases
 
 ### 1. REST API Mock
 
 ```yaml
-- type: group
-  group:
-    name: "Products API"
-    responses:
-      # List products
-      - path_pattern: "/api/products"
-        methods: ["GET"]
-        status_code: 200
-        response_mode: "script"
-        script_body: |
-          response.headers['Content-Type'] = 'application/json';
-          response.body = JSON.stringify({
-            products: [
-              { id: "1", name: "Widget", price: 9.99 },
-              { id: "2", name: "Gadget", price: 19.99 }
-            ]
-          });
+items:
+  # List products
+  - type: response
+    response:
+      path_pattern: "/api/products"
+      methods: ["GET"]
+      status_code: 200
+      response_mode: "script"
+      script_body: |
+        response.headers['Content-Type'] = 'application/json';
+        response.body = JSON.stringify({
+          products: [
+            { id: "1", name: "Widget", price: 9.99 },
+            { id: "2", name: "Gadget", price: 19.99 }
+          ]
+        });
 
-      # Get product by ID
-      - path_pattern: "/api/products/:id"
-        methods: ["GET"]
-        status_code: 200
-        response_mode: "template"
-        body: |
-          {
-            "id": "{{.PathParams.id}}",
-            "name": "Product {{.PathParams.id}}",
-            "price": {{randomInt 10 100}}.99
-          }
+  # Get product by ID
+  - type: response
+    response:
+      path_pattern: "/api/products/:id"
+      methods: ["GET"]
+      status_code: 200
+      response_mode: "template"
+      body: |
+        {
+          "id": "{{.PathParams.id}}",
+          "name": "Product {{.PathParams.id}}",
+          "price": {{randomInt 10 100}}.99
+        }
 
-      # Create product
-      - path_pattern: "/api/products"
-        methods: ["POST"]
-        status_code: 201
-        response_mode: "script"
-        script_body: |
-          const data = JSON.parse(request.body);
-          response.status = 201;
-          response.headers['Content-Type'] = 'application/json';
-          response.body = JSON.stringify({
-            id: uuid(),
-            ...data,
-            created: now()
-          });
+  # Create product
+  - type: response
+    response:
+      path_pattern: "/api/products"
+      methods: ["POST"]
+      status_code: 201
+      response_mode: "script"
+      script_body: |
+        const data = JSON.parse(request.body);
+        response.status = 201;
+        response.headers['Content-Type'] = 'application/json';
+        response.body = JSON.stringify({
+          id: uuid(),
+          ...data,
+          created: now()
+        });
 ```
 
 ### 2. Error Simulation
@@ -821,23 +786,7 @@ After importing an OpenAPI spec, you can customize generated responses:
 2. Template mode when you need request data
 3. Script mode only for complex logic
 
-### 2. Use Groups for Organization
-
-Group related endpoints together:
-
-```yaml
-- type: group
-  group:
-    name: "Auth Endpoints"
-    responses: [...]
-
-- type: group
-  group:
-    name: "User Management"
-    responses: [...]
-```
-
-### 3. Path Pattern Specificity
+### 2. Path Pattern Specificity
 
 Order patterns from most specific to least specific:
 
@@ -890,10 +839,9 @@ response.headers['Content-Type'] = 'text/plain';
 
 ### 7. Testing Patterns
 
-1. **Create test group** - Group all test endpoints
-2. **Use enable/disable** - Toggle groups without deleting
-3. **Version your mocks** - Use path patterns like `/api/v1/`, `/api/v2/`
-4. **Document scripts** - Add comments explaining complex logic
+1. **Use enable/disable** - Disable rules without deleting them; disabled rules show as dimmed with strikethrough in the UI
+2. **Version your mocks** - Use path patterns like `/api/v1/`, `/api/v2/`
+3. **Document scripts** - Add comments explaining complex logic
 
 ### 8. OpenAPI Integration
 
@@ -901,11 +849,11 @@ When using OpenAPI import:
 - Generated responses use Script mode with Faker utilities
 - Customize by adding your own static/template responses
 - Exact path matches take precedence over generated patterns
-- Use groups to separate generated vs custom endpoints
 
 ---
 
 **Related Documentation:**
+- [FILE-SERVER-GUIDE.md](FILE-SERVER-GUIDE.md) - Serve local files and directories
 - [PROXY-GUIDE.md](PROXY-GUIDE.md) - Reverse proxy endpoints with header manipulation and body transformation
 - [CONTAINER-GUIDE.md](CONTAINER-GUIDE.md) - Docker/Podman container endpoints
 - [OPENAPI_IMPORT.md](OPENAPI_IMPORT.md) - Generate mock endpoints from OpenAPI specifications
