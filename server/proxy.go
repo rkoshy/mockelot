@@ -188,7 +188,7 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, endpoin
 	backendFirstByteTime := time.Now() // Response headers received
 
 	if err != nil {
-		http.Error(w, "Backend request failed", http.StatusBadGateway)
+		http.Error(w, fmt.Sprintf("Backend request failed: %s (%v)", backendFullURL, err), http.StatusBadGateway)
 		// Note: For error cases, we don't have complete timing data
 		return
 	}

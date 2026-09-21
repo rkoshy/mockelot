@@ -222,8 +222,8 @@ func (h *OverlayHandler) executeProxyRequest(w http.ResponseWriter, r *http.Requ
 	// Execute backend request
 	resp, err := client.Do(backendReq)
 	if err != nil {
-		log.Printf("Backend request failed: %v", err)
-		http.Error(w, "Backend request failed", http.StatusBadGateway)
+		log.Printf("Backend request failed: %s (%v)", backendURL, err)
+		http.Error(w, fmt.Sprintf("Backend request failed: %s (%v)", backendURL, err), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
