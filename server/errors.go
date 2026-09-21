@@ -1,8 +1,10 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 // AppVersion is set once at startup by the main package via SetAppVersion().
@@ -12,6 +14,16 @@ var AppVersion = "dev"
 // SetAppVersion configures the version string included in error responses.
 func SetAppVersion(v string) {
 	AppVersion = v
+}
+
+// unwrapNetError strips the redundant URL prefix that Go's http.Client wraps
+// errors with — e.g. `Get "http://...": dial tcp ...` → `dial tcp ...`.
+func unwrapNetError(err error) string {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return urlErr.Err.Error()
+	}
+	return err.Error()
 }
 
 // mockelotError writes a structured plain-text error response that clearly

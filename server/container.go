@@ -512,7 +512,7 @@ func (c *ContainerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, end
 		// Log to transaction log so it appears in UI
 		c.logErrorRequest(endpoint, r, 502, fmt.Sprintf("Container request failed: %v", err))
 
-		mockelotError(w, r, fmt.Sprintf("Backend request failed: %s\n%v", containerURL, err), http.StatusBadGateway)
+		mockelotError(w, r, fmt.Sprintf("Backend request failed: %s\n%s", containerURL, unwrapNetError(err)), http.StatusBadGateway)
 		return
 	}
 	defer backendResp.Body.Close()
