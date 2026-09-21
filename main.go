@@ -14,6 +14,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"mockelot/config"
+	"mockelot/server"
 )
 
 func init() {
@@ -30,6 +31,9 @@ func init() {
 		}
 	}
 }
+
+// version is set at build time via -ldflags "-X main.version=x.y.z"
+var version = "dev"
 
 // Command-line flags
 var logRequestMatching = flag.Bool("log-request-matching", false, "Enable verbose logging for request matching (logs to mockelot-matching.log)")
@@ -81,6 +85,9 @@ func initLogging() error {
 func main() {
 	// Parse command-line flags
 	flag.Parse()
+
+	// Publish version to server package for error responses
+	server.SetAppVersion(version)
 
 	// Initialize logging first
 	if err := initLogging(); err != nil {

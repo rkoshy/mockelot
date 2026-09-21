@@ -369,20 +369,20 @@ func (rc *responseCapture) Write(b []byte) (int, error) {
 // ServeHTTP proxies requests to the running container
 func (c *ContainerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, endpoint *models.Endpoint, translatedPath string) {
 	if c.runtime == nil {
-		http.Error(w, "Container runtime not available", http.StatusServiceUnavailable)
+		mockelotError(w, r, "Container runtime not available", http.StatusServiceUnavailable)
 		return
 	}
 
 	cfg := endpoint.ContainerConfig
 	if cfg == nil || cfg.ContainerID == "" {
-		http.Error(w, "Container not running", http.StatusServiceUnavailable)
+		mockelotError(w, r, "Container not running", http.StatusServiceUnavailable)
 		return
 	}
 
 	// Get container info
 	info, err := c.runtime.InspectContainer(context.Background(), cfg.ContainerID)
 	if err != nil {
-		http.Error(w, "Container inspection failed", http.StatusServiceUnavailable)
+		mockelotError(w, r, fmt.Sprintf("Container inspection failed: %v", err), http.StatusServiceUnavailable)
 		c.logErrorRequest(endpoint, r, 503, "Container inspection failed: "+err.Error())
 		return
 	}
@@ -390,7 +390,7 @@ func (c *ContainerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, end
 	portKey := fmt.Sprintf("%d/tcp", cfg.ContainerPort)
 	hostPort, ok := info.Ports[portKey]
 	if !ok || hostPort == "" {
-		http.Error(w, "Container port not bound", http.StatusServiceUnavailable)
+		mockelotError(w, r, fmt.Sprintf("Container port %d not bound", cfg.ContainerPort), http.StatusServiceUnavailable)
 		c.logErrorRequest(endpoint, r, 503, "Container port not bound")
 		return
 	}
@@ -404,7 +404,7 @@ func (c *ContainerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, end
 	if r.Body != nil {
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
-			http.Error(w, "Failed to read request body", http.StatusInternalServerError)
+			mockelotError(w, r, fmt.Sprintf("Failed to read request body: %v", err), http.StatusInternalServerError)
 			return
 		}
 		requestBody = string(bodyBytes)
@@ -442,7 +442,7 @@ func (c *ContainerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, end
 
 	backendURL, err := url.Parse(containerURL)
 	if err != nil {
-		http.Error(w, "Invalid container URL", http.StatusInternalServerError)
+		mockelotError(w, r, fmt.Sprintf("Invalid container URL: %s", containerURL), http.StatusInternalServerError)
 		return
 	}
 	backendFullURL := containerURL
@@ -464,7 +464,7 @@ func (c *ContainerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, end
 	// Create backend request
 	backendReq, err := http.NewRequest(r.Method, backendFullURL, bodyReader)
 	if err != nil {
-		http.Error(w, "Failed to create backend request", http.StatusInternalServerError)
+		mockelotError(w, r, fmt.Sprintf("Failed to create backend request to %s: %v", backendFullURL, err), http.StatusInternalServerError)
 		return
 	}
 
@@ -512,7 +512,7 @@ func (c *ContainerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, end
 		// Log to transaction log so it appears in UI
 		c.logErrorRequest(endpoint, r, 502, fmt.Sprintf("Container request failed: %v", err))
 
-		http.Error(w, "Container request failed", http.StatusBadGateway)
+		mockelotError(w, r, fmt.Sprintf("Backend request failed: %s\n%v", containerURL, err), http.StatusBadGateway)
 		return
 	}
 	defer backendResp.Body.Close()
@@ -522,7 +522,7 @@ func (c *ContainerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, end
 	if err != nil {
 		log.Printf("Failed to read container response body for endpoint '%s': %v", endpoint.Name, err)
 		c.logErrorRequest(endpoint, r, 502, fmt.Sprintf("Failed to read container response: %v", err))
-		http.Error(w, "Failed to read container response", http.StatusBadGateway)
+		mockelotError(w, r, fmt.Sprintf("Failed to read backend response from %s: %v", containerURL, err), http.StatusBadGateway)
 		return
 	}
 	backendCompletionTime := time.Now() // Full response received

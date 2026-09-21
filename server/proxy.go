@@ -60,7 +60,7 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, endpoin
 	backendURLStr := resolveBackendURL(substituteCaptureGroups(cfg.BackendURL, captureGroups), r, false)
 	backendURL, err := url.Parse(backendURLStr)
 	if err != nil {
-		http.Error(w, "Invalid backend URL", http.StatusInternalServerError)
+		mockelotError(w, r, fmt.Sprintf("Invalid backend URL: %s", backendURLStr), http.StatusInternalServerError)
 		return
 	}
 
@@ -74,7 +74,7 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, endpoin
 	if r.Body != nil {
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
-			http.Error(w, "Failed to read request body", http.StatusInternalServerError)
+			mockelotError(w, r, fmt.Sprintf("Failed to read request body: %v", err), http.StatusInternalServerError)
 			return
 		}
 		requestBody = string(bodyBytes)
@@ -113,7 +113,7 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, endpoin
 	// Create proxy request
 	proxyReq, err := http.NewRequest(r.Method, backendURL.String(), bodyReader)
 	if err != nil {
-		http.Error(w, "Failed to create proxy request", http.StatusInternalServerError)
+		mockelotError(w, r, fmt.Sprintf("Failed to create proxy request to %s: %v", backendURL.String(), err), http.StatusInternalServerError)
 		return
 	}
 
@@ -188,7 +188,7 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, endpoin
 	backendFirstByteTime := time.Now() // Response headers received
 
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Backend request failed: %s (%v)", backendFullURL, err), http.StatusBadGateway)
+		mockelotError(w, r, fmt.Sprintf("Backend request failed: %s\n%v", backendFullURL, err), http.StatusBadGateway)
 		// Note: For error cases, we don't have complete timing data
 		return
 	}
@@ -208,7 +208,7 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, endpoin
 	// Read response body
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		http.Error(w, "Failed to read response", http.StatusBadGateway)
+		mockelotError(w, r, fmt.Sprintf("Failed to read backend response from %s: %v", backendFullURL, err), http.StatusBadGateway)
 		return
 	}
 	backendCompletionTime := time.Now() // Full response received
@@ -234,7 +234,7 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request, endpoin
 	if cfg.BodyTransform != "" {
 		bodyBytes, err = p.transformBody(bodyBytes, resp.Header.Get("Content-Type"), cfg.BodyTransform)
 		if err != nil {
-			http.Error(w, "Body transformation failed", http.StatusInternalServerError)
+			mockelotError(w, r, fmt.Sprintf("Body transformation failed: %v", err), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -915,13 +915,13 @@ func (p *ProxyHandler) streamSSEResponse(
 		resp.Body.Close()
 		<-firstCh // drain goroutine
 		log.Printf("[SSE] First-event timeout after %v (endpoint: %s)", firstMsgTimeout, endpoint.Name)
-		http.Error(w, "SSE: first event timeout", http.StatusGatewayTimeout)
+		mockelotError(w, r, fmt.Sprintf("SSE: first event timeout after %v waiting for %s", firstMsgTimeout, backendFullURL), http.StatusGatewayTimeout)
 		return
 	}
 
 	if first.err != nil && len(first.data) == 0 {
 		log.Printf("[SSE] Backend closed before first event (endpoint: %s): %v", endpoint.Name, first.err)
-		http.Error(w, "SSE: backend closed without data", http.StatusBadGateway)
+		mockelotError(w, r, fmt.Sprintf("SSE: backend closed without sending data (%s): %v", backendFullURL, first.err), http.StatusBadGateway)
 		return
 	}
 
