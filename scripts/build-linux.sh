@@ -3,7 +3,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_common.sh"
 
-BUILDER_IMAGE="scorussolutions/wails-appimage-builder-d12"
+BUILDER_IMAGE="scorussolutions/wails-appimage-builder-d13"
 VERSION=$(get_version)
 
 log_info "=== Mockelot Linux Build (v${VERSION}) ==="
@@ -22,7 +22,7 @@ docker run --rm --privileged \
         cp -r /workspace /tmp/build
         cd /tmp/build
         rm -rf frontend/node_modules frontend/dist build/bin
-        wails build -platform linux/amd64 -o mockelot-linux-amd64 -ldflags \"-X main.version=${VERSION}\"
+        wails build -platform linux/amd64 -tags webkit2_41 -o mockelot-linux-amd64 -ldflags \"-X main.version=${VERSION}\"
         mkdir -p /workspace/build/bin
         cp /tmp/build/build/bin/mockelot-linux-amd64 /workspace/build/bin/
         chown -R ${HOST_UID}:${HOST_GID} /workspace/build
