@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, provide } from 'vue'
 import { useServerStore } from '../../stores/server'
-import { SaveCurrentConfig, SaveConfig, LoadConfig, StartContainers, PollEvents } from '../../../wailsjs/go/main/App'
+import { SaveCurrentConfig, SaveConfig, LoadConfig, StartContainers, PollEvents, GetDevServerStatus } from '../../../wailsjs/go/main/App'
 import { models } from '../../../wailsjs/go/models'
 import ConfirmDialog from '../dialogs/ConfirmDialog.vue'
 import ContainerProgressDialog from '../dialogs/ContainerProgressDialog.vue'
@@ -259,27 +259,57 @@ onMounted(async () => {
     })
   )
 
-  // Dev server progress events
+  // Dev server progress events — update store status so UI reflects live state
   unregisterFunctions.value.push(
-    registerEventListener('devsvr:progress', (data: any) => {
+    registerEventListener('devsvr:progress', async (data: any) => {
       if (!data.endpoint_id) return
-      // Find endpoint name
       const ep = serverStore.endpoints.find(e => e.id === data.endpoint_id)
       if (ep) devServerProgressEndpointName.value = ep.name ?? ''
       devServerProgressData.value = data as DevServerProgressData
+
       if (data.stage === 'starting' || data.stage === 'installing') {
         showDevServerProgressDialog.value = true
-      }
-      if (data.stage === 'stopped' || (data.stage === 'error' && !showDevServerProgressDialog.value)) {
-        // Don't auto-open on error if dialog is not shown
+        // Mark as running-but-not-ready in the store
+        serverStore.devServerStatuses.set(data.endpoint_id, {
+          endpoint_id: data.endpoint_id,
+          running: true,
+          ready: false,
+          port: 0,
+          process_id: 0,
+        } as any)
+      } else if (data.stage === 'ready') {
+        // Fetch the actual status (port, pid) from the backend
+        try {
+          const status = await GetDevServerStatus(data.endpoint_id)
+          if (status) {
+            serverStore.devServerStatuses.set(data.endpoint_id, status)
+          }
+        } catch {
+          // fallback: mark ready without port info
+          serverStore.devServerStatuses.set(data.endpoint_id, {
+            endpoint_id: data.endpoint_id,
+            running: true,
+            ready: true,
+            port: 0,
+            process_id: 0,
+          } as any)
+        }
+      } else if (data.stage === 'stopped' || data.stage === 'error') {
+        serverStore.devServerStatuses.set(data.endpoint_id, {
+          endpoint_id: data.endpoint_id,
+          running: false,
+          ready: false,
+          port: 0,
+          process_id: 0,
+        } as any)
       }
     })
   )
 
-  // Dev server status events — update store so status dots reflect live state
+  // devsvr:output — consumed only by the console panel
   unregisterFunctions.value.push(
     registerEventListener('devsvr:output', (_data: any) => {
-      // Output lines are only consumed by the console dialog — no store update needed here
+      // no store update needed
     })
   )
 
@@ -294,11 +324,46 @@ onMounted(async () => {
 
   // Start event polling
   startPolling()
+
+  // Poll dev server statuses every 3s so status dots stay fresh even when
+  // no progress events are emitted (e.g. start_on_boot, already-running servers)
+  startDevServerStatusPolling()
 })
+
+let devServerStatusPollId: number | null = null
+
+async function pollDevServerStatuses() {
+  const devEndpoints = serverStore.endpoints.filter(ep => ep.type === 'dev_server')
+  for (const ep of devEndpoints) {
+    try {
+      const status = await GetDevServerStatus(ep.id)
+      if (status) {
+        serverStore.devServerStatuses.set(ep.id, status)
+      }
+    } catch {
+      // ignore — server may not be running
+    }
+  }
+}
+
+function startDevServerStatusPolling() {
+  if (devServerStatusPollId !== null) return
+  // Initial poll immediately so status is correct on first open
+  pollDevServerStatuses()
+  devServerStatusPollId = window.setInterval(pollDevServerStatuses, 3000)
+}
+
+function stopDevServerStatusPolling() {
+  if (devServerStatusPollId !== null) {
+    clearInterval(devServerStatusPollId)
+    devServerStatusPollId = null
+  }
+}
 
 // Clean up polling and event handlers on unmount
 onUnmounted(() => {
   stopPolling()
+  stopDevServerStatusPolling()
 
   // Unregister all event listeners
   unregisterFunctions.value.forEach(unregister => unregister())
