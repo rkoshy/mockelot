@@ -29,6 +29,12 @@ func init() {
 		if _, ok := os.LookupEnv("WEBKIT_DISABLE_COMPOSITING_MODE"); !ok {
 			os.Setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
 		}
+		// Disable GTK overlay scrollbars — they appear on top of WebKit-rendered
+		// content and cannot be suppressed with CSS alone (the OS draws them as a
+		// native layer over the WebView). Must be set before GTK initialises.
+		if _, ok := os.LookupEnv("GTK_OVERLAY_SCROLLING"); !ok {
+			os.Setenv("GTK_OVERLAY_SCROLLING", "0")
+		}
 	}
 }
 
