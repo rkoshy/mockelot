@@ -13,7 +13,7 @@ import TrafficLogPanel from '../traffic/TrafficLogPanel.vue'
 import ServerTab from './tabs/ServerTab.vue'
 import SOCKS5DomainsPanel from '../socks5/SOCKS5DomainsPanel.vue'
 import { models } from '../../types/models'
-import { StartContainer, StopContainer, DeleteContainer, StartDevServer, StopDevServer, RestartDevServer } from '../../../wailsjs/go/main/App'
+import { StartContainer, StopContainer, DeleteContainer, StartDevServer, StopDevServer, RestartDevServer, GetContainerLogs, GetDevServerLogs } from '../../../wailsjs/go/main/App'
 import OverlaySimPanel from './OverlaySimPanel.vue'
 import ProxySimPanel from './ProxySimPanel.vue'
 import EndpointNavigator from './EndpointNavigator.vue'
@@ -67,6 +67,74 @@ let unregisterProgressListener: (() => void) | null = null
 
 // Settings drawer state
 const showSettingsDrawer = ref(false)
+
+// Main panel tab for endpoint content area
+const mainPanelTab = ref<'traffic' | 'console'>('traffic')
+const consoleLogs = ref<string>('')
+const consoleLoading = ref(false)
+const consoleScrollEl = ref<HTMLElement | null>(null)
+let consolePollTimer: number | null = null
+
+function hasConsoleTab(ep: models.Endpoint | null): boolean {
+  return ep?.type === 'container' || ep?.type === 'dev_server'
+}
+
+// When switching endpoints, reset to traffic tab unless already on console
+// and new endpoint also supports it
+watch(() => serverStore.currentEndpoint?.id, () => {
+  if (!hasConsoleTab(serverStore.currentEndpoint)) {
+    mainPanelTab.value = 'traffic'
+  }
+  // Clear logs when switching endpoints
+  consoleLogs.value = ''
+  stopConsolePolling()
+  if (mainPanelTab.value === 'console' && hasConsoleTab(serverStore.currentEndpoint)) {
+    startConsolePolling()
+  }
+})
+
+watch(mainPanelTab, (tab) => {
+  if (tab === 'console') {
+    loadConsoleLogs()
+    startConsolePolling()
+  } else {
+    stopConsolePolling()
+  }
+})
+
+async function loadConsoleLogs() {
+  const ep = serverStore.currentEndpoint
+  if (!ep) return
+  consoleLoading.value = true
+  try {
+    if (ep.type === 'container') {
+      consoleLogs.value = await GetContainerLogs(ep.id, 5000)
+    } else if (ep.type === 'dev_server') {
+      consoleLogs.value = await GetDevServerLogs(ep.id, 5000)
+    }
+    // Auto-scroll to bottom
+    await nextTick()
+    if (consoleScrollEl.value) {
+      consoleScrollEl.value.scrollTop = consoleScrollEl.value.scrollHeight
+    }
+  } catch {
+    // ignore — server may not be running yet
+  } finally {
+    consoleLoading.value = false
+  }
+}
+
+function startConsolePolling() {
+  stopConsolePolling()
+  consolePollTimer = window.setInterval(loadConsoleLogs, 2000)
+}
+
+function stopConsolePolling() {
+  if (consolePollTimer !== null) {
+    clearInterval(consolePollTimer)
+    consolePollTimer = null
+  }
+}
 
 // Dialog state
 const showAddEndpointDialog = ref(false)
@@ -795,6 +863,7 @@ onUnmounted(() => {
     resizeObserver.disconnect()
     resizeObserver = null
   }
+  stopConsolePolling()
 })
 </script>
 
@@ -883,9 +952,66 @@ onUnmounted(() => {
 
     <!-- Endpoint Content -->
     <template v-else>
-      <!-- Traffic Log (full width) -->
+      <!-- Traffic Log / Console tab area -->
       <div class="flex-1 overflow-hidden flex flex-col min-h-0 relative">
-        <TrafficLogPanel />
+
+        <!-- Tab bar — only shown for container / dev_server endpoints -->
+        <div
+          v-if="hasConsoleTab(serverStore.currentEndpoint)"
+          class="flex border-b border-gray-700 bg-gray-900 flex-shrink-0"
+        >
+          <button
+            @click="mainPanelTab = 'traffic'"
+            :class="[
+              'px-4 py-2 text-xs font-medium transition-colors border-b-2',
+              mainPanelTab === 'traffic'
+                ? 'border-blue-500 text-blue-400'
+                : 'border-transparent text-gray-400 hover:text-gray-200'
+            ]"
+          >Traffic Log</button>
+          <button
+            @click="mainPanelTab = 'console'"
+            :class="[
+              'px-4 py-2 text-xs font-medium transition-colors border-b-2 flex items-center gap-1.5',
+              mainPanelTab === 'console'
+                ? (serverStore.currentEndpoint?.type === 'dev_server' ? 'border-orange-500 text-orange-400' : 'border-purple-500 text-purple-400')
+                : 'border-transparent text-gray-400 hover:text-gray-200'
+            ]"
+          >
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            Console
+          </button>
+        </div>
+
+        <!-- Traffic Log panel -->
+        <TrafficLogPanel v-show="mainPanelTab === 'traffic'" />
+
+        <!-- Inline Console panel -->
+        <div
+          v-if="mainPanelTab === 'console' && hasConsoleTab(serverStore.currentEndpoint)"
+          class="flex-1 flex flex-col min-h-0 bg-black"
+        >
+          <!-- Console toolbar -->
+          <div class="flex items-center gap-3 px-3 py-1.5 border-b border-gray-800 flex-shrink-0 bg-gray-900">
+            <span class="text-xs text-gray-500">Last 5000 lines · auto-refresh 2s</span>
+            <button
+              @click="loadConsoleLogs"
+              :disabled="consoleLoading"
+              class="ml-auto px-2 py-0.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 rounded text-xs transition-colors"
+            >
+              {{ consoleLoading ? 'Loading...' : 'Refresh' }}
+            </button>
+          </div>
+          <!-- Log output -->
+          <div ref="consoleScrollEl" class="flex-1 overflow-y-auto p-3 font-mono text-xs">
+            <div v-if="!consoleLogs && !consoleLoading" class="text-gray-600 text-center mt-8">
+              No output yet — start the {{ serverStore.currentEndpoint?.type === 'dev_server' ? 'dev server' : 'container' }} to see logs here.
+            </div>
+            <pre v-else class="text-green-300 whitespace-pre-wrap leading-relaxed">{{ consoleLogs }}</pre>
+          </div>
+        </div>
 
         <!-- Settings Drawer (absolute overlay, right side — independent of traffic log reactivity) -->
         <Transition name="drawer">
