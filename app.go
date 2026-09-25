@@ -982,11 +982,15 @@ func (a *App) AddEndpointWithConfig(config map[string]interface{}) (models.Endpo
 		dsCfg, _ := config["dev_server_config"].(map[string]interface{})
 		if dsCfg != nil {
 			endpoint.DevServerConfig = &models.DevServerConfig{
-				ProjectDir:  getString(dsCfg, "project_dir"),
-				Command:     getString(dsCfg, "command"),
-				AutoInstall: getBool(dsCfg, "auto_install", false),
-				StartOnBoot: getBool(dsCfg, "start_on_boot", false),
-				EnvVars:     []models.EnvironmentVar{},
+				ProjectDir:         getString(dsCfg, "project_dir"),
+				Command:            getString(dsCfg, "command"),
+				AutoInstall:        getBool(dsCfg, "auto_install", false),
+				StartOnBoot:        getBool(dsCfg, "start_on_boot", false),
+				NodeVersionManager: getString(dsCfg, "node_version_manager"),
+				NodeVersion:        getString(dsCfg, "node_version"),
+				PreRunScript:       getString(dsCfg, "pre_run_script"),
+				CleanupScript:      getString(dsCfg, "cleanup_script"),
+				EnvVars:            []models.EnvironmentVar{},
 			}
 			if envVars, ok := dsCfg["env_vars"].([]interface{}); ok {
 				endpoint.DevServerConfig.EnvVars = parseEnvironmentVars(envVars)

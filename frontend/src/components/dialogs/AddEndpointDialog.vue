@@ -89,9 +89,52 @@ interface DSProjectInfo {
   detected_framework: string
   package_manager: string
   has_node_modules: boolean
+  nvm_available: boolean
+  fnm_available: boolean
+  volta_available: boolean
+  nvmrc_version: string
+  node_version_file: string
+  volta_node_version: string
+  suggested_manager: string
+  suggested_version: string
   error?: string
 }
 const dsProjectInfo = ref<DSProjectInfo | null>(null)
+
+// Node version manager state (wizard)
+const dsNodeVersionManager = ref('')
+const dsNodeVersion = ref('')
+const dsPreRunScript = ref('')
+const dsCleanupScript = ref('')
+
+// Manager options derived from scan
+const dsManagerOptions = computed(() => {
+  const opts = [{ value: '', label: 'System default' }]
+  if (dsProjectInfo.value?.nvm_available) opts.push({ value: 'nvm', label: 'nvm' })
+  if (dsProjectInfo.value?.fnm_available) opts.push({ value: 'fnm', label: 'fnm' })
+  if (!dsProjectInfo.value?.nvm_available) opts.push({ value: 'nvm', label: 'nvm (not detected)' })
+  if (!dsProjectInfo.value?.fnm_available) opts.push({ value: 'fnm', label: 'fnm (not detected)' })
+  return opts
+})
+
+const dsVersionHint = computed(() => {
+  const pi = dsProjectInfo.value
+  if (!pi) return ''
+  if (dsNodeVersionManager.value === 'nvm' && pi.nvmrc_version) return `.nvmrc: ${pi.nvmrc_version}`
+  if (dsNodeVersionManager.value === 'fnm') {
+    if (pi.nvmrc_version) return `.nvmrc: ${pi.nvmrc_version}`
+    if (pi.node_version_file) return `.node-version: ${pi.node_version_file}`
+  }
+  return ''
+})
+
+const dsVersionFileDetected = computed(() => {
+  const pi = dsProjectInfo.value
+  if (!pi) return ''
+  if (pi.nvmrc_version)     return `.nvmrc (${pi.nvmrc_version})`
+  if (pi.node_version_file) return `.node-version (${pi.node_version_file})`
+  return ''
+})
 
 async function dsBrowseDir() {
   dsSelectingDir.value = true
@@ -117,9 +160,16 @@ async function dsScanDir(dir: string) {
       dsScanError.value = info.error
     } else {
       dsProjectInfo.value = info
+      // Auto-fill command from suggested scripts if blank
       if (!dsCommand.value && info.suggested_scripts.length > 0) {
-        const pm = info.package_manager
-        dsCommand.value = `${pm} run ${info.suggested_scripts[0]}`
+        dsCommand.value = `${info.package_manager} run ${info.suggested_scripts[0]}`
+      }
+      // Auto-suggest version manager from detection
+      if (!dsNodeVersionManager.value && info.suggested_manager) {
+        dsNodeVersionManager.value = info.suggested_manager
+        if (!dsNodeVersion.value && info.suggested_version) {
+          dsNodeVersion.value = info.suggested_version
+        }
       }
     }
   } catch (err) {
@@ -552,11 +602,15 @@ function handleFinish() {
     }
   } else if (endpointType.value === 'dev_server') {
     config.dev_server_config = {
-      project_dir:  dsProjectDir.value.trim(),
-      command:      dsCommand.value.trim(),
-      auto_install: dsAutoInstall.value,
-      start_on_boot: dsStartOnBoot.value,
-      env_vars:     dsEnvVars.value,
+      project_dir:          dsProjectDir.value.trim(),
+      command:              dsCommand.value.trim(),
+      auto_install:         dsAutoInstall.value,
+      start_on_boot:        dsStartOnBoot.value,
+      node_version_manager: dsNodeVersionManager.value,
+      node_version:         dsNodeVersion.value.trim(),
+      pre_run_script:       dsPreRunScript.value,
+      cleanup_script:       dsCleanupScript.value,
+      env_vars:             dsEnvVars.value,
     }
   }
 
@@ -1326,6 +1380,13 @@ function handleKeydown(e: KeyboardEvent) {
                     {{ dsProjectInfo.has_node_modules ? '✓ node_modules present' : '⚠ node_modules missing' }}
                   </span>
                 </div>
+                <!-- Version manager badges -->
+                <div v-if="dsProjectInfo.nvm_available || dsProjectInfo.fnm_available || dsVersionFileDetected" class="flex items-center gap-2 flex-wrap">
+                  <span class="text-xs text-gray-400">Detected:</span>
+                  <span v-if="dsProjectInfo.nvm_available" class="px-1.5 py-0.5 text-xs rounded border font-mono text-green-400 border-green-700 bg-green-900/30">nvm</span>
+                  <span v-if="dsProjectInfo.fnm_available" class="px-1.5 py-0.5 text-xs rounded border font-mono text-blue-400 border-blue-700 bg-blue-900/30">fnm</span>
+                  <span v-if="dsVersionFileDetected" class="text-xs text-gray-300 font-mono">{{ dsVersionFileDetected }}</span>
+                </div>
                 <div v-if="dsProjectInfo.suggested_scripts.length > 0">
                   <p class="text-xs text-gray-400 mb-1">Quick select script:</p>
                   <div class="flex flex-wrap gap-1">
@@ -1357,6 +1418,66 @@ function handleKeydown(e: KeyboardEvent) {
                   Use <code class="text-orange-300">$PORT</code> to inject the assigned port.
                   If omitted, <code class="text-gray-300">--port &lt;port&gt;</code> is appended automatically.
                 </p>
+              </div>
+
+              <!-- Node Version -->
+              <div class="space-y-2">
+                <div class="flex items-center gap-2">
+                  <label class="text-sm font-medium text-gray-300">Node Version</label>
+                  <span class="text-xs text-gray-500">optional</span>
+                </div>
+                <div class="flex flex-wrap gap-4">
+                  <label v-for="opt in dsManagerOptions" :key="opt.value" class="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      :value="opt.value"
+                      v-model="dsNodeVersionManager"
+                      class="w-3.5 h-3.5 text-orange-500 focus:ring-orange-500 bg-gray-700 border-gray-600"
+                    />
+                    <span :class="['text-sm',
+                      opt.value === '' ? 'text-gray-300' :
+                      (opt.value === 'nvm' && dsProjectInfo?.nvm_available) || (opt.value === 'fnm' && dsProjectInfo?.fnm_available)
+                        ? 'text-orange-300' : 'text-gray-500'
+                    ]">{{ opt.label }}</span>
+                  </label>
+                </div>
+                <div v-if="dsNodeVersionManager === 'nvm' || dsNodeVersionManager === 'fnm'" class="flex items-center gap-3">
+                  <input
+                    v-model="dsNodeVersion"
+                    type="text"
+                    placeholder="e.g. 18, 20.11.1, lts/hydrogen"
+                    class="w-48 px-3 py-1.5 bg-gray-700 border border-gray-600 rounded text-white
+                           placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono text-sm"
+                  />
+                  <span v-if="dsVersionHint" class="text-xs text-orange-300">{{ dsVersionHint }}</span>
+                  <span v-else class="text-xs text-gray-500">blank = use .nvmrc</span>
+                </div>
+              </div>
+
+              <!-- Pre-run Script -->
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-1">Pre-run Script <span class="text-gray-500 font-normal text-xs">optional</span></label>
+                <textarea
+                  v-model="dsPreRunScript"
+                  rows="3"
+                  :placeholder="dsNodeVersionManager ? '# Additional setup after ' + dsNodeVersionManager + ' is loaded\n# export MY_VAR=value' : '# Runs before the command in the same shell\n# export MY_VAR=value'"
+                  class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-green-300
+                         placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono text-xs
+                         resize-y leading-relaxed"
+                />
+              </div>
+
+              <!-- Cleanup Script -->
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-1">Cleanup Script <span class="text-gray-500 font-normal text-xs">optional</span></label>
+                <textarea
+                  v-model="dsCleanupScript"
+                  rows="2"
+                  placeholder="# Runs after the process stops (separate shell)&#10;# rm -f .dev.pid"
+                  class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-green-300
+                         placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono text-xs
+                         resize-y leading-relaxed"
+                />
               </div>
 
               <!-- Checkboxes -->

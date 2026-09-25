@@ -333,6 +333,10 @@ export namespace models {
 	    start_on_boot: boolean;
 	    env_vars?: EnvironmentVar[];
 	    proxy_config?: ProxyConfig;
+	    node_version_manager?: string;
+	    node_version?: string;
+	    pre_run_script?: string;
+	    cleanup_script?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new DevServerConfig(source);
@@ -346,6 +350,10 @@ export namespace models {
 	        this.start_on_boot = source["start_on_boot"];
 	        this.env_vars = this.convertValues(source["env_vars"], EnvironmentVar);
 	        this.proxy_config = this.convertValues(source["proxy_config"], ProxyConfig);
+	        this.node_version_manager = source["node_version_manager"];
+	        this.node_version = source["node_version"];
+	        this.pre_run_script = source["pre_run_script"];
+	        this.cleanup_script = source["cleanup_script"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1503,6 +1511,14 @@ export namespace server {
 	    package_manager: string;
 	    has_node_modules: boolean;
 	    error?: string;
+	    nvm_available: boolean;
+	    fnm_available: boolean;
+	    volta_available: boolean;
+	    nvmrc_version?: string;
+	    node_version_file?: string;
+	    volta_node_version?: string;
+	    suggested_manager?: string;
+	    suggested_version?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProjectInfo(source);
@@ -1517,6 +1533,14 @@ export namespace server {
 	        this.package_manager = source["package_manager"];
 	        this.has_node_modules = source["has_node_modules"];
 	        this.error = source["error"];
+	        this.nvm_available = source["nvm_available"];
+	        this.fnm_available = source["fnm_available"];
+	        this.volta_available = source["volta_available"];
+	        this.nvmrc_version = source["nvmrc_version"];
+	        this.node_version_file = source["node_version_file"];
+	        this.volta_node_version = source["volta_node_version"];
+	        this.suggested_manager = source["suggested_manager"];
+	        this.suggested_version = source["suggested_version"];
 	    }
 	}
 

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -151,12 +152,12 @@ func (h *DevServerHandler) StartDevServer(ctx context.Context, endpoint *models.
 
 	h.emitProgress(endpoint.ID, "starting", fmt.Sprintf("Starting process on port %d...", port), 40)
 
-	// Build command
+	// Build command — may be wrapped in a shell if nvm/fnm or pre-run script is configured
 	cmdStr := buildCommand(cfg.Command, portStr)
-	args := shellArgs(cmdStr)
+	shell, shellArgs := buildShellInvocation(cfg, cmdStr)
 
 	procCtx, procCancel := context.WithCancel(context.Background()) // NOT the caller ctx — process lives beyond this call
-	cmd := exec.CommandContext(procCtx, args[0], args[1:]...)
+	cmd := exec.CommandContext(procCtx, shell, shellArgs...)
 	cmd.Dir = cfg.ProjectDir
 
 	// Set process group so we can kill the entire tree
@@ -223,6 +224,29 @@ func (h *DevServerHandler) StartDevServer(ctx context.Context, endpoint *models.
 		}
 		h.mu.Unlock()
 		h.emitProgress(endpoint.ID, "stopped", "Process exited", 0)
+
+		// Run cleanup script as a separate invocation (non-blocking on next start)
+		if cfg.CleanupScript != "" {
+			go func() {
+				log.Printf("[DevServer:%s] Running cleanup script", endpoint.Name)
+				sh, shArgs := loginShell()
+				cleanupArgs := append(shArgs, cfg.CleanupScript)
+				cleanupCmd := exec.Command(sh, cleanupArgs...)
+				cleanupCmd.Dir = cfg.ProjectDir
+				cleanupCmd.Env = buildEnv(cfg, portStr)
+				if out, err := cleanupCmd.CombinedOutput(); err != nil {
+					log.Printf("[DevServer:%s] Cleanup script error: %v\n%s", endpoint.Name, err, string(out))
+				} else {
+					log.Printf("[DevServer:%s] Cleanup script completed", endpoint.Name)
+					if len(out) > 0 {
+						// Write output to the ring buffer so it shows in the console
+						for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+							buf.append("[cleanup] " + line)
+						}
+					}
+				}
+			}()
+		}
 	}()
 
 	// Wait for ready: stdout URL detection OR TCP polling, whichever wins
@@ -448,14 +472,33 @@ func (h *DevServerHandler) waitForReady(ctx context.Context, endpointID, name st
 }
 
 // runInstall runs the package manager install command and streams output.
+// If a version manager is configured it runs install inside the same shell wrapper
+// so the correct Node version is active.
 func (h *DevServerHandler) runInstall(ctx context.Context, endpoint *models.Endpoint, cfg *models.DevServerConfig, buf *ringBuffer) error {
 	pm := detectPackageManager(cfg.ProjectDir)
-	installArgs := InstallCommand(pm)
-	log.Printf("[DevServer:%s] Running: %s", endpoint.Name, strings.Join(installArgs, " "))
+	installCmd := strings.Join(InstallCommand(pm), " ")
+	log.Printf("[DevServer:%s] Running: %s", endpoint.Name, installCmd)
 
-	cmd := exec.CommandContext(ctx, installArgs[0], installArgs[1:]...)
+	// Use shell wrapping if version manager is configured, else run directly
+	var shell string
+	var cmdArgs []string
+	if cfg.NodeVersionManager != "" {
+		// Build a minimal script: version manager setup + install (no pre-run)
+		minCfg := &models.DevServerConfig{
+			NodeVersionManager: cfg.NodeVersionManager,
+			NodeVersion:        cfg.NodeVersion,
+			// No PreRunScript for install step
+		}
+		shell, cmdArgs = buildShellInvocation(minCfg, installCmd)
+	} else {
+		parts := strings.Fields(installCmd)
+		shell = parts[0]
+		cmdArgs = parts[1:]
+	}
+
+	cmd := exec.CommandContext(ctx, shell, cmdArgs...)
 	cmd.Dir = cfg.ProjectDir
-	cmd.Env = os.Environ()
+	cmd.Env = buildEnv(cfg, "")
 
 	outPipe, _ := cmd.StdoutPipe()
 	errPipe, _ := cmd.StderrPipe()
@@ -510,6 +553,110 @@ func findFreePort() (int, error) {
 	port := l.Addr().(*net.TCPAddr).Port
 	l.Close()
 	return port, nil
+}
+
+// loginShell returns the user's preferred shell and the flag needed to run a
+// command string non-interactively: (shell, []string{"-c"}).
+// On Windows returns cmd.exe with /C.
+func loginShell() (string, []string) {
+	if runtime.GOOS == "windows" {
+		return "cmd.exe", []string{"/C"}
+	}
+	sh := os.Getenv("SHELL")
+	if sh == "" {
+		sh = "/bin/bash"
+	}
+	return sh, []string{"-c"}
+}
+
+// buildShellInvocation returns the executable and arguments that run cmdStr
+// (already port-substituted) inside a shell.
+//
+// When no version manager or pre-run script is configured the command is split
+// into argv directly (fast path, no shell overhead).
+//
+// When nvm/fnm or a pre-run script is present the whole script is assembled and
+// handed to the user's $SHELL -c "...".  On Windows nvm-windows is a regular
+// binary so it does not need shell sourcing — the cmd.exe wrapper is used only
+// for the pre-run script if present.
+func buildShellInvocation(cfg *models.DevServerConfig, cmdStr string) (string, []string) {
+	hasVersionMgr := cfg.NodeVersionManager == "nvm" || cfg.NodeVersionManager == "fnm"
+	hasPreRun := strings.TrimSpace(cfg.PreRunScript) != ""
+
+	// Fast path: no shell wrapping needed
+	if !hasVersionMgr && !hasPreRun {
+		parts := shellArgs(cmdStr)
+		if len(parts) == 0 {
+			return "echo", []string{"(empty command)"}
+		}
+		return parts[0], parts[1:]
+	}
+
+	// Build a multi-line shell script
+	var sb strings.Builder
+
+	// -- Version manager setup --
+	switch cfg.NodeVersionManager {
+	case "nvm":
+		if runtime.GOOS == "windows" {
+			// nvm-windows: plain binary, no sourcing needed
+			v := strings.TrimSpace(cfg.NodeVersion)
+			if v != "" {
+				sb.WriteString("nvm use " + v + "\n")
+			}
+		} else {
+			// Unix: explicitly source nvm.sh so it works in non-interactive shells
+			// (bash -c does not source ~/.bashrc, and ~/.bashrc guards against non-interactive)
+			nvmDir := os.Getenv("NVM_DIR")
+			if nvmDir == "" {
+				home, _ := os.UserHomeDir()
+				nvmDir = filepath.Join(home, ".nvm")
+			}
+			sb.WriteString(`export NVM_DIR="` + nvmDir + `"` + "\n")
+			sb.WriteString(`[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"` + "\n")
+			v := strings.TrimSpace(cfg.NodeVersion)
+			if v != "" {
+				sb.WriteString("nvm use " + v + " || nvm install " + v + "\n")
+			} else {
+				// No version specified: use .nvmrc / .node-version if present
+				sb.WriteString("[ -f .nvmrc ] || [ -f .node-version ] && nvm use || true\n")
+			}
+		}
+
+	case "fnm":
+		if runtime.GOOS == "windows" {
+			// fnm on Windows: use PowerShell env init
+			sb.WriteString(`fnm env --use-on-cd | Out-String | Invoke-Expression` + "\n")
+		} else {
+			sb.WriteString(`eval "$(fnm env)"` + "\n")
+		}
+		v := strings.TrimSpace(cfg.NodeVersion)
+		if v != "" {
+			sb.WriteString("fnm use " + v + " || fnm install " + v + "\n")
+		} else {
+			sb.WriteString("[ -f .nvmrc ] || [ -f .node-version ] && fnm use || true\n")
+		}
+	}
+
+	// -- Pre-run script --
+	if hasPreRun {
+		sb.WriteString(strings.TrimRight(cfg.PreRunScript, "\n"))
+		sb.WriteString("\n")
+	}
+
+	// -- The actual command --
+	sb.WriteString(cmdStr)
+	sb.WriteString("\n")
+
+	script := sb.String()
+
+	if runtime.GOOS == "windows" && cfg.NodeVersionManager == "fnm" {
+		// fnm on Windows needs PowerShell
+		return "powershell", []string{"-Command", script}
+	}
+
+	sh, flags := loginShell()
+	return sh, append(flags, script)
 }
 
 // buildCommand returns the final command string with $PORT substituted.

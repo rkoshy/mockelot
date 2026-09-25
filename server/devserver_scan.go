@@ -3,8 +3,11 @@ package server
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strings"
 )
 
 // ProjectInfo is the result of scanning a directory for a package.json.
@@ -17,6 +20,16 @@ type ProjectInfo struct {
 	PackageManager    string            `json:"package_manager"`    // "npm", "yarn", "pnpm", "bun"
 	HasNodeModules    bool              `json:"has_node_modules"`
 	Error             string            `json:"error,omitempty"` // non-empty if scan failed
+
+	// Node version manager detection
+	NvmAvailable     bool   `json:"nvm_available"`               // nvm installed (nvm.sh or nvm.exe on PATH)
+	FnmAvailable     bool   `json:"fnm_available"`               // fnm binary on PATH
+	VoltaAvailable   bool   `json:"volta_available"`             // volta binary on PATH
+	NvmrcVersion     string `json:"nvmrc_version,omitempty"`     // .nvmrc content if found
+	NodeVersionFile  string `json:"node_version_file,omitempty"` // .node-version content if found
+	VoltaNodeVersion string `json:"volta_node_version,omitempty"` // package.json volta.node if found
+	SuggestedManager string `json:"suggested_manager,omitempty"` // "", "nvm", "fnm" — best auto-suggestion
+	SuggestedVersion string `json:"suggested_version,omitempty"` // suggested version string
 }
 
 // packageJSON is a minimal representation of package.json fields we care about.
@@ -25,6 +38,10 @@ type packageJSON struct {
 	Scripts         map[string]string `json:"scripts"`
 	Dependencies    map[string]string `json:"dependencies"`
 	DevDependencies map[string]string `json:"devDependencies"`
+	Volta           struct {
+		Node string `json:"node"`
+		Npm  string `json:"npm"`
+	} `json:"volta"`
 }
 
 // ScanProjectDir reads a directory, parses package.json, and returns ProjectInfo.
@@ -37,6 +54,9 @@ func ScanProjectDir(dir string) *ProjectInfo {
 
 	// Detect package manager from lock files
 	info.PackageManager = detectPackageManager(dir)
+
+	// Detect version managers (independent of package.json)
+	detectVersionManagers(info, dir)
 
 	// Read package.json
 	pkgPath := filepath.Join(dir, "package.json")
@@ -60,6 +80,11 @@ func ScanProjectDir(dir string) *ProjectInfo {
 		info.Scripts = pkg.Scripts
 	}
 
+	// Volta field from package.json
+	if pkg.Volta.Node != "" {
+		info.VoltaNodeVersion = pkg.Volta.Node
+	}
+
 	// Detect framework
 	allDeps := mergeDeps(pkg.Dependencies, pkg.DevDependencies)
 	info.DetectedFramework = detectFramework(allDeps)
@@ -71,7 +96,90 @@ func ScanProjectDir(dir string) *ProjectInfo {
 	_, err = os.Stat(filepath.Join(dir, "node_modules"))
 	info.HasNodeModules = err == nil
 
+	// Build auto-suggestion for manager + version
+	buildManagerSuggestion(info)
+
 	return info
+}
+
+// detectVersionManagers populates the nvm/fnm/volta availability and version hint fields.
+func detectVersionManagers(info *ProjectInfo, dir string) {
+	if runtime.GOOS == "windows" {
+		// On Windows, nvm-windows is a binary on PATH
+		if _, err := exec.LookPath("nvm"); err == nil {
+			info.NvmAvailable = true
+		}
+	} else {
+		// On Unix: check NVM_DIR env var or ~/.nvm/nvm.sh on disk
+		nvmDir := os.Getenv("NVM_DIR")
+		if nvmDir == "" {
+			home, _ := os.UserHomeDir()
+			nvmDir = filepath.Join(home, ".nvm")
+		}
+		if _, err := os.Stat(filepath.Join(nvmDir, "nvm.sh")); err == nil {
+			info.NvmAvailable = true
+		}
+	}
+
+	// fnm and volta are binaries on any platform
+	if _, err := exec.LookPath("fnm"); err == nil {
+		info.FnmAvailable = true
+	}
+	if _, err := exec.LookPath("volta"); err == nil {
+		info.VoltaAvailable = true
+	}
+
+	// Read .nvmrc (project or any parent up to 3 levels)
+	if v := readVersionFile(dir, ".nvmrc"); v != "" {
+		info.NvmrcVersion = v
+	}
+
+	// Read .node-version
+	if v := readVersionFile(dir, ".node-version"); v != "" {
+		info.NodeVersionFile = v
+	}
+}
+
+// readVersionFile reads a version hint file from the directory or up to 3 parent dirs.
+func readVersionFile(dir, filename string) string {
+	for i := 0; i < 4; i++ {
+		if dir == "" || dir == "/" || dir == "." {
+			break
+		}
+		p := filepath.Join(dir, filename)
+		if data, err := os.ReadFile(p); err == nil {
+			v := strings.TrimSpace(string(data))
+			if v != "" {
+				return v
+			}
+		}
+		dir = filepath.Dir(dir)
+	}
+	return ""
+}
+
+// buildManagerSuggestion sets SuggestedManager and SuggestedVersion based on what's detected.
+func buildManagerSuggestion(info *ProjectInfo) {
+	// Priority: .nvmrc + nvm > .nvmrc + fnm > .node-version + fnm > .node-version + nvm > none
+	if info.NvmrcVersion != "" {
+		if info.NvmAvailable {
+			info.SuggestedManager = "nvm"
+			info.SuggestedVersion = info.NvmrcVersion
+		} else if info.FnmAvailable {
+			info.SuggestedManager = "fnm"
+			info.SuggestedVersion = info.NvmrcVersion
+		}
+	} else if info.NodeVersionFile != "" {
+		if info.FnmAvailable {
+			info.SuggestedManager = "fnm"
+			info.SuggestedVersion = info.NodeVersionFile
+		} else if info.NvmAvailable {
+			info.SuggestedManager = "nvm"
+			info.SuggestedVersion = info.NodeVersionFile
+		}
+	}
+	// If no version file found but manager is available, suggest manager without version
+	// (user can fill in manually or it'll use the manager's default)
 }
 
 // detectPackageManager returns the package manager name by checking lock files.

@@ -494,6 +494,16 @@ type DevServerConfig struct {
 	EnvVars      []EnvironmentVar `json:"env_vars,omitempty" yaml:"env_vars,omitempty"`
 	ProxyConfig  *ProxyConfig     `json:"proxy_config,omitempty" yaml:"proxy_config,omitempty"` // Header/status manipulation on responses
 
+	// Node version management
+	// NodeVersionManager: "" = system default, "nvm" = use nvm, "fnm" = use fnm
+	NodeVersionManager string `json:"node_version_manager,omitempty" yaml:"node_version_manager,omitempty"`
+	// NodeVersion: specific version e.g. "18", "20.11.1", "lts/hydrogen". Empty = use .nvmrc/.node-version
+	NodeVersion string `json:"node_version,omitempty" yaml:"node_version,omitempty"`
+
+	// Shell scripts (run via the user's $SHELL)
+	PreRunScript  string `json:"pre_run_script,omitempty" yaml:"pre_run_script,omitempty"`  // Runs before the command in the same shell session
+	CleanupScript string `json:"cleanup_script,omitempty" yaml:"cleanup_script,omitempty"`  // Runs after the process stops as a separate invocation
+
 	// Runtime state (not persisted)
 	Port      int `json:"-" yaml:"-"` // Dynamically assigned port
 	ProcessID int `json:"-" yaml:"-"` // OS PID of child process
