@@ -19,12 +19,12 @@ const emit = defineEmits<{
 const serverStore = useServerStore()
 
 // ── Width (resizable, persisted) ──────────────────────────────────────────
-const navWidth = ref(220)
+const navWidth = ref(240)
 const isResizing = ref(false)
 
 onMounted(() => {
   const w = parseInt(localStorage.getItem('mockelot-nav-width') ?? '')
-  if (w) navWidth.value = Math.min(320, Math.max(160, w))
+  if (w) navWidth.value = Math.min(360, Math.max(180, w))
 })
 
 function startResize(e: MouseEvent) {
@@ -32,7 +32,7 @@ function startResize(e: MouseEvent) {
   const startX = e.clientX
   const startW = navWidth.value
   const onMove = (e: MouseEvent) => {
-    navWidth.value = Math.min(320, Math.max(160, startW + (e.clientX - startX)))
+    navWidth.value = Math.min(360, Math.max(180, startW + (e.clientX - startX)))
   }
   const onUp = () => {
     isResizing.value = false
@@ -396,7 +396,7 @@ function itemCls(id: string, isDragging = false): string {
     </div>
 
     <!-- ── Scrollable list ─────────────────────────────────────────────── -->
-    <div ref="listRef" class="flex-1 overflow-y-auto py-1" role="list">
+    <div ref="listRef" class="flex-1 overflow-y-auto py-1 pr-1" role="list">
 
       <!-- SERVER (always pinned at top) -->
       <div
