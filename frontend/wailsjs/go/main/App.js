@@ -170,6 +170,14 @@ export function GetDefaultContainerHeaders() {
   return window['go']['main']['App']['GetDefaultContainerHeaders']();
 }
 
+export function GetDevServerLogs(arg1, arg2) {
+  return window['go']['main']['App']['GetDevServerLogs'](arg1, arg2);
+}
+
+export function GetDevServerStatus(arg1) {
+  return window['go']['main']['App']['GetDevServerStatus'](arg1);
+}
+
 export function GetEndpointHealth(arg1) {
   return window['go']['main']['App']['GetEndpointHealth'](arg1);
 }
@@ -322,6 +330,10 @@ export function RestartContainer(arg1) {
   return window['go']['main']['App']['RestartContainer'](arg1);
 }
 
+export function RestartDevServer(arg1) {
+  return window['go']['main']['App']['RestartDevServer'](arg1);
+}
+
 export function SaveConfig() {
   return window['go']['main']['App']['SaveConfig']();
 }
@@ -330,8 +342,16 @@ export function SaveCurrentConfig() {
   return window['go']['main']['App']['SaveCurrentConfig']();
 }
 
+export function ScanProjectDir(arg1) {
+  return window['go']['main']['App']['ScanProjectDir'](arg1);
+}
+
 export function SelectCertFile(arg1) {
   return window['go']['main']['App']['SelectCertFile'](arg1);
+}
+
+export function SelectProjectDir() {
+  return window['go']['main']['App']['SelectProjectDir']();
 }
 
 export function SendEvent(arg1, arg2) {
@@ -378,12 +398,24 @@ export function StartContainers() {
   return window['go']['main']['App']['StartContainers']();
 }
 
+export function StartDevServer(arg1) {
+  return window['go']['main']['App']['StartDevServer'](arg1);
+}
+
+export function StartDevServers() {
+  return window['go']['main']['App']['StartDevServers']();
+}
+
 export function StartServer(arg1) {
   return window['go']['main']['App']['StartServer'](arg1);
 }
 
 export function StopContainer(arg1) {
   return window['go']['main']['App']['StopContainer'](arg1);
+}
+
+export function StopDevServer(arg1) {
+  return window['go']['main']['App']['StopDevServer'](arg1);
 }
 
 export function StopServer() {

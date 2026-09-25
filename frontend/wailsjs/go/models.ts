@@ -326,6 +326,46 @@ export namespace models {
 	        this.server_bundle_path = source["server_bundle_path"];
 	    }
 	}
+	export class DevServerConfig {
+	    project_dir: string;
+	    command: string;
+	    auto_install: boolean;
+	    start_on_boot: boolean;
+	    env_vars?: EnvironmentVar[];
+	    proxy_config?: ProxyConfig;
+	
+	    static createFrom(source: any = {}) {
+	        return new DevServerConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.project_dir = source["project_dir"];
+	        this.command = source["command"];
+	        this.auto_install = source["auto_install"];
+	        this.start_on_boot = source["start_on_boot"];
+	        this.env_vars = this.convertValues(source["env_vars"], EnvironmentVar);
+	        this.proxy_config = this.convertValues(source["proxy_config"], ProxyConfig);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class FileServerConfig {
 	    base_path: string;
 	    enable_ssi: boolean;
@@ -571,6 +611,7 @@ export namespace models {
 	    proxy_config?: ProxyConfig;
 	    container_config?: ContainerConfig;
 	    file_server_config?: FileServerConfig;
+	    dev_server_config?: DevServerConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new Endpoint(source);
@@ -594,6 +635,7 @@ export namespace models {
 	        this.proxy_config = this.convertValues(source["proxy_config"], ProxyConfig);
 	        this.container_config = this.convertValues(source["container_config"], ContainerConfig);
 	        this.file_server_config = this.convertValues(source["file_server_config"], FileServerConfig);
+	        this.dev_server_config = this.convertValues(source["dev_server_config"], DevServerConfig);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -995,6 +1037,31 @@ export namespace models {
 	}
 	
 	
+	
+	export class DevServerStatus {
+	    endpoint_id: string;
+	    running: boolean;
+	    ready: boolean;
+	    port: number;
+	    process_id: number;
+	    started_at?: string;
+	    uptime_ms?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DevServerStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.endpoint_id = source["endpoint_id"];
+	        this.running = source["running"];
+	        this.ready = source["ready"];
+	        this.port = source["port"];
+	        this.process_id = source["process_id"];
+	        this.started_at = source["started_at"];
+	        this.uptime_ms = source["uptime_ms"];
+	    }
+	}
 	export class DockerImageInfo {
 	    image_name: string;
 	    exposed_ports: string[];
@@ -1423,6 +1490,35 @@ export namespace models {
 	
 	
 	
+
+}
+
+export namespace server {
+	
+	export class ProjectInfo {
+	    name: string;
+	    scripts: Record<string, string>;
+	    suggested_scripts: string[];
+	    detected_framework: string;
+	    package_manager: string;
+	    has_node_modules: boolean;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProjectInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.scripts = source["scripts"];
+	        this.suggested_scripts = source["suggested_scripts"];
+	        this.detected_framework = source["detected_framework"];
+	        this.package_manager = source["package_manager"];
+	        this.has_node_modules = source["has_node_modules"];
+	        this.error = source["error"];
+	    }
+	}
 
 }
 

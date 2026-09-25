@@ -123,6 +123,7 @@ const (
 	EndpointTypeProxy      = "proxy"       // Reverse proxy with translation
 	EndpointTypeContainer  = "container"   // Docker container management
 	EndpointTypeFileServer = "file_server" // Serve a local directory
+	EndpointTypeDevServer  = "dev_server"  // Local dev server (npm/yarn/pnpm/custom)
 )
 
 // CSP directive name constants — all standard directives recognised by browsers
@@ -481,6 +482,50 @@ type ContainerStartProgress struct {
 	Platform   string `json:"platform,omitempty"`   // "linux", "windows", "darwin"
 }
 
+// DevServerConfig contains configuration for a local dev server endpoint.
+// The dev server manages a child process (npm/yarn/pnpm/custom command) and
+// proxies HTTP requests to it on a dynamically assigned port.
+type DevServerConfig struct {
+	// Persisted configuration
+	ProjectDir   string           `json:"project_dir" yaml:"project_dir"`             // Directory containing package.json
+	Command      string           `json:"command" yaml:"command"`                     // e.g. "npm run dev" — may contain $PORT
+	AutoInstall  bool             `json:"auto_install" yaml:"auto_install"`           // Run npm/yarn/pnpm install if node_modules missing
+	StartOnBoot  bool             `json:"start_on_boot" yaml:"start_on_boot"`         // Auto-start when Mockelot server starts
+	EnvVars      []EnvironmentVar `json:"env_vars,omitempty" yaml:"env_vars,omitempty"`
+	ProxyConfig  *ProxyConfig     `json:"proxy_config,omitempty" yaml:"proxy_config,omitempty"` // Header/status manipulation on responses
+
+	// Runtime state (not persisted)
+	Port      int `json:"-" yaml:"-"` // Dynamically assigned port
+	ProcessID int `json:"-" yaml:"-"` // OS PID of child process
+}
+
+// DevServerStatus represents the runtime state of a dev server process
+type DevServerStatus struct {
+	EndpointID string `json:"endpoint_id"`
+	Running    bool   `json:"running"`
+	Ready      bool   `json:"ready"`   // Server is accepting connections
+	Port       int    `json:"port"`
+	ProcessID  int    `json:"process_id"`
+	StartedAt  string `json:"started_at,omitempty"` // ISO8601
+	UptimeMs   int64  `json:"uptime_ms,omitempty"`
+}
+
+// DevServerStartProgress represents a dev server startup progress event
+type DevServerStartProgress struct {
+	EndpointID string `json:"endpoint_id"`
+	Stage      string `json:"stage"`               // "installing", "starting", "ready", "error", "stopped"
+	Message    string `json:"message"`
+	Progress   int    `json:"progress"`             // 0-100
+	ErrorType  string `json:"error_type,omitempty"` // "process_failed", "timeout", "port_error"
+}
+
+// DevServerOutputLine represents a single line of dev server stdout/stderr output
+type DevServerOutputLine struct {
+	EndpointID string `json:"endpoint_id"`
+	Line       string `json:"line"`
+	IsError    bool   `json:"is_error"` // true if from stderr
+}
+
 // ContainerStats represents real-time container resource usage metrics
 type ContainerStats struct {
 	EndpointID      string  `json:"endpoint_id"`
@@ -518,6 +563,7 @@ type Endpoint struct {
 	ProxyConfig      *ProxyConfig      `json:"proxy_config,omitempty" yaml:"proxy_config,omitempty"`               // For proxy type
 	ContainerConfig  *ContainerConfig  `json:"container_config,omitempty" yaml:"container_config,omitempty"`       // For container type
 	FileServerConfig *FileServerConfig `json:"file_server_config,omitempty" yaml:"file_server_config,omitempty"`   // For file_server type
+	DevServerConfig  *DevServerConfig  `json:"dev_server_config,omitempty" yaml:"dev_server_config,omitempty"`     // For dev_server type
 }
 
 // IsEnabled returns whether this endpoint is enabled (defaults to true if not set)

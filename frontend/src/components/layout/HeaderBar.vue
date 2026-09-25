@@ -5,6 +5,7 @@ import { SaveCurrentConfig, SaveConfig, LoadConfig, StartContainers, PollEvents 
 import { models } from '../../../wailsjs/go/models'
 import ConfirmDialog from '../dialogs/ConfirmDialog.vue'
 import ContainerProgressDialog from '../dialogs/ContainerProgressDialog.vue'
+import DevServerProgressDialog from '../dialogs/DevServerProgressDialog.vue'
 import LoadEndpointsDialog from '../dialogs/LoadEndpointsDialog.vue'
 import { EventsOn } from '../../../wailsjs/runtime/runtime'
 
@@ -35,6 +36,18 @@ const showProgressDialog = ref(false)
 const progressEndpointName = ref('')
 const progressDialogRef = ref<InstanceType<typeof ContainerProgressDialog>>()
 const pendingProgressEvents = ref<any[]>([])
+
+// Dev server progress dialog state
+const showDevServerProgressDialog = ref(false)
+const devServerProgressEndpointName = ref('')
+interface DevServerProgressData {
+  endpoint_id: string
+  stage: string
+  message: string
+  progress: number
+  error_type?: string
+}
+const devServerProgressData = ref<DevServerProgressData | null>(null)
 
 // Event log for debugging
 const eventLog = ref<Array<{time: string, type: string, data: string}>>([])
@@ -243,6 +256,30 @@ onMounted(async () => {
         })
         serverStore.containerStats.set(data.endpoint_id, stats)
       }
+    })
+  )
+
+  // Dev server progress events
+  unregisterFunctions.value.push(
+    registerEventListener('devsvr:progress', (data: any) => {
+      if (!data.endpoint_id) return
+      // Find endpoint name
+      const ep = serverStore.endpoints.find(e => e.id === data.endpoint_id)
+      if (ep) devServerProgressEndpointName.value = ep.name ?? ''
+      devServerProgressData.value = data as DevServerProgressData
+      if (data.stage === 'starting' || data.stage === 'installing') {
+        showDevServerProgressDialog.value = true
+      }
+      if (data.stage === 'stopped' || (data.stage === 'error' && !showDevServerProgressDialog.value)) {
+        // Don't auto-open on error if dialog is not shown
+      }
+    })
+  )
+
+  // Dev server status events — update store so status dots reflect live state
+  unregisterFunctions.value.push(
+    registerEventListener('devsvr:output', (_data: any) => {
+      // Output lines are only consumed by the console dialog — no store update needed here
     })
   )
 
@@ -509,6 +546,14 @@ function handleLoadDialogClose() {
       :endpoint-name="progressEndpointName"
       @close="handleProgressClose"
       @cancel="handleProgressCancel"
+    />
+
+    <!-- Dev Server Progress Dialog -->
+    <DevServerProgressDialog
+      :show="showDevServerProgressDialog"
+      :endpoint-name="devServerProgressEndpointName"
+      :progress="devServerProgressData"
+      @close="showDevServerProgressDialog = false"
     />
 
     <!-- Load Endpoints Dialog -->

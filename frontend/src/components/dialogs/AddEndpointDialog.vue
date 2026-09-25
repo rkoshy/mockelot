@@ -7,7 +7,7 @@ import EnvironmentVarList from './EnvironmentVarList.vue'
 import StatusTranslationList from './StatusTranslationList.vue'
 import HeaderManipulationList from './HeaderManipulationList.vue'
 import TranslationRuleList from './TranslationRuleList.vue'
-import { ValidateAndInspectDockerImage, PullDockerImage, TestContainerConfig, GetDefaultContainerHeaders } from '../../../wailsjs/go/main/App'
+import { ValidateAndInspectDockerImage, PullDockerImage, TestContainerConfig, GetDefaultContainerHeaders, ScanProjectDir, SelectProjectDir } from '../../../wailsjs/go/main/App'
 import { models } from '../../../wailsjs/go/models'
 
 const props = defineProps<{
@@ -73,12 +73,87 @@ const responseHeaders = ref<models.HeaderManipulation[]>([])
 const fileServerBasePath = ref('')
 const fileServerEnableSSI = ref(false)
 
+// Dev server config (Step 3)
+const dsProjectDir = ref('')
+const dsCommand = ref('')
+const dsAutoInstall = ref(false)
+const dsStartOnBoot = ref(false)
+const dsEnvVars = ref<Array<{name: string, value: string}>>([])
+const dsScanning = ref(false)
+const dsScanError = ref('')
+const dsSelectingDir = ref(false)
+interface DSProjectInfo {
+  name: string
+  scripts: Record<string, string>
+  suggested_scripts: string[]
+  detected_framework: string
+  package_manager: string
+  has_node_modules: boolean
+  error?: string
+}
+const dsProjectInfo = ref<DSProjectInfo | null>(null)
+
+async function dsBrowseDir() {
+  dsSelectingDir.value = true
+  try {
+    const dir = await SelectProjectDir()
+    if (dir) {
+      dsProjectDir.value = dir
+      await dsScanDir(dir)
+    }
+  } finally {
+    dsSelectingDir.value = false
+  }
+}
+
+async function dsScanDir(dir: string) {
+  if (!dir) { dsProjectInfo.value = null; return }
+  dsScanning.value = true
+  dsScanError.value = ''
+  dsProjectInfo.value = null
+  try {
+    const info = await ScanProjectDir(dir) as DSProjectInfo
+    if (info.error) {
+      dsScanError.value = info.error
+    } else {
+      dsProjectInfo.value = info
+      if (!dsCommand.value && info.suggested_scripts.length > 0) {
+        const pm = info.package_manager
+        dsCommand.value = `${pm} run ${info.suggested_scripts[0]}`
+      }
+    }
+  } catch (err) {
+    dsScanError.value = String(err)
+  } finally {
+    dsScanning.value = false
+  }
+}
+
+function dsSelectScript(scriptName: string) {
+  const pm = dsProjectInfo.value?.package_manager ?? 'npm'
+  dsCommand.value = `${pm} run ${scriptName}`
+}
+
+const dsFrameworkLabel = computed(() => {
+  const fw = dsProjectInfo.value?.detected_framework
+  if (!fw) return ''
+  const labels: Record<string, string> = {
+    angular: 'Angular', 'vue-vite': 'Vue + Vite', vue: 'Vue',
+    'react-cra': 'React (CRA)', 'react-vite': 'React + Vite',
+    next: 'Next.js', nuxt: 'Nuxt', sveltekit: 'SvelteKit',
+    'solid-vite': 'Solid + Vite', gatsby: 'Gatsby', remix: 'Remix',
+    astro: 'Astro', vite: 'Vite',
+  }
+  return labels[fw] ?? fw
+})
+
 // Dropdown options
 const endpointTypeOptions = [
-  { value: 'mock', label: 'Mock - Script-based responses' },
-  { value: 'proxy', label: 'Proxy - Reverse proxy with translation' },
-  { value: 'container', label: 'Container - Docker container' },
-  { value: 'file_server', label: 'File Server - Serve a local directory' }
+  { value: 'mock',       label: 'Mock - Script-based responses' },
+  { value: 'proxy',      label: 'Proxy - Reverse proxy with translation' },
+  { value: 'container',  label: 'Container - Docker container' },
+  { value: 'file_server',label: 'File Server - Serve a local directory' },
+  { value: 'dev_server', label: 'Dev Server - npm/yarn/pnpm project' },
 ]
 
 const translationModeOptions = [
@@ -102,9 +177,10 @@ const domainFilterModeOptions = [
 
 // Computed properties
 const totalSteps = computed(() => {
-  if (endpointType.value === 'container') return 8  // Basic, Domain, Container, Volumes, Env, Permissions, Proxy, Test
-  if (endpointType.value === 'proxy') return 4      // Basic, Domain, Backend, Headers
+  if (endpointType.value === 'container')  return 8  // Basic, Domain, Container, Volumes, Env, Permissions, Proxy, Test
+  if (endpointType.value === 'proxy')      return 4  // Basic, Domain, Backend, Headers
   if (endpointType.value === 'file_server') return 3 // Basic, Domain, Directory
+  if (endpointType.value === 'dev_server') return 3  // Basic, Domain, Dev Server
   return 2                                           // Basic, Domain
 })
 
@@ -135,6 +211,11 @@ const canGoNext = computed(() => {
       return fileServerBasePath.value.trim().length > 0
     }
   }
+  if (endpointType.value === 'dev_server') {
+    if (currentStep.value === 3) {
+      return dsProjectDir.value.trim().length > 0 && dsCommand.value.trim().length > 0
+    }
+  }
   return true
 })
 
@@ -155,6 +236,9 @@ const stepTitle = computed(() => {
   }
   if (endpointType.value === 'file_server') {
     if (currentStep.value === 3) return 'Directory Configuration'
+  }
+  if (endpointType.value === 'dev_server') {
+    if (currentStep.value === 3) return 'Dev Server Configuration'
   }
   return ''
 })
@@ -465,6 +549,14 @@ function handleFinish() {
         health_check_enabled: false,
         health_check_interval: 30,
       }
+    }
+  } else if (endpointType.value === 'dev_server') {
+    config.dev_server_config = {
+      project_dir:  dsProjectDir.value.trim(),
+      command:      dsCommand.value.trim(),
+      auto_install: dsAutoInstall.value,
+      start_on_boot: dsStartOnBoot.value,
+      env_vars:     dsEnvVars.value,
     }
   }
 
@@ -1185,6 +1277,121 @@ function handleKeydown(e: KeyboardEvent) {
                   to strip any version prefixes (e.g. <code class="text-yellow-100">/iris1-3.5.2010/</code>
                   → <code class="text-yellow-100">/iris1/</code>) before joining with the base path.
                 </p>
+              </div>
+            </div>
+
+            <!-- Step 3: Dev Server Configuration -->
+            <div v-if="currentStep === 3 && endpointType === 'dev_server'" class="space-y-6">
+              <!-- Project directory -->
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-2">
+                  Project Directory <span class="text-red-400">*</span>
+                </label>
+                <div class="flex gap-2">
+                  <input
+                    v-model="dsProjectDir"
+                    @change="dsScanDir(dsProjectDir)"
+                    type="text"
+                    placeholder="/home/user/my-app"
+                    class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white
+                           placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono text-sm"
+                  />
+                  <button
+                    @click="dsBrowseDir"
+                    :disabled="dsSelectingDir"
+                    class="px-3 py-2 bg-gray-600 hover:bg-gray-500 disabled:opacity-50 text-white rounded text-sm"
+                  >
+                    {{ dsSelectingDir ? 'Opening...' : 'Browse...' }}
+                  </button>
+                </div>
+                <div v-if="dsScanning" class="mt-2 flex items-center gap-2 text-xs text-gray-400">
+                  <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Scanning...
+                </div>
+                <p v-if="dsScanError" class="mt-2 text-xs text-red-400">{{ dsScanError }}</p>
+              </div>
+
+              <!-- Detected project info -->
+              <div v-if="dsProjectInfo && !dsProjectInfo.error" class="p-3 bg-gray-700 rounded border border-gray-600 space-y-2">
+                <div class="flex items-center gap-3 flex-wrap">
+                  <span class="text-sm font-medium text-white">{{ dsProjectInfo.name }}</span>
+                  <span v-if="dsFrameworkLabel" class="px-2 py-0.5 bg-orange-900/50 text-orange-300 text-xs rounded border border-orange-700">
+                    {{ dsFrameworkLabel }}
+                  </span>
+                  <span class="px-2 py-0.5 bg-gray-600 text-gray-300 text-xs rounded">{{ dsProjectInfo.package_manager }}</span>
+                  <span :class="dsProjectInfo.has_node_modules ? 'text-green-400' : 'text-yellow-400'" class="text-xs">
+                    {{ dsProjectInfo.has_node_modules ? '✓ node_modules present' : '⚠ node_modules missing' }}
+                  </span>
+                </div>
+                <div v-if="dsProjectInfo.suggested_scripts.length > 0">
+                  <p class="text-xs text-gray-400 mb-1">Quick select script:</p>
+                  <div class="flex flex-wrap gap-1">
+                    <button
+                      v-for="s in dsProjectInfo.suggested_scripts"
+                      :key="s"
+                      @click="dsSelectScript(s)"
+                      class="px-2 py-0.5 bg-gray-600 hover:bg-orange-800 text-gray-200 text-xs rounded font-mono transition-colors"
+                    >
+                      {{ s }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Command -->
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-2">
+                  Command <span class="text-red-400">*</span>
+                </label>
+                <input
+                  v-model="dsCommand"
+                  type="text"
+                  placeholder="npm run dev"
+                  class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white
+                         placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono text-sm"
+                />
+                <p class="mt-1 text-xs text-gray-400">
+                  Use <code class="text-orange-300">$PORT</code> to inject the assigned port.
+                  If omitted, <code class="text-gray-300">--port &lt;port&gt;</code> is appended automatically.
+                </p>
+              </div>
+
+              <!-- Checkboxes -->
+              <div class="space-y-3">
+                <div class="flex items-start gap-3">
+                  <input v-model="dsAutoInstall" type="checkbox" id="wiz-ds-auto-install"
+                    class="mt-0.5 w-4 h-4 bg-gray-700 border-gray-600 rounded text-orange-500 focus:ring-orange-500" />
+                  <div>
+                    <label for="wiz-ds-auto-install" class="block text-sm font-medium text-gray-300 cursor-pointer">
+                      Auto-install dependencies
+                    </label>
+                    <p class="text-xs text-gray-400 mt-0.5">
+                      Run install if <code class="text-gray-300">node_modules</code> is missing.
+                    </p>
+                  </div>
+                </div>
+                <div class="flex items-start gap-3">
+                  <input v-model="dsStartOnBoot" type="checkbox" id="wiz-ds-start-on-boot"
+                    class="mt-0.5 w-4 h-4 bg-gray-700 border-gray-600 rounded text-orange-500 focus:ring-orange-500" />
+                  <div>
+                    <label for="wiz-ds-start-on-boot" class="block text-sm font-medium text-gray-300 cursor-pointer">
+                      Start automatically when Mockelot server starts
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Info box -->
+              <div class="p-4 bg-orange-900/20 border border-orange-800 rounded">
+                <p class="text-sm font-medium text-orange-300 mb-1">How Dev Server Endpoints Work</p>
+                <div class="text-xs text-orange-200 space-y-1">
+                  <p>Mockelot picks a free port, starts your process, and proxies matched requests to it.</p>
+                  <p>Works with Angular, Vue, React, Next.js, Nuxt, SvelteKit, and any process that listens on a port.</p>
+                  <p>Use Start/Stop/Restart buttons after the endpoint is created to control the process.</p>
+                </div>
               </div>
             </div>
 

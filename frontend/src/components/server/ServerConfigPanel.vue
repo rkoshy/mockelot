@@ -7,11 +7,13 @@ import AddEndpointDialog from '../dialogs/AddEndpointDialog.vue'
 import EndpointSettingsDialog from '../dialogs/EndpointSettingsDialog.vue'
 import ConfirmDialog from '../dialogs/ConfirmDialog.vue'
 import ContainerConsoleDialog from '../dialogs/ContainerConsoleDialog.vue'
+import DevServerConsoleDialog from '../dialogs/DevServerConsoleDialog.vue'
+import DevServerConfigPanel from '../dialogs/DevServerConfigPanel.vue'
 import TrafficLogPanel from '../traffic/TrafficLogPanel.vue'
 import ServerTab from './tabs/ServerTab.vue'
 import SOCKS5DomainsPanel from '../socks5/SOCKS5DomainsPanel.vue'
 import { models } from '../../types/models'
-import { StartContainer, StopContainer, DeleteContainer } from '../../../wailsjs/go/main/App'
+import { StartContainer, StopContainer, DeleteContainer, StartDevServer, StopDevServer, RestartDevServer } from '../../../wailsjs/go/main/App'
 import OverlaySimPanel from './OverlaySimPanel.vue'
 import ProxySimPanel from './ProxySimPanel.vue'
 import EndpointNavigator from './EndpointNavigator.vue'
@@ -71,11 +73,16 @@ const showAddEndpointDialog = ref(false)
 const showEndpointSettingsDialog = ref(false)
 const showDeleteConfirmDialog = ref(false)
 const showContainerConsoleDialog = ref(false)
+const showDevServerConsoleDialog = ref(false)
 const showImportDialog = ref(false)
 const importError = ref<string>('')
 const endpointToDelete = ref<string>('')
 const consoleEndpointId = ref<string>('')
 const consoleEndpointName = ref<string>('')
+
+// Dev server action state
+const devServerActionLoading = ref<Record<string, string>>({})
+const devServerActionError = ref<Record<string, string>>({})
 
 let resizeObserver: ResizeObserver | null = null
 
@@ -292,7 +299,7 @@ function handleCancelEndpointSettings() {
 }
 
 // ── Inline endpoint editing ──────────────────────────────────────────────
-const inlineActiveTab = ref<'general' | 'proxy' | 'container' | 'fileserver'>('general')
+const inlineActiveTab = ref<'general' | 'proxy' | 'container' | 'fileserver' | 'devserver'>('general')
 
 // Dropdown options for inline editor
 const translationModeOptions = [
@@ -620,6 +627,67 @@ function handleShowConsole(endpointId: string, endpointName: string) {
 
 function handleCloseConsole() {
   showContainerConsoleDialog.value = false
+}
+
+// Dev server control helpers
+function devServerRunning(endpointId: string): boolean {
+  const s = serverStore.getDevServerStatus(endpointId)
+  return !!(s?.running && s?.ready)
+}
+
+function devServerStopped(endpointId: string): boolean {
+  const s = serverStore.getDevServerStatus(endpointId)
+  return !s || !s.running
+}
+
+async function handleStartDevServer(endpointId: string) {
+  devServerActionLoading.value[endpointId] = 'start'
+  devServerActionError.value[endpointId] = ''
+  try {
+    await StartDevServer(endpointId)
+  } catch (error) {
+    devServerActionError.value[endpointId] = String(error)
+  } finally {
+    devServerActionLoading.value[endpointId] = ''
+  }
+}
+
+async function handleStopDevServer(endpointId: string) {
+  devServerActionLoading.value[endpointId] = 'stop'
+  devServerActionError.value[endpointId] = ''
+  try {
+    await StopDevServer(endpointId)
+  } catch (error) {
+    devServerActionError.value[endpointId] = String(error)
+  } finally {
+    devServerActionLoading.value[endpointId] = ''
+  }
+}
+
+async function handleRestartDevServer(endpointId: string) {
+  devServerActionLoading.value[endpointId] = 'restart'
+  devServerActionError.value[endpointId] = ''
+  try {
+    await RestartDevServer(endpointId)
+  } catch (error) {
+    devServerActionError.value[endpointId] = String(error)
+  } finally {
+    devServerActionLoading.value[endpointId] = ''
+  }
+}
+
+function handleShowDevServerConsole(endpointId: string, endpointName: string) {
+  consoleEndpointId.value = endpointId
+  consoleEndpointName.value = endpointName
+  showDevServerConsoleDialog.value = true
+}
+
+async function handleSaveDevServerConfig(endpointId: string, config: any) {
+  // Find and update endpoint in store
+  const endpoint = serverStore.endpoints.find(ep => ep.id === endpointId)
+  if (!endpoint) return
+  endpoint.dev_server_config = config
+  await serverStore.saveItems()
 }
 
 // Drawer keyboard handler (Escape to close)
@@ -983,6 +1051,64 @@ onUnmounted(() => {
                     </div>
                   </template>
 
+                  <!-- Dev Server Controls -->
+                  <template v-if="serverStore.currentEndpoint.type === 'dev_server'">
+                    <div class="p-4 bg-gray-800 rounded border border-gray-700">
+                      <h4 class="text-sm font-semibold text-white mb-2">Dev Server Controls</h4>
+                      <!-- Status badge -->
+                      <div class="mb-3">
+                        <template v-if="devServerRunning(serverStore.currentEndpoint.id)">
+                          <span class="inline-flex items-center gap-1.5 px-2 py-1 bg-green-900/30 border border-green-700 rounded text-xs text-green-300">
+                            <span class="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></span>
+                            Running on port {{ serverStore.getDevServerStatus(serverStore.currentEndpoint.id)?.port }}
+                          </span>
+                        </template>
+                        <template v-else>
+                          <span class="inline-flex items-center gap-1.5 px-2 py-1 bg-gray-700 rounded text-xs text-gray-400">
+                            <span class="w-1.5 h-1.5 bg-gray-500 rounded-full"></span>
+                            Stopped
+                          </span>
+                        </template>
+                      </div>
+                      <div class="flex flex-wrap gap-2">
+                        <button
+                          v-if="devServerStopped(serverStore.currentEndpoint.id)"
+                          @click="handleStartDevServer(serverStore.currentEndpoint.id)"
+                          :disabled="!!devServerActionLoading[serverStore.currentEndpoint.id]"
+                          class="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded text-xs font-medium transition-colors"
+                        >
+                          {{ devServerActionLoading[serverStore.currentEndpoint.id] === 'start' ? 'Starting...' : 'Start' }}
+                        </button>
+                        <button
+                          v-if="devServerRunning(serverStore.currentEndpoint.id)"
+                          @click="handleStopDevServer(serverStore.currentEndpoint.id)"
+                          :disabled="!!devServerActionLoading[serverStore.currentEndpoint.id]"
+                          class="px-2 py-1 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded text-xs font-medium transition-colors"
+                        >
+                          {{ devServerActionLoading[serverStore.currentEndpoint.id] === 'stop' ? 'Stopping...' : 'Stop' }}
+                        </button>
+                        <button
+                          v-if="devServerRunning(serverStore.currentEndpoint.id)"
+                          @click="handleRestartDevServer(serverStore.currentEndpoint.id)"
+                          :disabled="!!devServerActionLoading[serverStore.currentEndpoint.id]"
+                          class="px-2 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded text-xs font-medium transition-colors"
+                        >
+                          {{ devServerActionLoading[serverStore.currentEndpoint.id] === 'restart' ? 'Restarting...' : 'Restart' }}
+                        </button>
+                        <button
+                          @click="handleShowDevServerConsole(serverStore.currentEndpoint.id, serverStore.currentEndpoint.name)"
+                          class="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs font-medium transition-colors flex items-center gap-1"
+                        >
+                          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                          Console
+                        </button>
+                      </div>
+                      <div v-if="devServerActionError[serverStore.currentEndpoint.id]" class="mt-2 p-2 bg-red-900/30 border border-red-700 rounded text-red-400 text-xs">
+                        {{ devServerActionError[serverStore.currentEndpoint.id] }}
+                      </div>
+                    </div>
+                  </template>
+
                   <!-- Health Status -->
                   <div v-if="needsHealthIndicator(serverStore.currentEndpoint)" class="p-4 bg-gray-800 rounded border border-gray-700">
                     <h4 class="text-sm font-semibold text-white mb-2">Health Status</h4>
@@ -1005,6 +1131,7 @@ onUnmounted(() => {
                       <button v-if="serverStore.currentEndpoint.type === 'proxy' || serverStore.currentEndpoint.type === 'container'" @click="inlineActiveTab = 'proxy'" :class="['px-3 py-1.5 text-xs font-medium transition-colors', inlineActiveTab === 'proxy' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-300']">Proxy Settings</button>
                       <button v-if="serverStore.currentEndpoint.type === 'container'" @click="inlineActiveTab = 'container'" :class="['px-3 py-1.5 text-xs font-medium transition-colors', inlineActiveTab === 'container' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-gray-400 hover:text-gray-300']">Container</button>
                       <button v-if="serverStore.currentEndpoint.type === 'file_server'" @click="inlineActiveTab = 'fileserver'" :class="['px-3 py-1.5 text-xs font-medium transition-colors', inlineActiveTab === 'fileserver' ? 'text-yellow-400 border-b-2 border-yellow-400' : 'text-gray-400 hover:text-gray-300']">File Server</button>
+                      <button v-if="serverStore.currentEndpoint.type === 'dev_server'" @click="inlineActiveTab = 'devserver'" :class="['px-3 py-1.5 text-xs font-medium transition-colors', inlineActiveTab === 'devserver' ? 'text-orange-400 border-b-2 border-orange-400' : 'text-gray-400 hover:text-gray-300']">Dev Server</button>
                     </div>
 
                     <div v-if="inlineActiveTab === 'general'" class="space-y-3">
@@ -1051,6 +1178,14 @@ onUnmounted(() => {
 
                     <div v-if="inlineActiveTab === 'fileserver' && serverStore.currentEndpoint.type === 'file_server' && inlineFileServerConfig" class="space-y-3">
                       <FileServerConfigPanel :config="inlineFileServerConfig" @update:config="handleInlineFileServerConfigUpdate" />
+                    </div>
+
+                    <!-- Dev Server settings tab -->
+                    <div v-if="inlineActiveTab === 'devserver' && serverStore.currentEndpoint.type === 'dev_server' && serverStore.currentEndpoint.dev_server_config">
+                      <DevServerConfigPanel
+                        :config="serverStore.currentEndpoint.dev_server_config"
+                        @update:config="(cfg) => { if (serverStore.currentEndpoint) { serverStore.currentEndpoint.dev_server_config = cfg; debouncedInlineSave() } }"
+                      />
                     </div>
                   </div>
 
@@ -1101,6 +1236,12 @@ onUnmounted(() => {
       :endpoint-id="consoleEndpointId"
       :endpoint-name="consoleEndpointName"
       @close="handleCloseConsole"
+    />
+    <DevServerConsoleDialog
+      :show="showDevServerConsoleDialog"
+      :endpoint-id="consoleEndpointId"
+      :endpoint-name="consoleEndpointName"
+      @close="showDevServerConsoleDialog = false"
     />
 
     <!-- Import OpenAPI Dialog -->

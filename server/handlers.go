@@ -62,6 +62,7 @@ type ResponseHandler struct {
 	proxyHandler        *ProxyHandler
 	containerHandler    *ContainerHandler
 	fileServerHandler   *FileServerHandler
+	devServerHandler    *DevServerHandler
 	overlayHandler      *OverlayHandler
 	regexCache          map[string]*regexp.Regexp // Cache for compiled regexes
 	regexCacheMutex     sync.RWMutex              // Mutex for regex cache
@@ -70,7 +71,7 @@ type ResponseHandler struct {
 	proxySimModes       *sync.Map                 // endpointID → OverlaySimConfig; shared with HTTPServer
 }
 
-func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptErrorLogger ScriptErrorLogger, proxyHandler *ProxyHandler, containerHandler *ContainerHandler, logRequestMatching bool, dnsResolver *DNSResolver, overlaySimModes *sync.Map, proxySimModes *sync.Map) *ResponseHandler {
+func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptErrorLogger ScriptErrorLogger, proxyHandler *ProxyHandler, containerHandler *ContainerHandler, devServerHandler *DevServerHandler, logRequestMatching bool, dnsResolver *DNSResolver, overlaySimModes *sync.Map, proxySimModes *sync.Map) *ResponseHandler {
 	overlayHandler := NewOverlayHandler(proxyHandler, dnsResolver)
 	return &ResponseHandler{
 		config:             config,
@@ -80,6 +81,7 @@ func NewResponseHandler(config *models.AppConfig, logger RequestLogger, scriptEr
 		proxyHandler:       proxyHandler,
 		containerHandler:   containerHandler,
 		fileServerHandler:  NewFileServerHandler(proxyHandler),
+		devServerHandler:   devServerHandler,
 		overlayHandler:     overlayHandler,
 		regexCache:         make(map[string]*regexp.Regexp),
 		logRequestMatching: logRequestMatching,
@@ -809,6 +811,8 @@ func (h *ResponseHandler) HandleRequest(w http.ResponseWriter, r *http.Request) 
 			h.handleContainerRequest(w, r, matchedEndpoint, translatedPath)
 		case models.EndpointTypeFileServer:
 			h.handleFileServerRequest(w, r, matchedEndpoint, translatedPath)
+		case models.EndpointTypeDevServer:
+			h.handleDevServerRequest(w, r, matchedEndpoint, translatedPath)
 		default:
 			http.Error(w, "Unknown endpoint type", http.StatusInternalServerError)
 		}
@@ -1437,6 +1441,19 @@ func (h *ResponseHandler) handleFileServerRequest(w http.ResponseWriter, r *http
 		return
 	}
 	h.fileServerHandler.ServeHTTP(w, r, endpoint, translatedPath, h)
+}
+
+// handleDevServerRequest handles dev server endpoint requests
+func (h *ResponseHandler) handleDevServerRequest(w http.ResponseWriter, r *http.Request, endpoint *models.Endpoint, translatedPath string) {
+	if h.devServerHandler == nil || endpoint.DevServerConfig == nil {
+		mockelotError(w, r, "Dev server configuration missing", http.StatusInternalServerError)
+		return
+	}
+	if endpoint.DevServerConfig.Port == 0 {
+		mockelotError(w, r, "Dev server is not running", http.StatusServiceUnavailable)
+		return
+	}
+	h.devServerHandler.ServeHTTP(w, r, endpoint, translatedPath)
 }
 
 // handleContainerRequest handles container endpoint requests

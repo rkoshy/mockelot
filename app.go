@@ -59,8 +59,9 @@ type ScriptErrorLog struct {
 type App struct {
 	ctx                    context.Context
 	server                 *server.HTTPServer
-	containerHandler       *server.ContainerHandler // Container handler for independent container operations
-	proxyHandler           *server.ProxyHandler     // Proxy handler shared between HTTPServer and ContainerHandler
+	containerHandler       *server.ContainerHandler  // Container handler for independent container operations
+	devServerHandler       *server.DevServerHandler  // Dev server handler for managing child processes
+	proxyHandler           *server.ProxyHandler      // Proxy handler shared between HTTPServer and ContainerHandler
 	config                 *models.AppConfig
 	serverConfigMgr        *config.ServerConfigManager
 	currentConfigPath      string                         // Path to the currently loaded/saved config file
@@ -122,6 +123,9 @@ func NewApp(logRequestMatching bool) *App {
 	// Initialize container handler (independent of server)
 	// App implements EventSender interface via SendEvent method
 	app.containerHandler = server.NewContainerHandler(app, app, app.proxyHandler)
+
+	// Initialize dev server handler (independent of HTTP server)
+	app.devServerHandler = server.NewDevServerHandler(app, app.proxyHandler)
 
 	// Ensure all endpoints have DisplayOrder set
 	app.ensureDisplayOrder()
@@ -332,7 +336,7 @@ func (a *App) StartServer(port int) error {
 		runtime.EventsEmit(a.ctx, "config:dirty", true)
 	}
 
-	a.server = server.NewHTTPServer(a.config, a, a, a, a.containerHandler, a.proxyHandler, a.logRequestMatching)
+	a.server = server.NewHTTPServer(a.config, a, a, a, a.containerHandler, a.devServerHandler, a.proxyHandler, a.logRequestMatching)
 
 	err := a.server.Start()
 	if err != nil {
@@ -753,6 +757,14 @@ func (a *App) AddEndpoint(name string, pathPrefix string, translationMode string
 			Volumes:       []models.VolumeMapping{},
 			Environment:   []models.EnvironmentVar{},
 		}
+	case models.EndpointTypeDevServer:
+		endpoint.DevServerConfig = &models.DevServerConfig{
+			ProjectDir:  "",
+			Command:     "",
+			AutoInstall: false,
+			StartOnBoot: false,
+			EnvVars:     []models.EnvironmentVar{},
+		}
 	}
 
 	// Set DisplayOrder to max non-system + 1 so new endpoints appear at the end
@@ -962,6 +974,29 @@ func (a *App) AddEndpointWithConfig(config map[string]interface{}) (models.Endpo
 				PullOnStartup: true,
 				Volumes:       []models.VolumeMapping{},
 				Environment:   []models.EnvironmentVar{},
+			}
+		}
+
+	case models.EndpointTypeDevServer:
+		dsCfg, _ := config["dev_server_config"].(map[string]interface{})
+		if dsCfg != nil {
+			endpoint.DevServerConfig = &models.DevServerConfig{
+				ProjectDir:  getString(dsCfg, "project_dir"),
+				Command:     getString(dsCfg, "command"),
+				AutoInstall: getBool(dsCfg, "auto_install", false),
+				StartOnBoot: getBool(dsCfg, "start_on_boot", false),
+				EnvVars:     []models.EnvironmentVar{},
+			}
+			if envVars, ok := dsCfg["env_vars"].([]interface{}); ok {
+				endpoint.DevServerConfig.EnvVars = parseEnvironmentVars(envVars)
+			}
+		} else {
+			endpoint.DevServerConfig = &models.DevServerConfig{
+				ProjectDir:  "",
+				Command:     "",
+				AutoInstall: false,
+				StartOnBoot: false,
+				EnvVars:     []models.EnvironmentVar{},
 			}
 		}
 	}
@@ -1868,6 +1903,122 @@ func (a *App) GetContainerLogs(endpointID string, tail int) (string, error) {
 
 	ctx := context.Background()
 	return a.containerHandler.GetContainerLogs(ctx, endpointID, tail)
+}
+
+// ---- Dev Server methods ----
+
+// StartDevServer starts the dev server process for an endpoint.
+func (a *App) StartDevServer(endpointID string) error {
+	if a.devServerHandler == nil {
+		return fmt.Errorf("dev server handler not available")
+	}
+	for i := range a.config.Endpoints {
+		if a.config.Endpoints[i].ID == endpointID {
+			endpoint := &a.config.Endpoints[i]
+			if endpoint.Type != models.EndpointTypeDevServer {
+				return fmt.Errorf("endpoint is not a dev server")
+			}
+			ctx := context.Background()
+			go func() {
+				if err := a.devServerHandler.StartDevServer(ctx, endpoint); err != nil {
+					log.Printf("[DevServer] Start failed for %s: %v", endpoint.Name, err)
+				}
+			}()
+			return nil
+		}
+	}
+	return fmt.Errorf("endpoint not found")
+}
+
+// StopDevServer stops the dev server process for an endpoint.
+func (a *App) StopDevServer(endpointID string) error {
+	if a.devServerHandler == nil {
+		return fmt.Errorf("dev server handler not available")
+	}
+	for i := range a.config.Endpoints {
+		if a.config.Endpoints[i].ID == endpointID {
+			endpoint := &a.config.Endpoints[i]
+			if endpoint.Type != models.EndpointTypeDevServer {
+				return fmt.Errorf("endpoint is not a dev server")
+			}
+			return a.devServerHandler.StopDevServer(endpoint)
+		}
+	}
+	return fmt.Errorf("endpoint not found")
+}
+
+// RestartDevServer stops then starts the dev server process.
+func (a *App) RestartDevServer(endpointID string) error {
+	if a.devServerHandler == nil {
+		return fmt.Errorf("dev server handler not available")
+	}
+	for i := range a.config.Endpoints {
+		if a.config.Endpoints[i].ID == endpointID {
+			endpoint := &a.config.Endpoints[i]
+			if endpoint.Type != models.EndpointTypeDevServer {
+				return fmt.Errorf("endpoint is not a dev server")
+			}
+			ctx := context.Background()
+			go func() {
+				if err := a.devServerHandler.StopDevServer(endpoint); err != nil {
+					log.Printf("[DevServer] Stop error during restart: %v", err)
+				}
+				if err := a.devServerHandler.StartDevServer(ctx, endpoint); err != nil {
+					log.Printf("[DevServer] Restart failed for %s: %v", endpoint.Name, err)
+				}
+			}()
+			return nil
+		}
+	}
+	return fmt.Errorf("endpoint not found")
+}
+
+// GetDevServerStatus returns the current status of a dev server process.
+func (a *App) GetDevServerStatus(endpointID string) *models.DevServerStatus {
+	if a.devServerHandler == nil {
+		return &models.DevServerStatus{EndpointID: endpointID}
+	}
+	return a.devServerHandler.GetDevServerStatus(endpointID)
+}
+
+// GetDevServerLogs returns buffered output lines from the dev server process.
+func (a *App) GetDevServerLogs(endpointID string, tail int) string {
+	if a.devServerHandler == nil {
+		return ""
+	}
+	if tail <= 0 {
+		tail = 5000
+	}
+	return a.devServerHandler.GetDevServerLogs(endpointID, tail)
+}
+
+// ScanProjectDir reads a directory's package.json and returns project information.
+func (a *App) ScanProjectDir(dir string) *server.ProjectInfo {
+	return server.ScanProjectDir(dir)
+}
+
+// SelectProjectDir opens a native directory picker and returns the selected path.
+func (a *App) SelectProjectDir() (string, error) {
+	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select Project Directory",
+	})
+	if err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// StartDevServers starts all dev server endpoints configured with StartOnBoot.
+func (a *App) StartDevServers() error {
+	if a.server == nil {
+		return fmt.Errorf("server is not running")
+	}
+	go func() {
+		if err := a.server.StartDevServers(); err != nil {
+			log.Printf("[StartDevServers] Error: %v", err)
+		}
+	}()
+	return nil
 }
 
 // TestContainerConfig tests a container configuration by creating a temporary container

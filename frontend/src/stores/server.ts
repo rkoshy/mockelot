@@ -87,6 +87,9 @@ export const useServerStore = defineStore('server', () => {
   // Container Stats State
   const containerStats = ref<Map<string, models.ContainerStats>>(new Map())
 
+  // Dev Server Status State
+  const devServerStatuses = ref<Map<string, models.DevServerStatus>>(new Map())
+
   // Script Error State
   const scriptErrors = ref<Map<string, any[]>>(new Map())
 
@@ -141,6 +144,11 @@ export const useServerStore = defineStore('server', () => {
   // Get container stats for an endpoint
   function getContainerStats(endpointId: string): models.ContainerStats | undefined {
     return containerStats.value.get(endpointId)
+  }
+
+  // Get dev server status for an endpoint
+  function getDevServerStatus(endpointId: string): models.DevServerStatus | undefined {
+    return devServerStatuses.value.get(endpointId)
   }
 
   // Get script errors for a response
@@ -999,6 +1007,7 @@ export const useServerStore = defineStore('server', () => {
     endpointHealth,
     containerStatus,
     containerStats,
+    devServerStatuses,
     scriptErrors,
     isDirty,
     currentFilePath,
@@ -1012,6 +1021,7 @@ export const useServerStore = defineStore('server', () => {
     getEndpointHealth,
     getContainerStatus,
     getContainerStats,
+    getDevServerStatus,
     getScriptErrors,
     hasScriptErrors,
     // Actions

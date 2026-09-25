@@ -49,7 +49,7 @@ function isOverlay(ep: models.Endpoint) { return ep.id?.startsWith('system-overl
 function isSystemNonOverlay(ep: models.Endpoint) { return !!ep.is_system && !isOverlay(ep) }
 
 // ── Type filter (persisted) ───────────────────────────────────────────────
-const ALL_TYPES = ['mock', 'proxy', 'file_server', 'container'] as const
+const ALL_TYPES = ['mock', 'proxy', 'file_server', 'container', 'dev_server'] as const
 type UserType = typeof ALL_TYPES[number]
 
 const activeTypes = ref<Set<UserType>>(new Set(ALL_TYPES))
@@ -137,6 +137,7 @@ const TYPE_LABEL: Record<string, { text: string; cls: string }> = {
   file_server: { text: 'F', cls: 'text-yellow-400' },
   container:   { text: 'C', cls: 'text-purple-400' },
   mock:        { text: 'M', cls: 'text-green-400'  },
+  dev_server:  { text: 'D', cls: 'text-orange-400' },
 }
 
 function typeLabel(ep: models.Endpoint): { text: string; cls: string } {
@@ -151,10 +152,18 @@ const TYPE_DISPLAY: Record<UserType, string> = {
   proxy:       'Proxy',
   file_server: 'File Server',
   container:   'Container',
+  dev_server:  'Dev Server',
 }
 
-// Status dot for container/proxy/overlay
+// Status dot for container/proxy/overlay/dev_server
 function statusDot(ep: models.Endpoint): { show: boolean; cls: string; pulse: boolean; title: string } {
+  if (ep.type === 'dev_server') {
+    const s = serverStore.getDevServerStatus(ep.id)
+    if (!s) return { show: false, cls: '', pulse: false, title: '' }
+    if (s.running && s.ready) return { show: true, cls: 'bg-green-400', pulse: true, title: `Running on port ${s.port}` }
+    if (s.running) return { show: true, cls: 'bg-yellow-400', pulse: false, title: 'Starting...' }
+    return { show: true, cls: 'bg-gray-500', pulse: false, title: 'Stopped' }
+  }
   if (ep.type === 'container') {
     const s = serverStore.getContainerStatus(ep.id)
     if (!s) return { show: false, cls: '', pulse: false, title: '' }

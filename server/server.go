@@ -30,6 +30,7 @@ type HTTPServer struct {
 	certCache          *CertCache // Certificate cache for SOCKS5 TLS interception
 	proxyHandler       *ProxyHandler
 	containerHandler   *ContainerHandler
+	devServerHandler   *DevServerHandler
 	responseHandler    *ResponseHandler   // shared response handler — kept for regex cache warming on config updates
 	startupCtx         context.Context    // Context for container startup
 	startupCancel      context.CancelFunc // Cancel function for startup
@@ -57,7 +58,7 @@ func (s *HTTPServer) SetProxySimulationMode(endpointID string, cfg models.Overla
 	}
 }
 
-func NewHTTPServer(config *models.AppConfig, requestLogger RequestLogger, scriptErrorLogger ScriptErrorLogger, eventSender EventSender, containerHandler *ContainerHandler, proxyHandler *ProxyHandler, logRequestMatching bool) *HTTPServer {
+func NewHTTPServer(config *models.AppConfig, requestLogger RequestLogger, scriptErrorLogger ScriptErrorLogger, eventSender EventSender, containerHandler *ContainerHandler, devServerHandler *DevServerHandler, proxyHandler *ProxyHandler, logRequestMatching bool) *HTTPServer {
 	certManager, err := NewCertificateManager()
 	if err != nil {
 		log.Printf("Warning: Failed to initialize certificate manager: %v", err)
@@ -88,6 +89,7 @@ func NewHTTPServer(config *models.AppConfig, requestLogger RequestLogger, script
 		certManager:        certManager,
 		proxyHandler:       proxyHandler,
 		containerHandler:   containerHandler,
+		devServerHandler:   devServerHandler,
 		logRequestMatching: logRequestMatching,
 		dnsResolver:        dnsResolver,
 	}
@@ -110,7 +112,7 @@ func (s *HTTPServer) StartHTTP() error {
 		handler = HTTPSRedirectHandler(httpsPort)
 	} else {
 		// Use normal response handler
-		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver, &s.overlaySimModes, &s.proxySimModes)
+		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.devServerHandler, s.logRequestMatching, s.dnsResolver, &s.overlaySimModes, &s.proxySimModes)
 		handler = http.HandlerFunc(responseHandler.HandleRequest)
 	}
 
@@ -249,7 +251,7 @@ func (s *HTTPServer) StartHTTPS() error {
 	}
 
 	// Create response handler
-	responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver, &s.overlaySimModes, &s.proxySimModes)
+	responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.devServerHandler, s.logRequestMatching, s.dnsResolver, &s.overlaySimModes, &s.proxySimModes)
 
 	// Create HTTPS server
 	s.httpsServer = &http.Server{
@@ -343,7 +345,7 @@ func (s *HTTPServer) Start() error {
 	s.configMutex.RUnlock()
 
 	if socks5Config != nil && (socks5Config.Enabled || serverMode == models.ServerModeSOCKS5) {
-		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.logRequestMatching, s.dnsResolver, &s.overlaySimModes, &s.proxySimModes)
+		responseHandler := NewResponseHandler(s.config, s.requestLogger, s.scriptErrorLogger, s.proxyHandler, s.containerHandler, s.devServerHandler, s.logRequestMatching, s.dnsResolver, &s.overlaySimModes, &s.proxySimModes)
 		s.responseHandler = responseHandler
 		responseHandler.WarmRegexCache()
 
@@ -523,6 +525,35 @@ func (s *HTTPServer) StartContainers() error {
 	return nil
 }
 
+// StartDevServers starts all enabled dev server endpoints.
+// Should be called by the frontend after it's ready to receive progress events.
+func (s *HTTPServer) StartDevServers() error {
+	if s.devServerHandler == nil {
+		return nil
+	}
+	s.configMutex.RLock()
+	endpoints := s.config.Endpoints
+	s.configMutex.RUnlock()
+
+	for i := range endpoints {
+		endpoint := &endpoints[i]
+		if endpoint.Type == models.EndpointTypeDevServer && endpoint.IsEnabled() {
+			cfg := endpoint.DevServerConfig
+			if cfg == nil || !cfg.StartOnBoot {
+				continue
+			}
+			ep := endpoint // capture
+			go func() {
+				ctx := context.Background()
+				if err := s.devServerHandler.StartDevServer(ctx, ep); err != nil {
+					log.Printf("[DevServer] Failed to start %s: %v", ep.Name, err)
+				}
+			}()
+		}
+	}
+	return nil
+}
+
 // Stop stops both HTTP and HTTPS servers
 func (s *HTTPServer) Stop() error {
 	var httpErr, httpsErr error
@@ -532,6 +563,11 @@ func (s *HTTPServer) Stop() error {
 		if err := s.socks5Server.Stop(); err != nil {
 			log.Printf("Error stopping SOCKS5 server: %v", err)
 		}
+	}
+
+	// Stop dev servers before stopping HTTP servers
+	if s.devServerHandler != nil {
+		s.devServerHandler.StopAll()
 	}
 
 	// Stop containers before stopping servers
@@ -734,4 +770,47 @@ func (s *HTTPServer) RestartContainer(ctx context.Context, endpoint *models.Endp
 	}
 
 	return nil
+}
+
+// StartSingleDevServer starts a single dev server endpoint
+func (s *HTTPServer) StartSingleDevServer(ctx context.Context, endpoint *models.Endpoint) error {
+	if s.devServerHandler == nil {
+		return fmt.Errorf("dev server handler not available")
+	}
+	return s.devServerHandler.StartDevServer(ctx, endpoint)
+}
+
+// StopSingleDevServer stops a single dev server endpoint
+func (s *HTTPServer) StopSingleDevServer(endpoint *models.Endpoint) error {
+	if s.devServerHandler == nil {
+		return fmt.Errorf("dev server handler not available")
+	}
+	return s.devServerHandler.StopDevServer(endpoint)
+}
+
+// RestartSingleDevServer restarts a single dev server endpoint
+func (s *HTTPServer) RestartSingleDevServer(ctx context.Context, endpoint *models.Endpoint) error {
+	if s.devServerHandler == nil {
+		return fmt.Errorf("dev server handler not available")
+	}
+	if err := s.devServerHandler.StopDevServer(endpoint); err != nil {
+		log.Printf("[DevServer] Stop error during restart for %s: %v", endpoint.Name, err)
+	}
+	return s.devServerHandler.StartDevServer(ctx, endpoint)
+}
+
+// GetDevServerStatus returns the status of a dev server endpoint
+func (s *HTTPServer) GetDevServerStatus(endpointID string) *models.DevServerStatus {
+	if s.devServerHandler == nil {
+		return nil
+	}
+	return s.devServerHandler.GetDevServerStatus(endpointID)
+}
+
+// GetDevServerLogs returns buffered output from a dev server process
+func (s *HTTPServer) GetDevServerLogs(endpointID string, tail int) string {
+	if s.devServerHandler == nil {
+		return ""
+	}
+	return s.devServerHandler.GetDevServerLogs(endpointID, tail)
 }
