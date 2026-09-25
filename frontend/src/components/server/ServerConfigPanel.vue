@@ -450,6 +450,7 @@ async function saveInlineEndpoint() {
     proxy_config: inlineProxyConfig.value || undefined,
     container_config: inlineContainerConfig.value || undefined,
     file_server_config: inlineFileServerConfig.value || undefined,
+    dev_server_config: ep.dev_server_config || undefined,
     domain_filter: domainFilter
   })
 

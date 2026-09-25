@@ -1358,20 +1358,43 @@ func (a *App) UpdateEndpoint(endpoint models.Endpoint) error {
 			// Preserve Items array (not sent from settings dialog)
 			existingItems := a.config.Endpoints[i].Items
 
-			// Preserve runtime state for containers
-			var existingContainerID string
-			if a.config.Endpoints[i].ContainerConfig != nil {
-				existingContainerID = a.config.Endpoints[i].ContainerConfig.ContainerID
-			}
+		// Preserve runtime state for containers
+		var existingContainerID string
+		if a.config.Endpoints[i].ContainerConfig != nil {
+			existingContainerID = a.config.Endpoints[i].ContainerConfig.ContainerID
+		}
 
-			// Update endpoint
-			a.config.Endpoints[i] = endpoint
+		// Preserve dev server config if the incoming endpoint omits it
+		// (saveInlineEndpoint sends general fields; the type-specific config
+		// panels update dev_server_config separately via UpdateEndpoint calls
+		// that do include it — but as belt-and-suspenders we keep the existing
+		// config if the incoming one is nil)
+		existingDevServerConfig := a.config.Endpoints[i].DevServerConfig
 
-			// Restore preserved data
-			a.config.Endpoints[i].Items = existingItems
-			if a.config.Endpoints[i].ContainerConfig != nil && existingContainerID != "" {
-				a.config.Endpoints[i].ContainerConfig.ContainerID = existingContainerID
-			}
+		// Preserve dev server runtime state (port, pid are not serialised)
+		var existingDSPort, existingDSPID int
+		if existingDevServerConfig != nil {
+			existingDSPort = existingDevServerConfig.Port
+			existingDSPID = existingDevServerConfig.ProcessID
+		}
+
+		// Update endpoint
+		a.config.Endpoints[i] = endpoint
+
+		// Restore preserved data
+		a.config.Endpoints[i].Items = existingItems
+		if a.config.Endpoints[i].ContainerConfig != nil && existingContainerID != "" {
+			a.config.Endpoints[i].ContainerConfig.ContainerID = existingContainerID
+		}
+		// Restore dev server config if the incoming update didn't include it
+		if a.config.Endpoints[i].DevServerConfig == nil && existingDevServerConfig != nil {
+			a.config.Endpoints[i].DevServerConfig = existingDevServerConfig
+		}
+		// Always restore runtime-only fields (json:"-" means they are never sent over the wire)
+		if a.config.Endpoints[i].DevServerConfig != nil {
+			a.config.Endpoints[i].DevServerConfig.Port = existingDSPort
+			a.config.Endpoints[i].DevServerConfig.ProcessID = existingDSPID
+		}
 
 			break
 		}
