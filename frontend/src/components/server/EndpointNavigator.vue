@@ -396,7 +396,7 @@ function itemCls(id: string, isDragging = false): string {
     </div>
 
     <!-- ── Scrollable list ─────────────────────────────────────────────── -->
-    <div ref="listRef" class="flex-1 overflow-y-auto py-1 pr-1" role="list">
+    <div ref="listRef" class="flex-1 overflow-y-auto py-1 nav-scrollbar" role="list">
 
       <!-- SERVER (always pinned at top) -->
       <div

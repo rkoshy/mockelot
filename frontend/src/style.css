@@ -11,6 +11,27 @@ body {
     height: 100vh;
 }
 
+/* Thin always-visible scrollbar — used in the endpoint navigator so the
+   overlay scrollbar never covers the row action buttons */
+.nav-scrollbar::-webkit-scrollbar {
+    width: 5px;
+}
+.nav-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+}
+.nav-scrollbar::-webkit-scrollbar-thumb {
+    background: #374151; /* gray-700 */
+    border-radius: 3px;
+}
+.nav-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #4b5563; /* gray-600 */
+}
+/* Firefox */
+.nav-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #374151 transparent;
+}
+
 /* Dark theme for select dropdowns */
 select option {
     background-color: #1f2937; /* gray-800 */
