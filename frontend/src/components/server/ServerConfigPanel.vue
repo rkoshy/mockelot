@@ -463,15 +463,12 @@ function typeBadgeClass(type: string): string {
 
 function typeDisplayName(type: string): string {
   switch (type) {
-    case 'proxy':
-      return 'Proxy'
-    case 'container':
-      return 'Container'
-    case 'file_server':
-      return 'File Server'
+    case 'proxy':       return 'Proxy'
+    case 'container':   return 'Container'
+    case 'file_server': return 'File Server'
+    case 'dev_server':  return 'Dev Server'
     case 'mock':
-    default:
-      return 'Mock'
+    default:            return 'Mock'
   }
 }
 
@@ -848,6 +845,15 @@ onUnmounted(() => {
               <template v-if="serverStore.currentEndpoint.file_server_config.enable_ssi">
                 <span class="mx-2">•</span>
                 <span class="text-yellow-400">SSI on</span>
+              </template>
+            </template>
+            <!-- Dev Server-specific info -->
+            <template v-if="serverStore.currentEndpoint.type === 'dev_server' && serverStore.currentEndpoint.dev_server_config">
+              <span class="mx-2">•</span>
+              <span class="font-medium text-gray-300">Command:</span> {{ serverStore.currentEndpoint.dev_server_config.command || '(not set)' }}
+              <template v-if="serverStore.currentEndpoint.dev_server_config.port">
+                <span class="mx-2">•</span>
+                <span class="text-orange-400">:{{ serverStore.currentEndpoint.dev_server_config.port }}</span>
               </template>
             </template>
           </p>

@@ -808,7 +808,8 @@ func (a *App) AddEndpointWithConfig(config map[string]interface{}) (models.Endpo
 	if endpointType != models.EndpointTypeMock &&
 		endpointType != models.EndpointTypeProxy &&
 		endpointType != models.EndpointTypeContainer &&
-		endpointType != models.EndpointTypeFileServer {
+		endpointType != models.EndpointTypeFileServer &&
+		endpointType != models.EndpointTypeDevServer {
 		log.Printf("Invalid endpoint type '%s', defaulting to 'mock'", endpointType)
 		endpointType = models.EndpointTypeMock
 	}
