@@ -1315,6 +1315,7 @@ onUnmounted(() => {
                     <!-- Dev Server settings tab -->
                     <div v-if="inlineActiveTab === 'devserver' && serverStore.currentEndpoint.type === 'dev_server'">
                       <DevServerConfigPanel
+                        :endpoint-id="serverStore.currentEndpoint.id"
                         :config="serverStore.currentEndpoint.dev_server_config ?? { project_dir: '', command: '', auto_install: false, start_on_boot: false, env_vars: [], port: 0, process_id: 0 }"
                         @update:config="(cfg) => { if (serverStore.currentEndpoint) { serverStore.currentEndpoint.dev_server_config = cfg; debouncedInlineSave() } }"
                       />

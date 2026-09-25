@@ -7,6 +7,7 @@ import ProxyConfigPanel from './ProxyConfigPanel.vue'
 
 const props = defineProps<{
   config: models.DevServerConfig
+  endpointId?: string  // used to detect endpoint switches
 }>()
 
 const emit = defineEmits<{
@@ -139,11 +140,6 @@ const preRunPlaceholder = computed(() => {
 })
 
 // ---- Actions ----
-watch(projectDir, async (dir) => {
-  if (!dir) { projectInfo.value = null; return }
-  await scanDir(dir)
-})
-
 async function scanDir(dir: string) {
   scanning.value = true
   scanError.value = ''
@@ -209,19 +205,27 @@ function emitUpdate() {
 function handleProxyConfigUpdate(cfg: models.ProxyConfig) { proxyConfig.value = cfg; emitUpdate() }
 function handleEnvVarsUpdate(vars: models.EnvironmentVar[]) { envVars.value = vars; emitUpdate() }
 
-// Sync when parent passes new config (e.g. endpoint switches)
-watch(() => props.config, (cfg) => {
-  projectDir.value        = cfg.project_dir || ''
-  command.value           = cfg.command || ''
-  autoInstall.value       = cfg.auto_install || false
-  startOnBoot.value       = cfg.start_on_boot || false
+// Sync from props only when the endpoint ID changes (user switched endpoints).
+// Do NOT watch props.config deeply — that re-fires after every emitUpdate()
+// call, clearing fields that were just populated by the scan.
+watch(() => props.endpointId, () => {
+  const cfg = props.config
+  const oldDir = projectDir.value
+  projectDir.value         = cfg.project_dir || ''
+  command.value            = cfg.command || ''
+  autoInstall.value        = cfg.auto_install || false
+  startOnBoot.value        = cfg.start_on_boot || false
   nodeVersionManager.value = cfg.node_version_manager || ''
-  nodeVersion.value       = cfg.node_version || ''
-  preRunScript.value      = cfg.pre_run_script || ''
-  cleanupScript.value     = cfg.cleanup_script || ''
-  envVars.value           = cfg.env_vars || []
+  nodeVersion.value        = cfg.node_version || ''
+  preRunScript.value       = cfg.pre_run_script || ''
+  cleanupScript.value      = cfg.cleanup_script || ''
+  envVars.value            = cfg.env_vars || []
   if (cfg.proxy_config) proxyConfig.value = cfg.proxy_config
-}, { deep: true })
+  // Re-scan if dir is different from last scanned dir
+  if (cfg.project_dir && cfg.project_dir !== oldDir) {
+    scanDir(cfg.project_dir)
+  }
+})
 
 // Scan on mount if dir already set
 if (projectDir.value) scanDir(projectDir.value)
@@ -238,7 +242,7 @@ if (projectDir.value) scanDir(projectDir.value)
       <div class="flex gap-2">
         <input
           v-model="projectDir"
-          @blur="emitUpdate"
+          @blur="() => { emitUpdate(); if (projectDir) scanDir(projectDir) }"
           type="text"
           placeholder="/home/user/my-app"
           class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white
