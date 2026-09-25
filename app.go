@@ -1315,8 +1315,19 @@ func (a *App) ensureRejectionsEndpoint() {
 // Legacy configs may not have this field, so we set it based on array index
 func (a *App) ensureDisplayOrder() {
 	for i := range a.config.Endpoints {
-		if a.config.Endpoints[i].DisplayOrder == 0 && !a.config.Endpoints[i].IsSystem {
-			a.config.Endpoints[i].DisplayOrder = i
+		ep := &a.config.Endpoints[i]
+		if ep.DisplayOrder == 0 && !ep.IsSystem {
+			ep.DisplayOrder = i
+		}
+		// Ensure type-specific config structs are always initialized so the UI
+		// never receives a nil config pointer for a known endpoint type.
+		switch ep.Type {
+		case models.EndpointTypeDevServer:
+			if ep.DevServerConfig == nil {
+				ep.DevServerConfig = &models.DevServerConfig{
+					EnvVars: []models.EnvironmentVar{},
+				}
+			}
 		}
 	}
 }
