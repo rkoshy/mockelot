@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, provide } from 'vue'
 import { useServerStore } from '../../stores/server'
-import { SaveCurrentConfig, SaveConfig, LoadConfig, StartContainers, PollEvents, GetDevServerStatus } from '../../../wailsjs/go/main/App'
+import { SaveCurrentConfig, SaveConfig, LoadConfig, StartContainers, StartDevServers, PollEvents, GetDevServerStatus } from '../../../wailsjs/go/main/App'
 import { models } from '../../../wailsjs/go/models'
 import ConfirmDialog from '../dialogs/ConfirmDialog.vue'
 import ContainerProgressDialog from '../dialogs/ContainerProgressDialog.vue'
@@ -313,12 +313,18 @@ onMounted(async () => {
     })
   )
 
-  // If server is already running when component mounts, trigger container startup
+  // If server is already running when component mounts, trigger startup for
+  // containers and dev servers that have start_on_boot enabled
   if (serverStore.isRunning) {
     try {
       await StartContainers()
     } catch (error) {
       console.error('Failed to call StartContainers():', error)
+    }
+    try {
+      await StartDevServers()
+    } catch (error) {
+      console.error('Failed to call StartDevServers():', error)
     }
   }
 
@@ -398,15 +404,29 @@ async function toggleServer() {
 
       await serverStore.startServer(portInput.value)
 
-      // Now that server is running and dialog is ready, start containers
+      // Give extra time for event listeners to be fully registered before
+      // launching processes that emit progress events
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      // Start containers with start_on_boot
       if (containerEndpoints.length > 0) {
-        // Give extra time for event listeners to be fully registered
-        await new Promise(resolve => setTimeout(resolve, 500))
         try {
           await StartContainers()
         } catch (error) {
           console.error('[HeaderBar] Failed to start containers:', error)
           errorMessage.value = 'Server started but failed to start containers: ' + String(error)
+        }
+      }
+
+      // Start dev servers with start_on_boot
+      const devServerEndpoints = serverStore.endpoints.filter(
+        e => e.type === 'dev_server' && e.enabled !== false && e.dev_server_config?.start_on_boot
+      )
+      if (devServerEndpoints.length > 0) {
+        try {
+          await StartDevServers()
+        } catch (error) {
+          console.error('[HeaderBar] Failed to start dev servers:', error)
         }
       }
     }
