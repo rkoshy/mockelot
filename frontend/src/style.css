@@ -11,23 +11,25 @@ body {
     height: 100vh;
 }
 
-/* Thin always-visible scrollbar — used in the endpoint navigator so the
-   overlay scrollbar never covers the row action buttons */
-.nav-scrollbar::-webkit-scrollbar {
+/* Override WebKit/WebView2 default system scrollbars app-wide with a thin
+   dark-themed one. This prevents the OS overlay scrollbar from appearing
+   on top of custom-styled scrollable containers (e.g. endpoint navigator). */
+::-webkit-scrollbar {
     width: 5px;
+    height: 5px;
 }
-.nav-scrollbar::-webkit-scrollbar-track {
+::-webkit-scrollbar-track {
     background: transparent;
 }
-.nav-scrollbar::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
     background: #374151; /* gray-700 */
     border-radius: 3px;
 }
-.nav-scrollbar::-webkit-scrollbar-thumb:hover {
+::-webkit-scrollbar-thumb:hover {
     background: #4b5563; /* gray-600 */
 }
 /* Firefox */
-.nav-scrollbar {
+* {
     scrollbar-width: thin;
     scrollbar-color: #374151 transparent;
 }
