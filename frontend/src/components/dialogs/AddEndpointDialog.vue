@@ -1315,7 +1315,7 @@ function handleKeydown(e: KeyboardEvent) {
                   />
                   <div>
                     <label for="wizard-spa-fallback" class="block text-sm font-medium text-gray-300">
-                      Fallback to index.html instead of 404
+                      Serve fallback file for unmatched paths
                     </label>
                     <p class="text-xs text-gray-400 mt-1">
                       Required for Angular, Vue, React, and other single-page apps that use client-side routing.

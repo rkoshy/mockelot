@@ -86,7 +86,7 @@ watch(() => props.config, (cfg) => {
         />
         <div class="flex-1">
           <label for="spa-fallback" class="block text-sm font-medium text-gray-300">
-            Fallback to index.html instead of 404
+            Serve fallback file for unmatched paths
           </label>
           <p class="text-xs text-gray-400 mt-1">
             Equivalent to nginx's <code class="text-gray-300">try_files $uri $uri/ /index.html</code>.
