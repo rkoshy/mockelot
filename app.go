@@ -905,14 +905,17 @@ func (a *App) AddEndpointWithConfig(config map[string]interface{}) (models.Endpo
 				}
 			}
 			endpoint.FileServerConfig = &models.FileServerConfig{
-				BasePath:    getString(fsCfg, "base_path"),
-				EnableSSI:   getBool(fsCfg, "enable_ssi", false),
-				ProxyConfig: fsProxyConfig,
+				BasePath:        getString(fsCfg, "base_path"),
+				EnableSSI:       getBool(fsCfg, "enable_ssi", false),
+				SpaFallback:     getBool(fsCfg, "spa_fallback", false),
+				SpaFallbackFile: getString(fsCfg, "spa_fallback_file"),
+				ProxyConfig:     fsProxyConfig,
 			}
 		} else {
 			endpoint.FileServerConfig = &models.FileServerConfig{
 				BasePath:    "",
 				EnableSSI:   false,
+				SpaFallback: false,
 				ProxyConfig: &models.ProxyConfig{StatusPassthrough: true},
 			}
 		}

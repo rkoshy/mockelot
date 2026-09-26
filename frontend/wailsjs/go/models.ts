@@ -377,6 +377,8 @@ export namespace models {
 	export class FileServerConfig {
 	    base_path: string;
 	    enable_ssi: boolean;
+	    spa_fallback: boolean;
+	    spa_fallback_file?: string;
 	    proxy_config?: ProxyConfig;
 	
 	    static createFrom(source: any = {}) {
@@ -387,6 +389,8 @@ export namespace models {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.base_path = source["base_path"];
 	        this.enable_ssi = source["enable_ssi"];
+	        this.spa_fallback = source["spa_fallback"];
+	        this.spa_fallback_file = source["spa_fallback_file"];
 	        this.proxy_config = this.convertValues(source["proxy_config"], ProxyConfig);
 	    }
 	

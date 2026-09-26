@@ -99,9 +99,37 @@ func (f *FileServerHandler) ServeHTTP(
 	fileBytes, err := os.ReadFile(cleanDisk)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// SPA fallback: serve the fallback file (default: index.html) for any
+			// path that doesn't exist on disk — this is the nginx try_files equivalent
+			// needed for Angular/Vue/React client-side routing.
+			if cfg.SpaFallback {
+				fallbackName := cfg.SpaFallbackFile
+				if fallbackName == "" {
+					fallbackName = "index.html"
+				}
+				fallbackPath := filepath.Join(cleanBase, fallbackName)
+				fallbackBytes, ferr := os.ReadFile(fallbackPath)
+				if ferr == nil {
+					ct := detectMimeType(fallbackPath, fallbackBytes)
+					body := fallbackBytes
+					if cfg.EnableSSI && isSSICandidate(fallbackPath) {
+						body = f.processSSI(fallbackBytes, r, responseHandler, 0)
+					}
+					w.Header().Set("Content-Type", ct)
+					w.Header().Set("X-Content-Type-Options", "nosniff")
+					if cfg.ProxyConfig != nil && f.proxyHandler != nil {
+						f.proxyHandler.applyHeaderManipulation(w.Header(), cfg.ProxyConfig.OutboundHeaders, r)
+						applyCSP(w.Header(), cfg.ProxyConfig.CSP)
+					}
+					w.WriteHeader(http.StatusOK)
+					w.Write(body)
+					f.logFileRequest(requestID, endpoint, r, translatedPath, fallbackPath, http.StatusOK, len(body), startTime)
+					return
+				}
+				// Fallback file itself is missing — fall through to 404
+				log.Printf("[FileServer] SPA fallback file not found: %s", fallbackPath)
+			}
 			// File not found — the file server endpoint owns this path, return 404.
-			// We do NOT fall back to overlay here: once a file server endpoint has
-			// matched the request, it is responsible for the response.
 			// Send bare status with no body/content-type — a text/plain body with
 			// X-Content-Type-Options: nosniff causes browsers to log a MIME mismatch
 			// error for sub-resources (scripts, stylesheets) that expected a

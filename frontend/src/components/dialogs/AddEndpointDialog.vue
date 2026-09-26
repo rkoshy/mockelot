@@ -70,8 +70,10 @@ const requestHeaders = ref<models.HeaderManipulation[]>([])
 const responseHeaders = ref<models.HeaderManipulation[]>([])
 
 // File server config (Step 3)
-const fileServerBasePath = ref('')
-const fileServerEnableSSI = ref(false)
+const fileServerBasePath    = ref('')
+const fileServerEnableSSI   = ref(false)
+const fileServerSpaFallback = ref(false)
+const fileServerSpaFallbackFile = ref('')
 
 // Dev server config (Step 3)
 const dsProjectDir = ref('')
@@ -587,8 +589,10 @@ function handleFinish() {
     }
   } else if (endpointType.value === 'file_server') {
     config.file_server_config = {
-      base_path: fileServerBasePath.value.trim(),
-      enable_ssi: fileServerEnableSSI.value,
+      base_path:         fileServerBasePath.value.trim(),
+      enable_ssi:        fileServerEnableSSI.value,
+      spa_fallback:      fileServerSpaFallback.value,
+      spa_fallback_file: fileServerSpaFallbackFile.value.trim(),
       proxy_config: {
         backend_url: '',
         timeout_seconds: 0,
@@ -1298,6 +1302,38 @@ function handleKeydown(e: KeyboardEvent) {
                   is joined onto this base path to locate files on disk.
                   Supports <code class="text-gray-300">~</code> for home directory.
                 </p>
+              </div>
+
+              <!-- SPA Fallback -->
+              <div class="space-y-2">
+                <div class="flex items-start gap-3">
+                  <input
+                    v-model="fileServerSpaFallback"
+                    type="checkbox"
+                    id="wizard-spa-fallback"
+                    class="mt-1 w-4 h-4 bg-gray-700 border-gray-600 rounded text-yellow-500 focus:ring-yellow-500"
+                  />
+                  <div>
+                    <label for="wizard-spa-fallback" class="block text-sm font-medium text-gray-300">
+                      SPA Fallback — serve index.html for unknown paths
+                    </label>
+                    <p class="text-xs text-gray-400 mt-1">
+                      Required for Angular, Vue, React, and other single-page apps.
+                      Equivalent to nginx's <code class="text-gray-300">try_files $uri $uri/ /index.html</code>.
+                    </p>
+                  </div>
+                </div>
+                <div v-if="fileServerSpaFallback" class="ml-7">
+                  <label class="block text-xs font-medium text-gray-400 mb-1">Fallback file</label>
+                  <input
+                    v-model="fileServerSpaFallbackFile"
+                    type="text"
+                    placeholder="index.html"
+                    class="w-40 px-3 py-1.5 bg-gray-700 border border-gray-600 rounded text-white
+                           placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-500 font-mono text-sm"
+                  />
+                  <span class="ml-2 text-xs text-gray-500">blank = index.html</span>
+                </div>
               </div>
 
               <!-- Enable SSI -->

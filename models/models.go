@@ -404,9 +404,11 @@ type EnvironmentVar struct {
 // path as a new internal sub-request through the full endpoint matching pipeline — the same way
 // a browser request would be handled. No separate path-mapping config is needed.
 type FileServerConfig struct {
-	BasePath    string       `json:"base_path" yaml:"base_path"`                           // Filesystem directory to serve from
-	EnableSSI   bool         `json:"enable_ssi" yaml:"enable_ssi"`                         // Process SSI directives in .shtml files
-	ProxyConfig *ProxyConfig `json:"proxy_config,omitempty" yaml:"proxy_config,omitempty"` // Header manipulation and status translation
+	BasePath        string       `json:"base_path" yaml:"base_path"`                                       // Filesystem directory to serve from
+	EnableSSI       bool         `json:"enable_ssi" yaml:"enable_ssi"`                                     // Process SSI directives in .shtml files
+	SpaFallback     bool         `json:"spa_fallback" yaml:"spa_fallback"`                                 // Serve fallback file for unknown paths (SPA client-side routing)
+	SpaFallbackFile string       `json:"spa_fallback_file,omitempty" yaml:"spa_fallback_file,omitempty"`   // File to serve for unmatched paths (default: index.html)
+	ProxyConfig     *ProxyConfig `json:"proxy_config,omitempty" yaml:"proxy_config,omitempty"`             // Header manipulation and status translation
 }
 
 // DomainFilter defines domain-based filtering for endpoints (SOCKS5 proxy)
