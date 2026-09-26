@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -95,10 +96,30 @@ func (f *FileServerHandler) ServeHTTP(
 		return
 	}
 
+	// --- Resolve directories to index.html --------------------------------
+	// If the resolved path is a directory, attempt to serve index.html inside
+	// it — standard web server behaviour (equivalent to nginx's index directive).
+	if fi, statErr := os.Stat(cleanDisk); statErr == nil && fi.IsDir() {
+		candidate := filepath.Join(cleanDisk, "index.html")
+		if _, statErr2 := os.Stat(candidate); statErr2 == nil {
+			cleanDisk = candidate
+		}
+		// If no index.html in the directory, fall through to ReadFile which
+		// will return EISDIR — handled below as a not-found / SPA fallback.
+	}
+
 	// --- Read file --------------------------------------------------------
 	fileBytes, err := os.ReadFile(cleanDisk)
 	if err != nil {
-		if os.IsNotExist(err) {
+		isNotFound := os.IsNotExist(err)
+		// EISDIR (is a directory) — cleanDisk is still a directory with no
+		// index.html inside. Treat the same as not-found so SPA fallback applies.
+		if !isNotFound {
+			if pathErr, ok := err.(*os.PathError); ok && pathErr.Err == syscall.EISDIR {
+				isNotFound = true
+			}
+		}
+		if isNotFound {
 			// SPA fallback: serve the fallback file (default: index.html) for any
 			// path that doesn't exist on disk — this is the nginx try_files equivalent
 			// needed for Angular/Vue/React client-side routing.
