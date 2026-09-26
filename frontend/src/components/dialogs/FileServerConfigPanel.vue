@@ -86,7 +86,7 @@ watch(() => props.config, (cfg) => {
         />
         <div class="flex-1">
           <label for="spa-fallback" class="block text-sm font-medium text-gray-300">
-            SPA Fallback (serve index.html for unknown paths)
+            Fallback to index.html instead of 404
           </label>
           <p class="text-xs text-gray-400 mt-1">
             Equivalent to nginx's <code class="text-gray-300">try_files $uri $uri/ /index.html</code>.
@@ -128,7 +128,7 @@ watch(() => props.config, (cfg) => {
           Process <code class="text-gray-300">&lt;!--#include virtual="..."--&gt;</code> directives
           in <code class="text-gray-300">.shtml</code> and <code class="text-gray-300">.html</code> files.
           Virtual include paths are resolved as internal sub-requests through the full endpoint
-          matching pipeline.
+          matching pipeline — the same way a browser request would be handled.
         </p>
       </div>
     </div>

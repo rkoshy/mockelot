@@ -1315,10 +1315,10 @@ function handleKeydown(e: KeyboardEvent) {
                   />
                   <div>
                     <label for="wizard-spa-fallback" class="block text-sm font-medium text-gray-300">
-                      SPA Fallback — serve index.html for unknown paths
+                      Fallback to index.html instead of 404
                     </label>
                     <p class="text-xs text-gray-400 mt-1">
-                      Required for Angular, Vue, React, and other single-page apps.
+                      Required for Angular, Vue, React, and other single-page apps that use client-side routing.
                       Equivalent to nginx's <code class="text-gray-300">try_files $uri $uri/ /index.html</code>.
                     </p>
                   </div>
