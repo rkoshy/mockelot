@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"mockelot/models"
@@ -762,75 +761,8 @@ func buildEnv(cfg *models.DevServerConfig, portStr string) []string {
 	return filtered
 }
 
-// ---- Platform-specific process management ----
-
-// gracefulKill sends SIGINT/SIGTERM and waits, then force-kills if needed.
-func gracefulKill(proc *devServerProcess) {
-	if proc.cmd == nil || proc.cmd.Process == nil {
-		return
-	}
-
-	if runtime.GOOS == "windows" {
-		killWindows(proc)
-		return
-	}
-
-	// Unix: send SIGINT to the process group (kills npm + child vite/node)
-	pgid, err := syscall.Getpgid(proc.pid)
-	if err == nil {
-		// Negative PID = process group
-		_ = syscall.Kill(-pgid, syscall.SIGINT)
-	} else {
-		_ = proc.cmd.Process.Signal(syscall.SIGINT)
-	}
-
-	// Wait up to 5 seconds for graceful shutdown
-	done := make(chan struct{})
-	go func() {
-		proc.cmd.Wait() //nolint:errcheck
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// Exited cleanly
-	case <-time.After(5 * time.Second):
-		// Force kill the process group
-		if pgid, err := syscall.Getpgid(proc.pid); err == nil {
-			_ = syscall.Kill(-pgid, syscall.SIGKILL)
-		} else {
-			_ = proc.cmd.Process.Kill()
-		}
-	}
-}
-
-// setProcAttr configures the child process to run in its own process group
-// so we can kill the entire tree (npm → node → vite, etc.).
-func setProcAttr(cmd *exec.Cmd) {
-	if runtime.GOOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	}
-}
-
-// killWindows terminates a process tree on Windows using taskkill.
-func killWindows(proc *devServerProcess) {
-	if proc.cmd == nil || proc.cmd.Process == nil {
-		return
-	}
-	pid := proc.pid
-
-	// taskkill /T kills the process tree; /F forces it
-	kill := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(pid))
-	kill.Stdout = io.Discard
-	kill.Stderr = io.Discard
-	if err := kill.Run(); err != nil {
-		log.Printf("[DevServer] taskkill failed for PID %d: %v", pid, err)
-		// Fallback: direct kill
-		_ = proc.cmd.Process.Kill()
-	}
-
-	// Wait a moment for the tree to die
-	time.Sleep(1 * time.Second)
-}
+// gracefulKill and setProcAttr are implemented in platform-specific files:
+//   devserver_unix.go    (Linux, macOS)
+//   devserver_windows.go (Windows)
 
 
