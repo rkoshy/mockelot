@@ -3,8 +3,8 @@
 # Usage: ./release.sh <version>
 # Example: ./release.sh v0.5.0
 #
-# Builds Linux/Windows/macOS via Laminar CI, generates checksums,
-# tags, and creates a GitHub release.
+# Builds Linux/Windows/macOS via Laminar CI, builds a Debian 13 .deb
+# from the Linux tarball, generates checksums, tags, and creates a GitHub release.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_common.sh"
 
@@ -51,10 +51,23 @@ if ! "${SCRIPT_DIR}/build-all.sh" --laminar; then
     exit 1
 fi
 
+# --- Build Debian 13 .deb from the Linux tarball ---
+log_info "Building Debian 13 .deb..."
+if ! "${SCRIPT_DIR}/build-deb-native.sh"; then
+    log_error "Debian package build failed — removing local tag ${VERSION_TAG}"
+    git tag -d "$VERSION_TAG" 2>/dev/null
+    exit 1
+fi
+DEB_FILE="${PROJECT_DIR}/mockelot_${VERSION}-debian13_amd64.deb"
+ensure_dist_dir linux
+mv -f "$DEB_FILE" "${DIST_DIR}/linux/"
+DEB_ARTIFACT="${DIST_DIR}/linux/mockelot_${VERSION}-debian13_amd64.deb"
+log_success "Debian package: $(du -sh "$DEB_ARTIFACT" | cut -f1)"
+
 # --- Checksums ---
 log_info "Generating checksums..."
 cd "${DIST_DIR}/linux"
-sha256sum *.tar.gz > checksums.txt
+sha256sum *.tar.gz *.deb > checksums.txt
 cd "${DIST_DIR}/windows"
 sha256sum *.zip >> "${DIST_DIR}/linux/checksums.txt"
 cd "${DIST_DIR}/macos"
@@ -64,6 +77,7 @@ cd "$PROJECT_DIR"
 # --- Collect artifacts ---
 RELEASE_ARTIFACTS=(
     "${DIST_DIR}/linux/mockelot-linux-amd64.tar.gz"
+    "$DEB_ARTIFACT"
     "${DIST_DIR}/windows/mockelot-windows-amd64.zip"
     "${DIST_DIR}/macos/mockelot-darwin-universal.zip"
     "${DIST_DIR}/linux/checksums.txt"

@@ -7,21 +7,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_common.sh"
 
 VERSION=$(get_version)
-PKGNAME="mockelot_${VERSION}-native-debian13_amd64"
-BINARY="${PROJECT_DIR}/build/bin/mockelot"
+PKGNAME="mockelot_${VERSION}-debian13_amd64"
+# Use the already-built Linux binary from dist/ (produced by build-linux.sh via Laminar).
+# Do NOT rebuild — the Laminar build already tagged the binary with the correct version.
+BINARY="${DIST_DIR}/linux/mockelot-linux-amd64.tar.gz"
+BINARY_EXTRACTED="/tmp/mockelot-deb-binary-$$"
 
 log_info "=== Mockelot native .deb build (v${VERSION}) ==="
 
-# Build the native binary for Debian 13 (webkit2gtk-4.1)
-log_info "Building native binary..."
-cd "$PROJECT_DIR"
-~/go/bin/wails build -tags webkit2_41 -o mockelot
-
+# Extract the binary from the Linux tarball built by Laminar
 if [ ! -f "$BINARY" ]; then
-    log_error "Binary not found at $BINARY after build"
+    log_error "Linux tarball not found at $BINARY — run build-linux.sh first"
     exit 1
 fi
-log_success "Binary built: $(du -sh "$BINARY" | cut -f1)"
+log_info "Extracting binary from Linux tarball..."
+mkdir -p "$BINARY_EXTRACTED"
+tar -xzf "$BINARY" -C "$BINARY_EXTRACTED"
+# The tarball contains mockelot-linux-amd64 (the platform-named binary)
+EXTRACTED_BIN=$(find "$BINARY_EXTRACTED" -name "mockelot*" -type f | head -1)
+if [ -z "$EXTRACTED_BIN" ]; then
+    log_error "Could not find mockelot binary inside tarball"
+    rm -rf "$BINARY_EXTRACTED"
+    exit 1
+fi
+log_success "Binary extracted: $(du -sh "$EXTRACTED_BIN" | cut -f1)"
 
 # Package structure
 PKGDIR="${PROJECT_DIR}/${PKGNAME}"
@@ -32,7 +41,7 @@ mkdir -p "$PKGDIR/usr/share/applications"
 mkdir -p "$PKGDIR/usr/share/icons/hicolor/256x256/apps"
 
 # Binary
-cp "$BINARY" "$PKGDIR/usr/bin/mockelot"
+cp "$EXTRACTED_BIN" "$PKGDIR/usr/bin/mockelot"
 chmod 755 "$PKGDIR/usr/bin/mockelot"
 
 # Control file (depends on system webkit, not libfuse)
@@ -107,3 +116,4 @@ DEB="${PKGNAME}.deb"
 log_success "Package ready: $(du -sh "$DEB" | cut -f1)  →  ${PROJECT_DIR}/${DEB}"
 
 rm -rf "$PKGDIR"
+rm -rf "$BINARY_EXTRACTED"
