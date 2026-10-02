@@ -24,6 +24,10 @@ export function BuildCSPHeader(arg1:models.CSPConfig):Promise<string>;
 
 export function CancelContainerStart(arg1:string):Promise<void>;
 
+export function ClearAllDevServerLogs():Promise<void>;
+
+export function ClearDevServerLogs(arg1:string):Promise<void>;
+
 export function ClearInactiveRequestLogs():Promise<void>;
 
 export function ClearInactiveRequestLogsForEndpoint(arg1:string):Promise<void>;

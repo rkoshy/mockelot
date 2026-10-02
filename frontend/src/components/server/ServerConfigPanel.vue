@@ -13,7 +13,7 @@ import TrafficLogPanel from '../traffic/TrafficLogPanel.vue'
 import ServerTab from './tabs/ServerTab.vue'
 import SOCKS5DomainsPanel from '../socks5/SOCKS5DomainsPanel.vue'
 import { models } from '../../types/models'
-import { StartContainer, StopContainer, DeleteContainer, StartDevServer, StopDevServer, RestartDevServer, GetContainerLogs, GetDevServerLogs } from '../../../wailsjs/go/main/App'
+import { StartContainer, StopContainer, DeleteContainer, StartDevServer, StopDevServer, RestartDevServer, GetContainerLogs, GetDevServerLogs, ClearDevServerLogs } from '../../../wailsjs/go/main/App'
 import OverlaySimPanel from './OverlaySimPanel.vue'
 import ProxySimPanel from './ProxySimPanel.vue'
 import EndpointNavigator from './EndpointNavigator.vue'
@@ -64,6 +64,7 @@ interface ContainerProgress {
 }
 const containerProgress = ref<Record<string, ContainerProgress>>({})
 let unregisterProgressListener: (() => void) | null = null
+let unregisterClearListeners: (() => void)[] = []
 
 // Settings drawer state
 const showSettingsDrawer = ref(false)
@@ -122,6 +123,13 @@ async function loadConsoleLogs() {
   } finally {
     consoleLoading.value = false
   }
+}
+
+async function clearConsoleLogs() {
+  const ep = serverStore.currentEndpoint
+  if (!ep || ep.type !== 'dev_server') return
+  await ClearDevServerLogs(ep.id)
+  consoleLogs.value = ''
 }
 
 function startConsolePolling() {
@@ -832,6 +840,21 @@ function handleCancelImport() {
 onMounted(() => {
   document.addEventListener('keydown', onDrawerKeydown)
   if (registerEventListener) {
+    // When "Clear All" fires (logs:cleared), also wipe the console output
+    unregisterClearListeners.push(
+      registerEventListener('logs:cleared', () => {
+        consoleLogs.value = ''
+      })
+    )
+    // When "Clear" fires for a specific endpoint, wipe console if it's the current one
+    unregisterClearListeners.push(
+      registerEventListener('logs:cleared:endpoint', (endpointId: string) => {
+        if (serverStore.currentEndpoint?.id === endpointId) {
+          consoleLogs.value = ''
+        }
+      })
+    )
+
     unregisterProgressListener = registerEventListener('ctr:progress', (data: any) => {
       if (data.endpoint_id) {
         // Update progress state for inline indicator
@@ -860,6 +883,8 @@ onUnmounted(() => {
     unregisterProgressListener()
     unregisterProgressListener = null
   }
+  unregisterClearListeners.forEach(fn => fn())
+  unregisterClearListeners = []
   if (resizeObserver) {
     resizeObserver.disconnect()
     resizeObserver = null
@@ -998,9 +1023,17 @@ onUnmounted(() => {
           <div class="flex items-center gap-3 px-3 py-1.5 border-b border-gray-800 flex-shrink-0 bg-gray-900">
             <span class="text-xs text-gray-500">Last 5000 lines · auto-refresh 2s</span>
             <button
+              v-if="serverStore.currentEndpoint?.type === 'dev_server'"
+              @click="clearConsoleLogs"
+              class="ml-auto px-2 py-0.5 bg-gray-700 hover:bg-red-900/60 text-gray-400 hover:text-red-300 rounded text-xs transition-colors"
+            >
+              Clear
+            </button>
+            <button
               @click="loadConsoleLogs"
               :disabled="consoleLoading"
-              class="ml-auto px-2 py-0.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 rounded text-xs transition-colors"
+              :class="serverStore.currentEndpoint?.type === 'dev_server' ? '' : 'ml-auto'"
+              class="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 rounded text-xs transition-colors"
             >
               {{ consoleLoading ? 'Loading...' : 'Refresh' }}
             </button>

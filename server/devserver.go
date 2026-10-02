@@ -327,6 +327,22 @@ func (h *DevServerHandler) GetDevServerStatus(endpointID string) *models.DevServ
 	}
 }
 
+// ClearDevServerLogs resets the output ring buffer for a single endpoint.
+func (h *DevServerHandler) ClearDevServerLogs(endpointID string) {
+	h.mu.Lock()
+	h.buffers[endpointID] = newRingBuffer(devServerRingBufSize)
+	h.mu.Unlock()
+}
+
+// ClearAllDevServerLogs resets the output ring buffers for all endpoints.
+func (h *DevServerHandler) ClearAllDevServerLogs() {
+	h.mu.Lock()
+	for id := range h.buffers {
+		h.buffers[id] = newRingBuffer(devServerRingBufSize)
+	}
+	h.mu.Unlock()
+}
+
 // GetDevServerLogs returns the last `tail` lines of output for an endpoint.
 func (h *DevServerHandler) GetDevServerLogs(endpointID string, tail int) string {
 	h.mu.RLock()

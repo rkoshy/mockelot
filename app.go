@@ -2034,6 +2034,20 @@ func (a *App) GetDevServerLogs(endpointID string, tail int) string {
 	return a.devServerHandler.GetDevServerLogs(endpointID, tail)
 }
 
+// ClearDevServerLogs resets the console output buffer for a single dev server endpoint.
+func (a *App) ClearDevServerLogs(endpointID string) {
+	if a.devServerHandler != nil {
+		a.devServerHandler.ClearDevServerLogs(endpointID)
+	}
+}
+
+// ClearAllDevServerLogs resets console output buffers for all dev server endpoints.
+func (a *App) ClearAllDevServerLogs() {
+	if a.devServerHandler != nil {
+		a.devServerHandler.ClearAllDevServerLogs()
+	}
+}
+
 // ScanProjectDir reads a directory's package.json and returns project information.
 func (a *App) ScanProjectDir(dir string) *server.ProjectInfo {
 	return server.ScanProjectDir(dir)
@@ -2963,6 +2977,9 @@ func (a *App) ClearRequestLogs() {
 	a.wsHandles = make(map[string]wsHandle)
 	a.wsHandlesMu.Unlock()
 
+	// Also clear all dev server console buffers so the console is fresh too.
+	a.ClearAllDevServerLogs()
+
 	runtime.EventsEmit(a.ctx, "logs:cleared", nil)
 }
 
@@ -2986,6 +3003,9 @@ func (a *App) ClearRequestLogsForEndpoint(endpointID string) {
 		_ = id
 	}
 	a.wsHandlesMu.Unlock()
+
+	// Also clear the dev server console buffer for this endpoint (if it is one).
+	a.ClearDevServerLogs(endpointID)
 
 	runtime.EventsEmit(a.ctx, "logs:cleared:endpoint", endpointID)
 }

@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { ref, watch, nextTick, onUnmounted } from 'vue'
-import { GetDevServerLogs } from '../../../wailsjs/go/main/App'
+import { GetDevServerLogs, ClearDevServerLogs } from '../../../wailsjs/go/main/App'
 
 const props = defineProps<{
   show: boolean
@@ -77,6 +77,11 @@ async function loadLogs() {
   }
 }
 
+async function handleClear() {
+  await ClearDevServerLogs(props.endpointId)
+  logs.value = ''
+}
+
 function handleClose() {
   stopAutoRefresh()
   emit('close')
@@ -115,6 +120,14 @@ function handleClose() {
             />
             <span class="text-gray-400 text-xs">sec</span>
           </div>
+
+          <!-- Clear -->
+          <button
+            @click="handleClear"
+            class="px-3 py-1.5 bg-gray-700 hover:bg-red-900/60 text-gray-400 hover:text-red-300 rounded text-sm font-medium transition-colors"
+          >
+            Clear
+          </button>
 
           <!-- Manual refresh -->
           <button
